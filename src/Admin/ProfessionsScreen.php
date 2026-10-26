@@ -213,6 +213,7 @@ final class ProfessionsScreen {
 		$collection = ProfessionRepository::get();
 
 		echo '<div class="wrap"><h1>' . esc_html__( 'Portal: profesje', 'portal-users' ) . '</h1>';
+		ConsistencyNotice::render();
 		self::render_notices( $collection );
 		self::render_table( $collection );
 

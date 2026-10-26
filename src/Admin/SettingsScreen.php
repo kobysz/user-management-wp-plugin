@@ -156,6 +156,7 @@ final class SettingsScreen {
 
 		echo '<div class="wrap"><h1>' . esc_html__( 'Portal: ustawienia', 'portal-users' ) . '</h1>';
 
+		ConsistencyNotice::render();
 		if ( Request::NOTICE_SAVED === Request::notice() ) {
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Ustawienia zostały zapisane.', 'portal-users' ) . '</p></div>';
 		}

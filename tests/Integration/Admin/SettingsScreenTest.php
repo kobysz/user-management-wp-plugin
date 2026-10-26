@@ -11,6 +11,10 @@ use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Persistence\SettingsRepository;
+use PortalUsers\Domain\Fields\FieldMatrix;
+use PortalUsers\Domain\Profession\ProfessionCollection;
+use PortalUsers\Persistence\FieldMatrixRepository;
+use PortalUsers\Persistence\ProfessionRepository;
 use WP_UnitTestCase;
 use WPDieException;
 
@@ -340,5 +344,70 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		foreach ( $deleted as $item ) {
 			$this->assertStringContainsString( $item, $html, 'Ostrzeżenie nie wymienia: ' . $item );
 		}
+	}
+
+	/**
+	 * Źródło pól (grupa ACF z jednym polem `pwz`) i profesje o podanych kluczach, typ numeru "brak".
+	 *
+	 * @param string ...$keys Klucze profesji.
+	 */
+	private function withConfiguredSourceAndProfessions( string ...$keys ): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array(
+				array(
+					'name'  => 'pwz',
+					'label' => 'PWZ',
+				),
+			)
+		);
+		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_abc' ) ) );
+		$items = array();
+		foreach ( $keys as $key ) {
+			$items[] = array(
+				'key'             => $key,
+				'label'           => $key,
+				'credential_type' => 'none',
+			);
+		}
+		ProfessionRepository::save( ProfessionCollection::fromArray( $items ) );
+	}
+
+	private function renderScreenAsAdmin(): string {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		ob_start();
+		SettingsScreen::render();
+		return (string) ob_get_clean();
+	}
+
+	public function test_screen_shows_the_error_count_and_a_link_to_the_matrix_when_a_profession_has_no_row(): void {
+		$this->withConfiguredSourceAndProfessions( 'lekarz', 'pielegniarka' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$html = $this->renderScreenAsAdmin();
+		$this->assertStringContainsString( 'notice-error pusers-consistency-notice', $html );
+		$this->assertStringContainsString( 'wykryto 1 błąd', $html );
+		$this->assertStringContainsString( 'page=' . Menu::SLUG_MATRIX, $html );
+	}
+
+	public function test_screen_counts_every_error(): void {
+		$this->withConfiguredSourceAndProfessions( 'lekarz', 'pielegniarka' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array() ) );
+		$this->assertStringContainsString( 'wykryto 2 błędów', $this->renderScreenAsAdmin() );
+	}
+
+	public function test_screen_shows_nothing_when_the_configuration_is_consistent(): void {
+		$this->withConfiguredSourceAndProfessions( 'lekarz' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$html = $this->renderScreenAsAdmin();
+		$this->assertStringNotContainsString( 'pusers-consistency-notice', $html );
+		$this->assertStringNotContainsString( 'page=' . Menu::SLUG_MATRIX, $html );
+	}
+
+	public function test_screen_does_not_count_warnings(): void {
+		// Pole ze źródła bez wpisu w wierszu to tylko ostrzeżenie.
+		$this->withConfiguredSourceAndProfessions( 'lekarz' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'inne' => 'visible' ) ) ) );
+		$this->assertStringNotContainsString( 'pusers-consistency-notice', $this->renderScreenAsAdmin() );
 	}
 }
