@@ -50,4 +50,15 @@ final class ProfessionTest extends TestCase {
 		$p = Profession::fromArray( array( 'key' => 'lekarz', 'label' => null ) );
 		$this->assertSame( 'lekarz', $p->label );
 	}
+
+	public function test_key_and_label_are_trimmed(): void {
+		$p = Profession::fromArray( array( 'key' => ' lekarz ', 'label' => "  Lekarz	" ) );
+		$this->assertSame( 'lekarz', $p->key );
+		$this->assertSame( 'Lekarz', $p->label );
+	}
+
+	public function test_whitespace_only_label_falls_back_to_key(): void {
+		$p = Profession::fromArray( array( 'key' => 'lekarz', 'label' => "  	 " ) );
+		$this->assertSame( 'lekarz', $p->label );
+	}
 }

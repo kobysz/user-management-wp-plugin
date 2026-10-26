@@ -55,4 +55,16 @@ final class SubmissionFilterTest extends TestCase {
 		$filter = new SubmissionFilter( $this->matrix() );
 		$this->assertSame( array(), $filter->strip( 'nie-ma', array( 'miasto' => 'Kraków' ) ) );
 	}
+
+	public function test_drops_field_absent_from_matrix_for_a_known_profession(): void {
+		$filter = new SubmissionFilter( $this->matrix() );
+		$out    = $filter->strip(
+			'lekarz',
+			array(
+				'pwz'       => '5425740',
+				'nie-ma-tu' => 'x',
+			)
+		);
+		$this->assertSame( array( 'pwz' => '5425740' ), $out );
+	}
 }

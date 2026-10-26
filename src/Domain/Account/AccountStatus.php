@@ -22,6 +22,11 @@ enum AccountStatus: string {
 	/**
 	 * Odczytuje stan z zapisanych danych konta; nieznana lub pusta wartość to brak stanu.
 	 *
+	 * Nierozpoznana wartość czyta się jako brak stanu ŚWIADOMIE: domena widzi tylko „stan albo
+	 * brak stanu”. Odróżnienie „brak klucza” od „klucz z nierozpoznaną wartością” należy do
+	 * warstwy przechowywania, która ma traktować drugi przypadek jako odmowę logowania oraz
+	 * zapisać wpis do logu.
+	 *
 	 * @param string|null $raw Surowa zapisana wartość.
 	 * @return self|null
 	 */

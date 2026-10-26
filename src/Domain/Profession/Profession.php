@@ -67,7 +67,8 @@ final class Profession {
 	}
 
 	/**
-	 * Czyta pole tekstowe; wartość nietekstowa traktowana jest jak brak.
+	 * Czyta pole tekstowe z obciętymi białymi znakami (klucz ' lekarz ' nie dopasowałby żadnego
+	 * zgłoszenia); wartość nietekstowa traktowana jest jak brak.
 	 *
 	 * @param array<string, mixed> $raw Zapisana konfiguracja.
 	 * @param string               $name Nazwa pola.
@@ -75,7 +76,7 @@ final class Profession {
 	 */
 	private static function text( array $raw, string $name ): string {
 		$value = $raw[ $name ] ?? '';
-		return is_string( $value ) ? $value : '';
+		return is_string( $value ) ? trim( $value ) : '';
 	}
 
 	/**
