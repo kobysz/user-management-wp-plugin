@@ -455,6 +455,9 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( '<tr data-field="martwe">', $html, 'Martwe pole nie jest wierszem edytowalnej tabeli.' );
 		$this->assertMatchesRegularExpression( '#<tr data-dead-field="martwe">(?:(?!</tr>).)*name="pusers_field" value="martwe"#s', $html );
 		$this->assertStringContainsString( 'value="pusers_delete_matrix_field"', $html );
+		// Zakres: akapit pod nagłówkiem martwych pól (raport spójności na tej stronie ma własny komunikat o tym samym).
+		$this->assertSame( 1, preg_match( '#Pola spoza wybranej grupy</h2>(.*?)<table#s', $html, $m ), 'Brak sekcji martwych pól.' );
+		$this->assertStringContainsString( 'typ nieobsługiwany przez wtyczkę', $m[1], 'Akapit o martwych polach wspomina o typach nieobsługiwanych.' );
 	}
 
 	public function test_the_dead_field_removal_form_action_has_the_registered_handler_behind_it(): void {

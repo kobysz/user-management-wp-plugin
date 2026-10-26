@@ -45,10 +45,10 @@ final class IssueMessages {
 				return sprintf( __( 'Pole „%2$s” nie ma ustawionego stanu dla profesji „%1$s”.', 'portal-users' ), $profession, $field );
 			case 'matrix_field_not_in_source':
 				/* translators: 1: klucz profesji, 2: klucz pola. */
-				return sprintf( __( 'Macierz profesji „%1$s” zawiera pole „%2$s”, którego nie ma w wybranej grupie pól.', 'portal-users' ), $profession, $field );
+				return sprintf( __( 'Macierz profesji „%1$s” zawiera pole „%2$s”, którego nie ma w wybranej grupie pól. Pole może też istnieć w ACF, ale mieć typ nieobsługiwany przez wtyczkę (kontener albo typ układowy).', 'portal-users' ), $profession, $field );
 			case 'matrix_required_field_not_in_source':
 				/* translators: 1: klucz profesji, 2: klucz pola. */
-				return sprintf( __( 'Rejestracja profesji „%1$s” jest zablokowana: macierz oznacza jako wymagane pole „%2$s”, którego nie ma w wybranej grupie pól, więc formularz go nie pokaże. Zmień ten wpis w macierzy albo dodaj pole do grupy.', 'portal-users' ), $profession, $field );
+				return sprintf( __( 'Rejestracja profesji „%1$s” jest zablokowana: macierz oznacza jako wymagane pole „%2$s”, którego nie ma w wybranej grupie pól, więc formularz go nie pokaże. Zmień ten wpis w macierzy albo dodaj pole do grupy. Pole może też istnieć w ACF, ale mieć typ nieobsługiwany przez wtyczkę (kontener albo typ układowy).', 'portal-users' ), $profession, $field );
 			case 'matrix_profession_unknown':
 				/* translators: %s: klucz profesji. */
 				return sprintf( __( 'Macierz zawiera wiersz dla nieistniejącej profesji „%s”.', 'portal-users' ), $profession );

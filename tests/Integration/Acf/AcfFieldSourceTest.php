@@ -160,6 +160,82 @@ final class AcfFieldSourceTest extends WP_UnitTestCase {
 		$this->assertSame( array_keys( $source->fields() ), array_keys( $source->fieldTypes() ) );
 	}
 
+	public function test_numeric_field_name_becomes_an_int_key_in_fields_and_field_types(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static fn (): array => array( array( 'name' => '123', 'label' => 'Numeryczne', 'type' => 'true_false' ) ) );
+		$source = new AcfFieldSource( 'group_abc' );
+		// PHP przywraca klucz numeryczny do int, więc adnotacje mówią int|string.
+		$this->assertSame( array( 123 => 'Numeryczne' ), $source->fields() );
+		$this->assertSame( array( 123 => 'true_false' ), $source->fieldTypes() );
+		$this->assertNotNull( $source->definition( '123' ) );
+	}
+
+	public function test_snapshot_is_stale_within_an_instance_and_a_new_instance_sees_new_filters(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static fn (): array => array( array( 'name' => 'pwz', 'label' => 'PWZ', 'type' => 'text' ) ) );
+		$source = new AcfFieldSource( 'group_abc' );
+		$this->assertSame( array( 'pwz' => 'PWZ' ), $source->fields() );
+
+		add_filter( 'pusers_acf_fields', static fn ( array $raw ): array => array_merge( $raw, array( array( 'name' => 'zgoda', 'label' => 'Zgoda', 'type' => 'true_false' ) ) ), 20 );
+		// Zamierzone: jedna instancja widzi jeden spójny zestaw pól.
+		$this->assertSame( array( 'pwz' => 'PWZ' ), $source->fields() );
+		$this->assertSame( array( 'pwz' => 'text' ), $source->fieldTypes() );
+		$this->assertSame( array( 'pwz' => 'PWZ', 'zgoda' => 'Zgoda' ), ( new AcfFieldSource( 'group_abc' ) )->fields() );
+	}
+
+	public function test_a_filter_that_calls_back_into_the_source_gets_an_empty_list_and_does_not_poison_the_snapshot(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		$source = new AcfFieldSource( 'group_abc' );
+		$seen   = null;
+		add_filter( 'pusers_acf_fields', static function () use ( $source, &$seen ): array {
+			$seen = $source->fields();
+			return array( array( 'name' => 'pwz', 'label' => 'PWZ', 'type' => 'text' ) );
+		} );
+		$this->assertSame( array( 'pwz' => 'PWZ' ), $source->fields() );
+		$this->assertSame( array(), $seen );
+		$this->assertSame( array( 'pwz' => 'PWZ' ), $source->fields() );
+	}
+
+	public function test_an_exception_in_the_filter_does_not_leave_the_snapshot_empty_for_good(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		$attempt = 0;
+		add_filter( 'pusers_acf_fields', static function () use ( &$attempt ): array {
+			++$attempt;
+			if ( 1 === $attempt ) {
+				throw new \RuntimeException( 'chwilowy blad' );
+			}
+			return array( array( 'name' => 'pwz', 'label' => 'PWZ', 'type' => 'text' ) );
+		} );
+		$source = new AcfFieldSource( 'group_abc' );
+		try {
+			$source->fields();
+			$this->fail( 'Wyjatek filtra powinien wyjsc na zewnatrz.' );
+		} catch ( \RuntimeException $e ) {
+			$this->assertSame( 'chwilowy blad', $e->getMessage() );
+		}
+		$this->assertSame( array( 'pwz' => 'PWZ' ), $source->fields() );
+	}
+
+	public function test_group_exists_and_fields_read_the_same_state_within_an_instance(): void {
+		$present = true;
+		add_filter( 'pusers_acf_groups', static function () use ( &$present ): array {
+			return $present ? array( 'group_abc' => 'Rejestracja' ) : array();
+		} );
+		add_filter( 'pusers_acf_fields', static fn (): array => array( array( 'name' => 'pwz', 'label' => 'PWZ', 'type' => 'text' ) ) );
+		$source = new AcfFieldSource( 'group_abc' );
+		$this->assertSame( array( 'pwz' => 'PWZ' ), $source->fields() );
+
+		$present = false;
+		// Grupa zniknęła po wczytaniu migawki: obie odpowiedzi nadal pochodzą z jednego stanu.
+		$this->assertTrue( $source->groupExists() );
+		$this->assertSame( array( 'pwz' => 'PWZ' ), $source->fields() );
+
+		// Nowa instancja widzi nowy stan w obu miejscach.
+		$fresh = new AcfFieldSource( 'group_abc' );
+		$this->assertFalse( $fresh->groupExists() );
+		$this->assertSame( array(), $fresh->fields() );
+	}
+
 	public function test_adding_types_does_not_change_what_fields_returns(): void {
 		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
 		add_filter( 'pusers_acf_fields', static fn (): array => array(

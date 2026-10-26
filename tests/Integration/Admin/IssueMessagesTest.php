@@ -66,6 +66,15 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'matrix_required_field_not_in_source', $blocked );
 	}
 
+	public function test_missing_field_messages_mention_unsupported_field_types(): void {
+		$context = array( 'profession' => 'lekarz', 'field' => 'dane' );
+		foreach ( array( SettingsIssue::error( 'matrix_required_field_not_in_source', $context ), SettingsIssue::warning( 'matrix_field_not_in_source', $context ) ) as $issue ) {
+			$text = IssueMessages::text( $issue );
+			$this->assertStringContainsString( 'typ nieobsługiwany przez wtyczkę', $text, $issue->code );
+			$this->assertStringContainsString( 'kontener', $text, $issue->code );
+		}
+	}
+
 	public function test_unknown_code_falls_back_to_a_generic_message(): void {
 		$text = IssueMessages::text( SettingsIssue::warning( 'cos_nowego' ) );
 		$this->assertNotSame( '', $text );

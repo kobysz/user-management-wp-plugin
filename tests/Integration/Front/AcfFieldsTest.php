@@ -63,8 +63,25 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 			20
 		);
 		$fields = new AcfFields( 'group_abc' );
+		// Ta asercja przechodzi także bez wykluczenia kontenerów (`sub_fields` nigdy nie są czytane),
+		// więc NIE chroni przed kontenerem. Dowodem jest asercja `fromRequest()` poniżej i testy źródła.
 		$this->assertSame( array( 'zgoda', 'newsletter' ), $fields->booleanKeys() );
 		$this->assertSame( array(), $fields->fromRequest( array( AcfFields::INPUT => array( 'dane' => array( 'zgoda2' => '0' ) ) ) ) );
+	}
+
+	public function test_numeric_field_name_is_a_string_in_boolean_keys_and_still_read_from_the_request(): void {
+		add_filter(
+			'pusers_acf_fields',
+			static function ( array $raw ): array {
+				$raw[] = array( 'name' => '123', 'label' => 'Numeryczne', 'type' => 'true_false' );
+				return $raw;
+			},
+			20
+		);
+		$fields = new AcfFields( 'group_abc' );
+		// Rzutowanie w booleanKeys() działa, bo wartości trafiają do listy (w źródle klucz jest int).
+		$this->assertSame( array( 'zgoda', 'newsletter', '123' ), $fields->booleanKeys() );
+		$this->assertSame( array( 123 => '1' ), $fields->fromRequest( array( AcfFields::INPUT => array( '123' => '1' ) ) ) );
 	}
 
 	public function test_boolean_keys_are_empty_when_the_group_disappeared(): void {

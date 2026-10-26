@@ -298,7 +298,7 @@ final class MatrixScreen {
 
 		echo '<h2>' . esc_html__( 'Pola spoza wybranej grupy', 'portal-users' ) . '</h2>';
 		if ( $readable ) {
-			echo '<p>' . esc_html__( 'Macierz zawiera wpisy pól, których nie ma w wybranej grupie. Usunięcie zdejmuje wpisy tego pola u wszystkich profesji.', 'portal-users' ) . '</p>';
+			echo '<p>' . esc_html__( 'Macierz zawiera wpisy pól, których nie ma w wybranej grupie. Usunięcie zdejmuje wpisy tego pola u wszystkich profesji. Pole może też istnieć w ACF, ale mieć typ nieobsługiwany przez wtyczkę (kontener albo typ układowy).', 'portal-users' ) . '</p>';
 		} else {
 			echo '<p>' . esc_html__( 'Wybranej grupy pól nie da się odczytać, więc nie wiadomo, które pola są martwe. Usuwanie jest wyłączone.', 'portal-users' ) . '</p>';
 		}

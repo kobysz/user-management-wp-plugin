@@ -33,9 +33,28 @@ final class AcfFieldSource implements FieldSource {
 	/**
 	 * Migawka definicji pól (null, dopóki niewczytana).
 	 *
+	 * Powstaje raz na instancję i unieważnia ją WYŁĄCZNIE nowa instancja. To zamierzone: render
+	 * formularza ma widzieć jeden spójny zestaw pól, więc filtr dodany po pierwszym odczycie
+	 * nie zmienia wyniku tej instancji.
+	 *
 	 * @var array<string, array<string, mixed>>|null
 	 */
 	private ?array $snapshot = null;
+
+	/**
+	 * Czy trwa wczytywanie migawki (filtr wywołujący źródło z środka dostaje pustą listę, bez rekurencji).
+	 *
+	 * @var bool
+	 */
+	private bool $loading = false;
+
+	/**
+	 * Zapamiętany wynik `groupExists()`, wspólny z migawką: jedno źródło prawdy o czytelności grupy
+	 * w obrębie instancji (bramka rejestracji opiera się na `groupExists()`).
+	 *
+	 * @var bool|null
+	 */
+	private ?bool $groupExists = null;
 
 	/**
 	 * Klucz grupy ACF.
@@ -59,7 +78,11 @@ final class AcfFieldSource implements FieldSource {
 	 * @return bool
 	 */
 	public function groupExists(): bool {
-		return array_key_exists( $this->groupKey, AcfGroupList::groups() );
+		if ( null === $this->groupExists ) {
+			$this->groupExists = array_key_exists( $this->groupKey, AcfGroupList::groups() );
+		}
+
+		return $this->groupExists;
 	}
 
 	/**
@@ -70,7 +93,7 @@ final class AcfFieldSource implements FieldSource {
 	 * ACF Pro w środowisku testowym testy podstawiają surowe pola tym filtrem) oraz punktem
 	 * rozszerzeń. Dostaje surową listę pól ACF (tablice z kluczami `name` i `label`) i grupę.
 	 *
-	 * @return array<string, string> Klucz pola => etykieta.
+	 * @return array<int|string, string> Klucz pola => etykieta. Nazwa o postaci liczby (np. `123`) staje się kluczem int.
 	 */
 	public function fields(): array {
 		$fields = array();
@@ -89,7 +112,7 @@ final class AcfFieldSource implements FieldSource {
 	 * pary klucz => etykieta. Pola bez nazwy lub bez typu są pomijane. Korzysta z tej samej
 	 * migawki definicji co `fields()`, więc oba widoki nie mogą się rozjechać.
 	 *
-	 * @return array<string, string> Klucz pola => typ ACF.
+	 * @return array<int|string, string> Klucz pola => typ ACF. Nazwa o postaci liczby (np. `123`) staje się kluczem int.
 	 */
 	public function fieldTypes(): array {
 		$types = array();
@@ -103,8 +126,8 @@ final class AcfFieldSource implements FieldSource {
 		 * Filtruje mapę klucz pola => typ ACF. Punkt rozszerzeń dla pól, których typ
 		 * definiuje inne źródło niż ACF.
 		 *
-		 * @param array<string, string> $types    Klucz pola => typ ACF.
-		 * @param string                $groupKey Klucz grupy.
+		 * @param array<int|string, string> $types    Klucz pola => typ ACF.
+		 * @param string                    $groupKey Klucz grupy.
 		 */
 		$filtered = apply_filters( 'pusers_acf_field_types', $types, $this->groupKey );
 		if ( ! is_array( $filtered ) ) {
@@ -114,7 +137,7 @@ final class AcfFieldSource implements FieldSource {
 		$result = array();
 		foreach ( $filtered as $name => $type ) {
 			if ( is_string( $type ) ) {
-				$result[ (string) $name ] = $type;
+				$result[ $name ] = $type;
 			}
 		}
 
@@ -141,10 +164,31 @@ final class AcfFieldSource implements FieldSource {
 		if ( null !== $this->snapshot ) {
 			return $this->snapshot;
 		}
+		if ( $this->loading ) {
+			return array();
+		}
 
-		$this->snapshot = array();
+		$this->loading = true;
+		try {
+			// Wynik budowany lokalnie i przypisywany dopiero po udanym wczytaniu: wyjątek w filtrze
+			// nie zostawia na stałe pustej migawki.
+			$definitions    = $this->load();
+			$this->snapshot = $definitions;
+		} finally {
+			$this->loading = false;
+		}
+
+		return $definitions;
+	}
+
+	/**
+	 * Wczytuje definicje z ACF i filtra `pusers_acf_fields`, bez typów nieobsługiwanych.
+	 *
+	 * @return array<string, array<string, mixed>>
+	 */
+	private function load(): array {
 		if ( ! $this->groupExists() ) {
-			return $this->snapshot;
+			return array();
 		}
 
 		$raw = array();
@@ -163,9 +207,10 @@ final class AcfFieldSource implements FieldSource {
 		 */
 		$raw = apply_filters( 'pusers_acf_fields', $raw, $this->groupKey );
 		if ( ! is_array( $raw ) ) {
-			return $this->snapshot;
+			return array();
 		}
 
+		$definitions = array();
 		foreach ( $raw as $field ) {
 			if ( ! is_array( $field ) || ! isset( $field['name'] ) || ! is_string( $field['name'] ) || '' === $field['name'] ) {
 				continue;
@@ -173,9 +218,9 @@ final class AcfFieldSource implements FieldSource {
 			if ( isset( $field['type'] ) && is_string( $field['type'] ) && in_array( $field['type'], self::UNSUPPORTED_TYPES, true ) ) {
 				continue;
 			}
-			$this->snapshot[ $field['name'] ] = $field;
+			$definitions[ $field['name'] ] = $field;
 		}
 
-		return $this->snapshot;
+		return $definitions;
 	}
 }
