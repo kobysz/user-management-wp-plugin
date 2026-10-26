@@ -26,6 +26,11 @@ final class SubmissionValidatorTest extends TestCase {
 					'credential_type' => 'physician_pwz',
 				),
 				array(
+					'key'             => 'lekarz-opcjonalny',
+					'label'           => 'Lekarz (numer opcjonalny)',
+					'credential_type' => 'physician_pwz',
+				),
+				array(
 					'key'             => 'student',
 					'label'           => 'Student',
 					'credential_type' => 'none',
@@ -38,6 +43,10 @@ final class SubmissionValidatorTest extends TestCase {
 					'pwz'   => 'required',
 					'zgoda' => 'required',
 					'pwzp'  => 'hidden',
+				),
+				'lekarz-opcjonalny' => array(
+					'pwz'   => 'visible',
+					'zgoda' => 'required',
 				),
 				'student' => array(
 					'pwz'      => 'hidden',
@@ -145,5 +154,33 @@ final class SubmissionValidatorTest extends TestCase {
 			)
 		);
 		$this->assertSame( '1234567', $r->values()['pwz'] );
+	}
+
+	public function test_separator_only_number_in_required_field_is_a_hard_error(): void {
+		$r = $this->validator()->validate(
+			'lekarz',
+			'pwz',
+			array(
+				'pwz'   => '-',
+				'zgoda' => '1',
+			)
+		);
+		$this->assertFalse( $r->isValid() );
+		$this->assertSame( 'required', $r->errorFor( 'pwz' ) );
+		$this->assertSame( '-', $r->values()['pwz'] );
+	}
+
+	public function test_separator_only_number_in_optional_field_is_a_warning(): void {
+		$r = $this->validator()->validate(
+			'lekarz-opcjonalny',
+			'pwz',
+			array(
+				'pwz'   => '-',
+				'zgoda' => '1',
+			)
+		);
+		$this->assertTrue( $r->isValid() );
+		$this->assertSame( 'empty', $r->credentialWarning() );
+		$this->assertSame( '-', $r->values()['pwz'] );
 	}
 }

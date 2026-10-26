@@ -67,8 +67,15 @@ final class SubmissionValidator {
 				if ( $result->isValid() ) {
 					$kept[ $credentialFieldKey ] = $result->normalized();
 				} else {
-					$kept[ $credentialFieldKey ] = Normalizer::clean( $raw );
+					$cleaned = Normalizer::clean( $raw );
+					// Same separatory: zachowaj wpisaną treść, redakcja ma widzieć, co użytkownik wpisał.
+					$kept[ $credentialFieldKey ] = '' === $cleaned ? $raw : $cleaned;
 					$warning                     = $result->code();
+
+					// Numer pusty po normalizacji to brak numeru, a nie zły numer.
+					if ( 'empty' === $result->code() && in_array( $credentialFieldKey, $this->matrix->requiredFields( $professionKey ), true ) ) {
+						$errors[ $credentialFieldKey ] = 'required';
+					}
 				}
 			} else {
 				$warning = 'invalid_format';
