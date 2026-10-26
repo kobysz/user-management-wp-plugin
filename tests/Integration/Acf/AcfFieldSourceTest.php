@@ -16,6 +16,7 @@ final class AcfFieldSourceTest extends WP_UnitTestCase {
 	public function tear_down(): void {
 		remove_all_filters( 'pusers_acf_groups' );
 		remove_all_filters( 'pusers_acf_fields' );
+		remove_all_filters( 'pusers_acf_field_types' );
 		parent::tear_down();
 	}
 
@@ -71,5 +72,42 @@ final class AcfFieldSourceTest extends WP_UnitTestCase {
 		add_filter( 'pusers_acf_groups', static fn (): string => 'bzdura' );
 		$this->assertSame( array(), AcfGroupList::groups() );
 		$this->assertFalse( ( new AcfFieldSource( 'group_abc' ) )->groupExists() );
+	}
+
+	public function test_field_types_map_field_names_to_their_acf_type(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static fn (): array => array(
+			array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text' ),
+			array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false' ),
+			array( 'label' => 'Bez nazwy', 'type' => 'text' ),
+			array( 'name' => 'bez_typu', 'label' => 'Bez typu' ),
+		) );
+		$this->assertSame( array( 'pwz' => 'text', 'zgoda' => 'true_false' ), ( new AcfFieldSource( 'group_abc' ) )->fieldTypes() );
+	}
+
+	public function test_field_types_are_empty_when_the_group_disappeared(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array() );
+		add_filter( 'pusers_acf_fields', static fn (): array => array( array( 'name' => 'zgoda', 'type' => 'true_false' ) ) );
+		$this->assertSame( array(), ( new AcfFieldSource( 'group_znikla' ) )->fieldTypes() );
+	}
+
+	public function test_field_types_filter_can_override_the_map_and_survives_garbage(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static fn (): array => array( array( 'name' => 'zgoda', 'type' => 'text' ) ) );
+		add_filter( 'pusers_acf_field_types', static fn ( array $types ): array => array( 'zgoda' => 'true_false' ) + $types );
+		$this->assertSame( array( 'zgoda' => 'true_false' ), ( new AcfFieldSource( 'group_abc' ) )->fieldTypes() );
+
+		remove_all_filters( 'pusers_acf_field_types' );
+		add_filter( 'pusers_acf_field_types', static fn (): string => 'bzdura' );
+		$this->assertSame( array(), ( new AcfFieldSource( 'group_abc' ) )->fieldTypes() );
+	}
+
+	public function test_adding_types_does_not_change_what_fields_returns(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static fn (): array => array(
+			array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text' ),
+			array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false' ),
+		) );
+		$this->assertSame( array( 'pwz' => 'Numer PWZ', 'zgoda' => 'Regulamin' ), ( new AcfFieldSource( 'group_abc' ) )->fields() );
 	}
 }
