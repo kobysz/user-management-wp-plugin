@@ -96,6 +96,8 @@ Zachowanie domeny jest przypięte testem `LoginGateTest::test_unrecognised_store
 
 **Do rozważenia przy projektowaniu Planu 4:** czy `LoginGate::decide()` nie powinno przyjmować trzeciego stanu („wartość obecna, nierozpoznana"), żeby odmowa i wpis do logu były decyzją domeny, a nie dyscypliną adaptera. Wymagałoby to rozszerzenia sygnatury `tryFromStored()`.
 
+**Stan po Planie 3:** rozróżnienie jest już **obserwowalne** — `AccountStatusRepository::isUnrecognised( int $userId ): bool` zwraca prawdę, gdy metadana jest obecna i niepusta, ale nierozpoznana (także gdy nie jest tekstem), a fałsz przy braku metadanej i przy wartości pustej. Plan 3 celowo **nie** wykonuje odmowy ani wpisu do logu, bo brama logowania nie należy do niego. Plan 4 ma obowiązek tę metodę skonsultować **przed** wywołaniem `LoginGate::decide()` i przy prawdzie odmówić wejścia oraz zapisać wpis do logu zdarzeń — przekazanie w tej sytuacji `null` do bramy wpuszcza konto, które powinno być zablokowane. Pierwsza wersja briefu Taska 1 w Planie 3 kazała zlepić oba stany w `null` i wykonawca to wyłapał; ta pozycja backlogu była jedynym miejscem, które o wymogu pamiętało.
+
 ---
 
 ## Plan 7 — Eksport, RODO, import, aktywacja
