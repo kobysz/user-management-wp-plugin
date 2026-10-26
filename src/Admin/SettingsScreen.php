@@ -317,7 +317,7 @@ final class SettingsScreen {
 		self::row_start( __( 'Odinstalowanie', 'portal-users' ), 'delete_data_on_uninstall' );
 		self::checkbox( 'delete_data_on_uninstall', __( 'Usuń dane wtyczki przy jej odinstalowaniu', 'portal-users' ), $settings->deleteDataOnUninstall );
 		echo '<p class="description"><strong>' . esc_html__( 'Uwaga:', 'portal-users' ) . '</strong> '
-			. esc_html__( 'po zaznaczeniu tej opcji usunięcie wtyczki nieodwracalnie skasuje wszystkie jej ustawienia: ustawienia ogólne, listę profesji i macierz pól. Bez zaznaczenia dane zostają w bazie.', 'portal-users' )
+			. esc_html__( 'po zaznaczeniu tej opcji usunięcie wtyczki nieodwracalnie skasuje: ustawienia ogólne, listę profesji, macierz pól, log zdarzeń (zapis tego, kto i kiedy zatwierdził albo odrzucił konto) oraz archiwum wersji regulaminu przypisanych do kont. Bez zaznaczenia dane zostają w bazie.', 'portal-users' )
 			. '</p>';
 		self::row_end();
 	}

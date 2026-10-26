@@ -329,5 +329,16 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		SettingsScreen::render();
 		$html = (string) ob_get_clean();
 		$this->assertStringContainsString( 'nieodwracalnie', $html );
+		// Każda rzecz kasowana przez Uninstaller::run() musi być w ostrzeżeniu po imieniu.
+		$deleted = array(
+			'ustawienia ogólne',
+			'listę profesji',
+			'macierz pól',
+			'log zdarzeń',
+			'archiwum wersji regulaminu',
+		);
+		foreach ( $deleted as $item ) {
+			$this->assertStringContainsString( $item, $html, 'Ostrzeżenie nie wymienia: ' . $item );
+		}
 	}
 }
