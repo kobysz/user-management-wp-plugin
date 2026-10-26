@@ -31,6 +31,7 @@ final class MatrixScreen {
 	public const ACTION_DELETE_FIELD = 'pusers_delete_matrix_field';
 
 	public const NOTICE_FIELD_REMOVED = 'matrix_field_removed';
+	public const NOTICE_FIELD_REFUSED = 'matrix_field_refused';
 
 	private const FIELD_PREFIX = 'pusers_';
 
@@ -76,10 +77,15 @@ final class MatrixScreen {
 		Request::guard( self::ACTION_SAVE );
 		self::require_post();
 
+		// Gdy grupa jest czytelna, przyjmujemy tylko jej pola: wpis pola, którego formularz nie
+		// wyrenderuje, blokowałby rejestrację (pole wymagane, którego nikt nie może wypełnić).
+		$source = self::source();
+		$known  = $source->groupExists() ? $source->fields() : null;
+
 		$merged = FieldMatrixRepository::get()->toArray();
 		foreach ( self::posted_matrix() as $profession => $fields ) {
 			foreach ( $fields as $field => $state ) {
-				if ( '' === $state ) {
+				if ( '' === $state || ( null !== $known && ! array_key_exists( $field, $known ) ) ) {
 					continue;
 				}
 				$merged[ $profession ][ $field ] = $state;
@@ -100,14 +106,20 @@ final class MatrixScreen {
 		Request::guard( self::ACTION_DELETE_FIELD );
 		self::require_post();
 
-		$field = self::posted_string( 'field' );
-		if ( '' !== $field ) {
-			$rows = FieldMatrixRepository::get()->toArray();
-			foreach ( $rows as $profession => $fields ) {
-				unset( $rows[ $profession ][ $field ] );
-			}
-			FieldMatrixRepository::save( FieldMatrix::fromArray( $rows ) );
+		// Usuwamy tylko pole martwe: grupa istnieje, a pola w niej nie ma. Gdy źródła nie da się
+		// przeczytać, nie wiadomo, co jest martwe, więc macierz zostaje nietknięta.
+		$field  = self::posted_string( 'field' );
+		$source = self::source();
+		if ( '' === $field || ! $source->groupExists() || array_key_exists( $field, $source->fields() ) ) {
+			Request::redirect( Menu::SLUG_MATRIX, self::NOTICE_FIELD_REFUSED );
+			return;
 		}
+
+		$rows = FieldMatrixRepository::get()->toArray();
+		foreach ( $rows as $profession => $fields ) {
+			unset( $rows[ $profession ][ $field ] );
+		}
+		FieldMatrixRepository::save( FieldMatrix::fromArray( $rows ) );
 
 		Request::redirect( Menu::SLUG_MATRIX, self::NOTICE_FIELD_REMOVED );
 	}
@@ -126,17 +138,21 @@ final class MatrixScreen {
 
 		$professions = ProfessionRepository::get()->all();
 		$matrix      = FieldMatrixRepository::get();
-		$source      = self::source()->fields();
+		$acf         = self::source();
+		$readable    = $acf->groupExists();
+		$source      = $acf->fields();
 
 		if ( array() === $professions ) {
 			echo '<p>' . esc_html__( 'Najpierw zdefiniuj profesje, a potem ustaw dla nich pola.', 'portal-users' ) . '</p>';
+		} elseif ( ! $readable ) {
+			echo '<p>' . esc_html__( 'Wybranej grupy pól nie wskazano albo nie istnieje już w ACF. Wskaż grupę w ustawieniach.', 'portal-users' ) . '</p>';
 		} elseif ( array() === $source ) {
-			echo '<p>' . esc_html__( 'Wybrana grupa pól nie zawiera żadnych pól. Wskaż grupę w ustawieniach.', 'portal-users' ) . '</p>';
+			echo '<p>' . esc_html__( 'Wybrana grupa pól nie zawiera żadnych pól.', 'portal-users' ) . '</p>';
 		} else {
 			self::render_matrix_form( $professions, $matrix, $source );
 		}
 
-		self::render_dead_rows( $matrix, $source );
+		self::render_dead_rows( $matrix, $source, $readable );
 		echo '</div>';
 	}
 
@@ -151,6 +167,9 @@ final class MatrixScreen {
 		);
 		if ( isset( $texts[ $notice ] ) ) {
 			echo '<div class="notice notice-success"><p>' . esc_html( $texts[ $notice ] ) . '</p></div>';
+		}
+		if ( self::NOTICE_FIELD_REFUSED === $notice ) {
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nie usunięto: pole jest w wybranej grupie albo grupy nie da się odczytać.', 'portal-users' ) . '</p></div>';
 		}
 	}
 
@@ -240,9 +259,10 @@ final class MatrixScreen {
 	 * Pola obecne w macierzy, a nieobecne w źródle, z osobnym formularzem usunięcia każdego.
 	 *
 	 * @param FieldMatrix           $matrix Zapisana macierz.
-	 * @param array<string, string> $source Pola źródła.
+	 * @param array<string, string> $source   Pola źródła.
+	 * @param bool                  $readable Czy wybraną grupę da się odczytać; bez tego nie oferujemy usuwania.
 	 */
-	private static function render_dead_rows( FieldMatrix $matrix, array $source ): void {
+	private static function render_dead_rows( FieldMatrix $matrix, array $source, bool $readable ): void {
 		$dead = array();
 		foreach ( $matrix->toArray() as $profession => $fields ) {
 			foreach ( array_keys( $fields ) as $fieldKey ) {
@@ -257,11 +277,19 @@ final class MatrixScreen {
 		}
 
 		echo '<h2>' . esc_html__( 'Pola spoza wybranej grupy', 'portal-users' ) . '</h2>';
-		echo '<p>' . esc_html__( 'Macierz zawiera wpisy pól, których nie ma w wybranej grupie. Usunięcie zdejmuje wpisy tego pola u wszystkich profesji.', 'portal-users' ) . '</p>';
+		if ( $readable ) {
+			echo '<p>' . esc_html__( 'Macierz zawiera wpisy pól, których nie ma w wybranej grupie. Usunięcie zdejmuje wpisy tego pola u wszystkich profesji.', 'portal-users' ) . '</p>';
+		} else {
+			echo '<p>' . esc_html__( 'Wybranej grupy pól nie da się odczytać, więc nie wiadomo, które pola są martwe. Usuwanie jest wyłączone.', 'portal-users' ) . '</p>';
+		}
 		echo '<table class="widefat striped"><thead><tr><th scope="col">' . esc_html__( 'Pole', 'portal-users' ) . '</th><th scope="col">' . esc_html__( 'Profesje', 'portal-users' ) . '</th><th scope="col"></th></tr></thead><tbody>';
 		foreach ( $dead as $fieldKey => $professionKeys ) {
 			$fieldKey = (string) $fieldKey;
 			echo '<tr data-dead-field="' . esc_attr( $fieldKey ) . '"><td><code>' . esc_html( $fieldKey ) . '</code></td><td>' . esc_html( implode( ', ', $professionKeys ) ) . '</td><td>';
+			if ( ! $readable ) {
+				echo '</td></tr>';
+				continue;
+			}
 			echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
 			self::form_header( self::ACTION_DELETE_FIELD );
 			printf( '<input type="hidden" name="%1$s" value="%2$s" />', esc_attr( self::FIELD_PREFIX . 'field' ), esc_attr( $fieldKey ) );
@@ -324,12 +352,14 @@ final class MatrixScreen {
 		$raw = wp_unslash( $_POST[ $name ] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- guard() w obsłudze żądania; wartości czyszczone niżej.
 		$out = array();
 		foreach ( $raw as $profession => $fields ) {
-			if ( ! is_array( $fields ) || '' === (string) $profession ) {
+			$profession = sanitize_key( (string) $profession );
+			if ( ! is_array( $fields ) || '' === $profession ) {
 				continue;
 			}
 			foreach ( $fields as $field => $state ) {
-				if ( is_string( $state ) && '' !== (string) $field ) {
-					$out[ (string) $profession ][ (string) $field ] = sanitize_text_field( $state );
+				$field = sanitize_key( (string) $field );
+				if ( is_string( $state ) && '' !== $field ) {
+					$out[ $profession ][ $field ] = sanitize_text_field( $state );
 				}
 			}
 		}
