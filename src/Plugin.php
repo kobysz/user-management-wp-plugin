@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers;
 
+use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
@@ -55,6 +56,7 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( Menu::class, 'register' ) );
 		add_action( 'pusers_register_features', array( SettingsScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( ProfessionsScreen::class, 'register' ) );
+		add_action( 'pusers_register_features', array( MatrixScreen::class, 'register' ) );
 	}
 
 	/**

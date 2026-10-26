@@ -1,0 +1,324 @@
+<?php
+/**
+ * Testy ekranu macierzy profesja x pole.
+ */
+
+declare( strict_types=1 );
+
+namespace PortalUsers\Tests\Integration\Admin;
+
+use PortalUsers\Admin\MatrixScreen;
+use PortalUsers\Admin\Menu;
+use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Domain\Fields\FieldMatrix;
+use PortalUsers\Domain\Fields\FieldState;
+use PortalUsers\Domain\Profession\ProfessionCollection;
+use PortalUsers\Persistence\FieldMatrixRepository;
+use PortalUsers\Persistence\ProfessionRepository;
+use PortalUsers\Persistence\SettingsRepository;
+use WP_UnitTestCase;
+use WPDieException;
+
+final class MatrixScreenTest extends WP_UnitTestCase {
+
+	use AdminPostingTrait;
+
+	/**
+	 * Adres ostatniego przekierowania (przekierowanie jest anulowane, żeby test przeżył).
+	 *
+	 * @var string
+	 */
+	private string $redirected = '';
+
+	/**
+	 * Anulujący filtr przekierowania.
+	 *
+	 * @var callable
+	 */
+	private $cancelRedirect;
+
+	/**
+	 * Metoda żądania sprzed testu.
+	 *
+	 * @var string
+	 */
+	private string $originalMethod = 'GET';
+
+	/**
+	 * Stan globalnych hooków admin_menu sprzed testu.
+	 *
+	 * @var mixed
+	 */
+	private $savedAdminMenuHooks;
+
+	/**
+	 * Stan globalnego $submenu sprzed testu.
+	 *
+	 * @var mixed
+	 */
+	private $savedSubmenu;
+
+	public function set_up(): void {
+		parent::set_up();
+		$this->savedAdminMenuHooks = isset( $GLOBALS['wp_filter']['admin_menu'] ) ? clone $GLOBALS['wp_filter']['admin_menu'] : null;
+		$this->savedSubmenu        = $GLOBALS['submenu'] ?? null;
+		$this->redirected          = '';
+		$this->originalMethod      = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
+		$this->cancelRedirect      = function ( $location ) {
+			$this->redirected = (string) $location;
+			return false;
+		};
+		add_filter( 'wp_redirect', $this->cancelRedirect );
+	}
+
+	public function tear_down(): void {
+		remove_filter( 'wp_redirect', $this->cancelRedirect );
+		remove_all_filters( 'pusers_acf_fields' );
+		remove_all_filters( 'pusers_acf_groups' );
+		$_POST                     = array();
+		$_GET                      = array();
+		$_REQUEST                  = array();
+		$_SERVER['REQUEST_METHOD'] = $this->originalMethod;
+		if ( null === $this->savedAdminMenuHooks ) {
+			unset( $GLOBALS['wp_filter']['admin_menu'] );
+		} else {
+			$GLOBALS['wp_filter']['admin_menu'] = $this->savedAdminMenuHooks;
+		}
+		if ( null === $this->savedSubmenu ) {
+			unset( $GLOBALS['submenu'] );
+		} else {
+			$GLOBALS['submenu'] = $this->savedSubmenu;
+		}
+		parent::tear_down();
+	}
+
+	/**
+	 * Konfiguruje grupę ACF z podanymi polami (name => label) i zapisuje ją w ustawieniach.
+	 *
+	 * @param array<string, string> $fields Pola źródła.
+	 */
+	private function withSource( array $fields ): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter(
+			'pusers_acf_fields',
+			static function () use ( $fields ): array {
+				$out = array();
+				foreach ( $fields as $name => $label ) {
+					$out[] = array(
+						'name'  => $name,
+						'label' => $label,
+					);
+				}
+				return $out;
+			}
+		);
+		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_abc' ) ) );
+	}
+
+	private function renderAsAdmin(): string {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		ob_start();
+		MatrixScreen::render();
+		return (string) ob_get_clean();
+	}
+
+	public function test_saving_the_matrix_persists_the_three_states(): void {
+		$this->asAdminPosting( 'pusers_save_matrix', array(
+			'matrix' => array( 'lekarz' => array( 'pwz' => 'required', 'miasto' => 'visible', 'pwzp' => 'hidden' ) ),
+		) );
+		MatrixScreen::handle_save();
+		$matrix = FieldMatrixRepository::get();
+		$this->assertSame( FieldState::Required, $matrix->stateFor( 'lekarz', 'pwz' ) );
+		$this->assertSame( FieldState::Visible, $matrix->stateFor( 'lekarz', 'miasto' ) );
+		$this->assertSame( FieldState::Hidden, $matrix->stateFor( 'lekarz', 'pwzp' ) );
+		$this->assertArrayHasKey( 'pwzp', FieldMatrixRepository::get()->toArray()['lekarz'], 'Jawne "hidden" jest zapisanym wpisem.' );
+	}
+
+	public function test_unknown_state_from_the_request_is_stored_as_hidden(): void {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$this->asAdminPosting( 'pusers_save_matrix', array(
+			'matrix' => array( 'lekarz' => array( 'pwz' => 'bzdura' ) ),
+		) );
+		MatrixScreen::handle_save();
+		$this->assertSame( FieldState::Hidden, FieldMatrixRepository::get()->stateFor( 'lekarz', 'pwz' ) );
+		$this->assertSame( 'hidden', FieldMatrixRepository::get()->toArray()['lekarz']['pwz'], 'Wpis przepisany na "hidden", nie usunięty.' );
+	}
+
+	public function test_screen_lists_every_field_from_the_source_including_unconfigured_ones(): void {
+		$this->withSource( array( 'pwz' => 'Numer PWZ', 'nowe' => 'Nowe pole' ) );
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'none' ),
+		) ) );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$html = $this->renderAsAdmin();
+		$this->assertStringContainsString( 'Nowe pole', $html );
+		// Znacznik musi leżeć w wierszu pola "nowe": raport nad tabelą też mówi o braku ustawienia.
+		$this->assertMatchesRegularExpression(
+			'#<tr data-field="nowe">(?:(?!</tr>).)*<span class="pusers-unconfigured">nieskonfigurowane</span>#s',
+			$html
+		);
+		$this->assertDoesNotMatchRegularExpression(
+			'#<tr data-field="pwz">(?:(?!</tr>).)*pusers-unconfigured#s',
+			$html,
+			'Pole z wpisem w macierzy nie jest nieskonfigurowane.'
+		);
+	}
+
+	public function test_screen_reports_consistency_issues(): void {
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ),
+		) ) );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'hidden' ) ) ) );
+		$codes = array_map( static fn ( $i ): string => $i->code, MatrixScreen::checker()->issues() );
+		$this->assertContains( 'credential_field_not_required', $codes );
+	}
+
+	public function test_rendered_screen_shows_the_consistency_report_above_the_table(): void {
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ),
+		) ) );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'hidden' ) ) ) );
+		$html   = $this->renderAsAdmin();
+		$report = strpos( $html, 'nie jest w macierzy oznaczone jako wymagane' );
+		$table  = strpos( $html, '<table' );
+		$this->assertNotFalse( $report );
+		$this->assertNotFalse( $table );
+		$this->assertLessThan( $table, $report );
+	}
+
+	public function test_rendered_screen_carries_a_nonce_and_escapes_field_labels(): void {
+		$this->withSource( array( 'x' => '<script>alert(1)</script>' ) );
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'none' ),
+		) ) );
+		$html = $this->renderAsAdmin();
+		$this->assertStringContainsString( 'pusers_nonce', $html );
+		$this->assertStringContainsString( '&lt;script&gt;alert(1)&lt;/script&gt;', $html );
+		$this->assertStringNotContainsString( '<script>alert(1)</script>', $html );
+	}
+
+	// --- Dopisane na polecenie: scalanie, puste wartości, usuwanie martwych wierszy, uprawnienia. ---
+
+	public function test_saving_merges_into_the_stored_matrix_instead_of_replacing_it(): void {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array(
+			'lekarz'       => array( 'pwz' => 'required', 'stare' => 'visible' ),
+			'pielegniarka' => array( 'pwzp' => 'required' ),
+		) ) );
+		$this->asAdminPosting( 'pusers_save_matrix', array(
+			'matrix' => array( 'lekarz' => array( 'pwz' => 'visible' ) ),
+		) );
+		MatrixScreen::handle_save();
+		$matrix = FieldMatrixRepository::get();
+		$this->assertSame( FieldState::Visible, $matrix->stateFor( 'lekarz', 'pwz' ), 'Przysłana para jest nadpisana.' );
+		$this->assertSame( FieldState::Visible, $matrix->stateFor( 'lekarz', 'stare' ), 'Pole spoza żądania zostaje.' );
+		$this->assertSame( FieldState::Required, $matrix->stateFor( 'pielegniarka', 'pwzp' ), 'Profesja spoza żądania zostaje.' );
+	}
+
+	public function test_an_empty_state_leaves_the_cell_unconfigured(): void {
+		$this->asAdminPosting( 'pusers_save_matrix', array(
+			'matrix' => array( 'lekarz' => array( 'pwz' => 'required', 'nowe' => '' ) ),
+		) );
+		MatrixScreen::handle_save();
+		$saved = FieldMatrixRepository::get()->toArray();
+		$this->assertSame( 'required', $saved['lekarz']['pwz'] );
+		$this->assertArrayNotHasKey( 'nowe', $saved['lekarz'], 'Pusty wybór nie zapisuje stanu "hidden".' );
+	}
+
+	public function test_saving_redirects_back_with_a_saved_notice(): void {
+		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'pwz' => 'visible' ) ) ) );
+		MatrixScreen::handle_save();
+		$this->assertStringContainsString( 'page=pusers-matrix', $this->redirected );
+		$this->assertStringContainsString( 'pusers_notice=saved', $this->redirected );
+	}
+
+	public function test_saving_is_refused_for_a_user_without_the_capability_and_changes_nothing(): void {
+		$this->asRolePosting( 'subscriber', 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		try {
+			MatrixScreen::handle_save();
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( array(), FieldMatrixRepository::get()->toArray() );
+		}
+	}
+
+	public function test_removing_a_dead_field_clears_only_that_field_for_every_profession(): void {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array(
+			'lekarz'       => array( 'pwz' => 'required', 'martwe' => 'visible' ),
+			'pielegniarka' => array( 'martwe' => 'required', 'pwzp' => 'required' ),
+			'student'      => array( 'miasto' => 'visible' ),
+		) ) );
+		$this->asAdminPosting( 'pusers_delete_matrix_field', array( 'field' => 'martwe' ) );
+		MatrixScreen::handle_delete_field();
+		$this->assertSame(
+			array(
+				'lekarz'       => array( 'pwz' => 'required' ),
+				'pielegniarka' => array( 'pwzp' => 'required' ),
+				'student'      => array( 'miasto' => 'visible' ),
+			),
+			FieldMatrixRepository::get()->toArray()
+		);
+		$this->assertStringContainsString( 'page=pusers-matrix', $this->redirected );
+	}
+
+	public function test_removing_a_dead_field_is_refused_without_the_capability(): void {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'martwe' => 'visible' ) ) ) );
+		$this->asRolePosting( 'subscriber', 'pusers_delete_matrix_field', array( 'field' => 'martwe' ) );
+		try {
+			MatrixScreen::handle_delete_field();
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( FieldState::Visible, FieldMatrixRepository::get()->stateFor( 'lekarz', 'martwe' ) );
+			$this->assertArrayHasKey( 'martwe', FieldMatrixRepository::get()->toArray()['lekarz'] );
+		}
+	}
+
+	public function test_removing_a_dead_field_is_refused_with_a_bad_nonce(): void {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'martwe' => 'visible' ) ) ) );
+		$this->asAdminPosting( 'pusers_delete_matrix_field', array( 'field' => 'martwe' ) );
+		$_POST['pusers_nonce'] = 'zly-nonce';
+		$_REQUEST              = $_POST;
+		try {
+			MatrixScreen::handle_delete_field();
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertArrayHasKey( 'martwe', FieldMatrixRepository::get()->toArray()['lekarz'] );
+		}
+	}
+
+	public function test_a_nonce_issued_for_saving_does_not_authorise_removal(): void {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'martwe' => 'visible' ) ) ) );
+		$this->asAdminPosting( 'pusers_save_matrix', array( 'field' => 'martwe' ) );
+		try {
+			MatrixScreen::handle_delete_field();
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertArrayHasKey( 'martwe', FieldMatrixRepository::get()->toArray()['lekarz'] );
+		}
+	}
+
+	public function test_dead_rows_are_listed_separately_with_a_removal_form(): void {
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'none' ),
+		) ) );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible', 'martwe' => 'visible' ) ) ) );
+		$html = $this->renderAsAdmin();
+		$this->assertStringNotContainsString( '<tr data-field="martwe">', $html, 'Martwe pole nie jest wierszem edytowalnej tabeli.' );
+		$this->assertMatchesRegularExpression( '#<tr data-dead-field="martwe">(?:(?!</tr>).)*name="pusers_field" value="martwe"#s', $html );
+		$this->assertStringContainsString( 'value="pusers_delete_matrix_field"', $html );
+	}
+
+	public function test_the_screen_registers_its_own_submenu_page_under_users(): void {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		remove_all_actions( 'admin_menu' );
+		global $submenu;
+		$submenu = array();
+		MatrixScreen::register();
+		do_action( 'admin_menu' );
+		$slugs = wp_list_pluck( $submenu['users.php'] ?? array(), 2 );
+		$this->assertContains( Menu::SLUG_MATRIX, $slugs );
+		$this->assertNotContains( Menu::SLUG_PROFESSIONS, $slugs );
+	}
+}
