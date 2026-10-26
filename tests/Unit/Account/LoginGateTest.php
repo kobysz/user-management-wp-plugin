@@ -43,4 +43,15 @@ final class LoginGateTest extends TestCase {
 		$this->assertNull( AccountStatus::tryFromStored( '' ) );
 		$this->assertNull( AccountStatus::tryFromStored( null ) );
 	}
+
+	public function test_unrecognised_stored_value_is_allowed_in_by_deliberate_decision(): void {
+		// Świadoma decyzja, nie luka: rozróżnienie braku klucza od wartości nierozpoznanej
+		// należy do warstwy przechowywania. Domena widzi tylko "stan albo brak stanu".
+		// Plan 4 traktuje wartość nierozpoznaną jako odmowę (z wpisem do logu).
+		foreach ( array( 'Approved', 'Pending', ' pending' ) as $raw ) {
+			$status = AccountStatus::tryFromStored( $raw );
+			$this->assertNull( $status );
+			$this->assertTrue( LoginGate::decide( $status )->allowed() );
+		}
+	}
 }
