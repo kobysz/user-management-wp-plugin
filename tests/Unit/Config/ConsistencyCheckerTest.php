@@ -153,6 +153,22 @@ final class ConsistencyCheckerTest extends TestCase {
 		$this->assertSame( array( 'matrix_profession_unknown' ), $this->codes( $checker ) );
 	}
 
+	/**
+	 * Wiersz osierocony nikogo nie blokuje, bo walidator kończy zgłoszenie na nieznanej profesji.
+	 * Gdyby błąd „rejestracja zablokowana" obejmował i jego, administrator gonił alarm bez treści.
+	 */
+	public function test_required_field_missing_from_source_stays_a_warning_for_an_unknown_profession(): void {
+		$checker = new ConsistencyChecker(
+			ProfessionCollection::fromArray( array() ),
+			FieldMatrix::fromArray( array( 'skasowana' => array( 'skasowane' => 'required' ) ) ),
+			$this->source( array() )
+		);
+		$issues = $checker->issues();
+		$this->assertSame( array( 'matrix_profession_unknown', 'matrix_field_not_in_source' ), $this->codes( $checker ) );
+		$this->assertSame( SettingsIssue::WARNING, $issues[0]->severity );
+		$this->assertSame( SettingsIssue::WARNING, $issues[1]->severity );
+	}
+
 	public function test_profession_without_credential_type_needs_no_credential_field(): void {
 		$checker = new ConsistencyChecker(
 			ProfessionCollection::fromArray( array( array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ) ) ),

@@ -24,7 +24,7 @@ final class Settings {
 	 * i spacji, które rozbijałyby listę odbiorców), kropki tylko między znakami; domena z etykiet
 	 * liter, cyfr i myślników, co najmniej dwie etykiety.
 	 */
-	private const EMAIL_PATTERN = '/^[a-z0-9!#$%&\x27*+\/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&\x27*+\/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/';
+	private const EMAIL_PATTERN = '/^[a-z0-9!#$%&\x27*+\/=?^_`{|}~\x80-\xff-]+(?:\.[a-z0-9!#$%&\x27*+\/=?^_`{|}~\x80-\xff-]+)*@[a-z0-9\x80-\xff](?:[a-z0-9\x80-\xff-]*[a-z0-9\x80-\xff])?(?:\.[a-z0-9\x80-\xff](?:[a-z0-9\x80-\xff-]*[a-z0-9\x80-\xff])?)+$/';
 
 	private const DEFAULT_TOKEN_HOURS = 48;
 	private const DEFAULT_PURGE_DAYS  = 7;

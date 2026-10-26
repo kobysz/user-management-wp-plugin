@@ -55,6 +55,16 @@ final class SettingsTest extends TestCase {
 		$this->assertSame( $good, $s->notifyEmails );
 	}
 
+	/**
+	 * Zacieśnienie wzorca pod przecinek nie może odciąć adresów prawdziwych: placówka
+	 * w domenie z polskimi znakami przestałaby po cichu dostawać powiadomienia o zgłoszeniach.
+	 */
+	public function test_accepts_addresses_with_non_ascii_letters(): void {
+		$good = array( 'biuro@szpital-łódź.pl', 'ńowak@x.co' );
+		$s    = Settings::fromArray( array( 'notify_emails' => $good ) );
+		$this->assertSame( $good, $s->notifyEmails );
+	}
+
 	public function test_deduplicates_and_trims_emails_case_insensitively(): void {
 		$s = Settings::fromArray( array( 'notify_emails' => array( ' A@example.test ', 'a@example.test' ) ) );
 		$this->assertSame( array( 'a@example.test' ), $s->notifyEmails );
