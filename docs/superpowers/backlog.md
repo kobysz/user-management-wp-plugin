@@ -139,6 +139,7 @@ Nie do rozstrzygnięcia z kodu, wymagają weryfikacji w źródłach:
 - **Format numeru PWZ pielęgniarki i położnej** — osiem znaków: dwie cyfry izby (01–45), pięć cyfr, litera `P` albo `A`. Źródło nieoficjalne (biblioteka PHP `czachor/polish-id-validators`). Potwierdzić na nipip.pl.
 - **Czy KIDL publikuje jakąkolwiek regułę kontrolną dla PWZDL** — dziś walidowany jest tylko format (cyfry bez zer wiodących, do 9 znaków).
 - **Rozpoznanie ACF Pro** — warunki pokrywają gałęzie 5.x i 6.x, ale nie zostały zweryfikowane na realnej instalacji ACF Pro. Fałszywy negatyw oznacza wtyczkę trwale bezczynną na portalu, który ACF Pro ma. Sprawdzić przed pierwszym wdrożeniem.
+- **Renderowanie pól przez ACF** (dochodzi w Planie 3) — w środowisku testowym nie ma ACF Pro, więc **cała** integracja jest sprawdzana przez filtry (`pusers_acf_groups`, `pusers_acf_fields`, `pusers_acf_field_types`) i atrapę `acf_render_field_wrap`. Testy dowodzą więc naszej strony umowy, nie zachowania ACF. Przed pierwszym wdrożeniem sprawdzić na żywym ACF Pro dwie rzeczy: czy `acf_prepare_field()` nie nadpisuje nazwy pola, którą ustawiamy (`prefix` i `name` dające `pusers_fields[<nazwa>]`), oraz czy pole typu `true_false` renderuje się z ukrytym zerem tak, jak zakłada normalizacja. Pomyłka w pierwszym punkcie znaczy formularz, z którego nie przychodzi nic; w drugim — odznaczoną zgodę spełniającą wymóg, czyli dokładnie awarię, przed którą normalizacja ma chronić.
 
 ---
 
