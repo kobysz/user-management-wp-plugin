@@ -16,6 +16,8 @@ use WPDieException;
 
 final class SettingsScreenTest extends WP_UnitTestCase {
 
+	use AdminPostingTrait;
+
 	/**
 	 * Adres ostatniego przekierowania (przekierowanie jest anulowane, żeby test przeżył).
 	 *
@@ -251,8 +253,7 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_saving_is_refused_for_a_user_without_the_capability_and_changes_nothing(): void {
-		$this->asAdminPosting( 'pusers_save_settings', array( 'approval_enabled' => '0' ) );
-		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
+		$this->asRolePosting( 'subscriber', 'pusers_save_settings', array( 'approval_enabled' => '0' ) );
 		try {
 			SettingsScreen::handle_save();
 			$this->fail( 'Oczekiwano wp_die().' );
@@ -328,24 +329,5 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		SettingsScreen::render();
 		$html = (string) ob_get_clean();
 		$this->assertStringContainsString( 'nieodwracalnie', $html );
-	}
-
-	/**
-	 * Przygotowuje żądanie zapisu od administratora: pola z prefiksem formularza i nonce.
-	 *
-	 * @param string                $action Akcja nonce'a.
-	 * @param array<string, string> $fields Pola bez prefiksu `pusers_`.
-	 */
-	private function asAdminPosting( string $action, array $fields ): void {
-		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
-		$post = array();
-		foreach ( $fields as $key => $value ) {
-			$post[ 'pusers_' . $key ] = $value;
-		}
-		$post['pusers_nonce'] = wp_create_nonce( $action );
-		// WordPress dodaje ukośniki do danych żądania; ekran musi je zdjąć.
-		$_POST    = wp_slash( $post );
-		$_REQUEST = $_POST;
-		$_SERVER['REQUEST_METHOD'] = 'POST';
 	}
 }

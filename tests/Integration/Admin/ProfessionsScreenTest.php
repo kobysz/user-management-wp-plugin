@@ -17,6 +17,8 @@ use WPDieException;
 
 final class ProfessionsScreenTest extends WP_UnitTestCase {
 
+	use AdminPostingTrait;
+
 	/**
 	 * Adres ostatniego przekierowania (przekierowanie jest anulowane, żeby test przeżył).
 	 *
@@ -307,10 +309,9 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_saving_is_refused_for_a_user_without_the_capability_and_changes_nothing(): void {
-		$this->asAdminPosting( 'pusers_save_professions', array(
+		$this->asRolePosting( 'subscriber', 'pusers_save_professions', array(
 			'profession' => array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz' ),
 		) );
-		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
 		try {
 			ProfessionsScreen::handle_save();
 			$this->fail( 'Oczekiwano wp_die().' );
@@ -378,8 +379,7 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		ProfessionRepository::save( ProfessionCollection::fromArray( array(
 			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
 		) ) );
-		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'student' ) );
-		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
+		$this->asRolePosting( 'subscriber', 'pusers_save_professions', array( 'delete' => 'student' ) );
 		try {
 			ProfessionsScreen::handle_delete();
 			$this->fail( 'Oczekiwano wp_die().' );
@@ -401,24 +401,5 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		} catch ( WPDieException $e ) {
 			$this->assertNotNull( ProfessionRepository::get()->get( 'student' ) );
 		}
-	}
-
-	/**
-	 * Ustawia administratora i żądanie POST z nonce'em; pola dostają prefiks `pusers_`.
-	 *
-	 * @param string               $action Akcja nonce'a.
-	 * @param array<string, mixed> $fields Pola bez prefiksu.
-	 */
-	private function asAdminPosting( string $action, array $fields ): void {
-		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
-		$post = array();
-		foreach ( $fields as $key => $value ) {
-			$post[ 'pusers_' . $key ] = $value;
-		}
-		$post['pusers_nonce'] = wp_create_nonce( $action );
-		// WordPress dodaje ukośniki do danych żądania; ekran musi je zdjąć.
-		$_POST    = wp_slash( $post );
-		$_REQUEST = $_POST;
-		$_SERVER['REQUEST_METHOD'] = 'POST';
 	}
 }
