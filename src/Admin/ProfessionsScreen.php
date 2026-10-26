@@ -17,6 +17,7 @@ use PortalUsers\Domain\Profession\Profession;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
+use PortalUsers\Persistence\UserMeta;
 use WP_User_Query;
 
 /**
@@ -32,9 +33,9 @@ final class ProfessionsScreen {
 	public const ACTION_DELETE = 'pusers_delete_profession';
 
 	/**
-	 * Metadana konta z kluczem profesji. Plan 3 (rejestracja) musi użyć dokładnie tego klucza.
+	 * Metadana konta z kluczem profesji; nazwa ma jedno źródło w UserMeta::PROFESSION.
 	 */
-	public const USER_META = 'pusers_profession';
+	public const USER_META = UserMeta::PROFESSION;
 
 	public const NOTICE_DELETED          = 'profession_deleted';
 	public const NOTICE_INVALID_TYPE     = 'profession_invalid_type';
