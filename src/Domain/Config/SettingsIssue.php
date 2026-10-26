@@ -18,6 +18,9 @@ final class SettingsIssue {
 	public const ERROR   = 'error';
 	public const WARNING = 'warning';
 
+	public const REASON_CREDENTIAL_FIELD_UNSET        = 'credential_field_unset';
+	public const REASON_CREDENTIAL_FIELD_NOT_REQUIRED = 'credential_field_not_required';
+
 	/**
 	 * Konstruktor.
 	 *

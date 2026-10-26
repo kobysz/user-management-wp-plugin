@@ -62,7 +62,7 @@ final class ConsistencyChecker {
 						array(
 							'profession' => $profession->key,
 							'field'      => $profession->credentialField,
-							'reason'     => $unset ? 'credential_field_unset' : 'credential_field_not_required',
+							'reason'     => $unset ? SettingsIssue::REASON_CREDENTIAL_FIELD_UNSET : SettingsIssue::REASON_CREDENTIAL_FIELD_NOT_REQUIRED,
 						)
 					);
 				}

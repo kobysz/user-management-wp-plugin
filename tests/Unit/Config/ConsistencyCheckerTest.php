@@ -83,8 +83,8 @@ final class ConsistencyCheckerTest extends TestCase {
 		);
 		$this->assertSame( array( 'credential_field_not_required' ), $this->codes( $unspecified ) );
 		$this->assertSame( array( 'credential_field_not_required' ), $this->codes( $hidden ) );
-		$this->assertSame( 'credential_field_unset', $unspecified->issues()[0]->context['reason'] );
-		$this->assertSame( 'credential_field_not_required', $hidden->issues()[0]->context['reason'] );
+		$this->assertSame( SettingsIssue::REASON_CREDENTIAL_FIELD_UNSET, $unspecified->issues()[0]->context['reason'] );
+		$this->assertSame( SettingsIssue::REASON_CREDENTIAL_FIELD_NOT_REQUIRED, $hidden->issues()[0]->context['reason'] );
 	}
 
 	public function test_profession_with_credential_type_and_no_matrix_row_reports_only_the_missing_row(): void {
@@ -136,17 +136,61 @@ final class ConsistencyCheckerTest extends TestCase {
 		$this->assertSame( array(), $this->codes( $checker ) );
 	}
 
-	public function test_issues_are_ordered_errors_before_warnings(): void {
-		$checker    = new ConsistencyChecker(
+	public function test_issues_are_ordered_errors_before_warnings_and_keep_detection_order_within_severity(): void {
+		// Pierwsza profesja daje tylko ostrzeżenia, dwie kolejne błędy: kolejność wykrycia jest
+		// odwrotna do oczekiwanej, więc test pada, gdy sortowanie zniknie.
+		$checker = new ConsistencyChecker(
+			ProfessionCollection::fromArray(
+				array(
+					array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
+					array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ),
+					array( 'key' => 'pielegniarka', 'label' => 'Pielęgniarka', 'credential_type' => 'nurse_pwz' ),
+				)
+			),
+			FieldMatrix::fromArray(
+				array(
+					'student'      => array( 'zgoda' => 'required' ),
+					'lekarz'       => array( 'zgoda' => 'required', 'uczelnia' => 'hidden', 'pwz' => 'hidden' ),
+					'pielegniarka' => array( 'zgoda' => 'required', 'uczelnia' => 'hidden', 'pwz' => 'hidden' ),
+				)
+			),
+			$this->source( array( 'zgoda' => 'Regulamin', 'uczelnia' => 'Uczelnia', 'pwz' => 'Numer PWZ' ) )
+		);
+		$summary = array_map(
+			static fn ( SettingsIssue $i ): string => $i->code . ':' . $i->context['profession'] . ':' . $i->context['field'],
+			$checker->issues()
+		);
+		$this->assertSame(
+			array(
+				'credential_field_not_required:lekarz:pwz',
+				'credential_field_not_required:pielegniarka:',
+				'field_not_configured:student:uczelnia',
+				'field_not_configured:student:pwz',
+			),
+			$summary
+		);
+	}
+
+	public function test_empty_matrix_row_is_configured_and_not_a_missing_row(): void {
+		// Wiersz pusty to „skonfigurowano i nic nie zaznaczono"; brak wiersza to „nie dotknięto".
+		$checker = new ConsistencyChecker(
+			ProfessionCollection::fromArray( array( array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ) ) ),
+			FieldMatrix::fromArray( array( 'student' => array() ) ),
+			$this->source( array( 'zgoda' => 'Regulamin' ) )
+		);
+		$this->assertSame( array( 'field_not_configured' ), $this->codes( $checker ) );
+	}
+
+	public function test_empty_matrix_row_of_a_profession_with_credential_type_is_also_an_error(): void {
+		$checker = new ConsistencyChecker(
 			ProfessionCollection::fromArray(
 				array(
 					array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ),
 				)
 			),
-			FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'hidden' ) ) ),
-			$this->source( array( 'pwz' => 'Numer PWZ', 'zgoda' => 'Regulamin' ) )
+			FieldMatrix::fromArray( array( 'lekarz' => array() ) ),
+			$this->source( array( 'pwz' => 'Numer PWZ' ) )
 		);
-		$severities = array_map( static fn ( SettingsIssue $i ): string => $i->severity, $checker->issues() );
-		$this->assertSame( array( SettingsIssue::ERROR, SettingsIssue::WARNING ), $severities );
+		$this->assertSame( array( 'credential_field_not_required', 'field_not_configured' ), $this->codes( $checker ) );
 	}
 }
