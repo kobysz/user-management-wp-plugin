@@ -108,6 +108,7 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_page_ids_and_numbers_are_saved(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
 		$page = self::factory()->post->create( array( 'post_type' => 'page', 'post_status' => 'publish' ) );
 		$this->asAdminPosting( 'pusers_save_settings', array(
 			'login_page_id'            => (string) $page,
@@ -121,6 +122,39 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		$this->assertSame( 24, $saved->confirmationTokenHours );
 		$this->assertSame( 'HTTP_X_FORWARDED_FOR', $saved->trustedProxyHeader );
 		$this->assertSame( 'group_abc', $saved->acfGroupKey );
+	}
+
+	public function test_group_key_outside_the_group_list_is_rejected_and_nothing_is_saved(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_abc', 'rate_limit_per_hour' => 7 ) ) );
+		$this->asAdminPosting( 'pusers_save_settings', array(
+			'acf_group_key'       => 'group_obcy',
+			'rate_limit_per_hour' => '99',
+		) );
+		SettingsScreen::handle_save();
+		$saved = SettingsRepository::get();
+		$this->assertSame( 'group_abc', $saved->acfGroupKey );
+		$this->assertSame( 7, $saved->rateLimitPerHour );
+		$this->assertStringContainsString( 'pusers_notice=acf_group_invalid', $this->redirected );
+	}
+
+	public function test_invalid_group_notice_is_rendered_as_an_error(): void {
+		$_GET['pusers_notice'] = 'acf_group_invalid';
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		ob_start();
+		SettingsScreen::render();
+		$html = (string) ob_get_clean();
+		$this->assertStringContainsString( 'notice-error', $html );
+	}
+
+	public function test_known_and_empty_group_keys_are_accepted(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'acf_group_key' => 'group_abc' ) );
+		SettingsScreen::handle_save();
+		$this->assertSame( 'group_abc', SettingsRepository::get()->acfGroupKey );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'acf_group_key' => '' ) );
+		SettingsScreen::handle_save();
+		$this->assertSame( '', SettingsRepository::get()->acfGroupKey );
 	}
 
 	public function test_saving_redirects_back_with_a_saved_notice(): void {

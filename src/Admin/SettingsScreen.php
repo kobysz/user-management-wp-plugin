@@ -23,7 +23,8 @@ use WP_Post;
  */
 final class SettingsScreen {
 
-	public const ACTION = 'pusers_save_settings';
+	public const ACTION               = 'pusers_save_settings';
+	public const NOTICE_INVALID_GROUP = 'acf_group_invalid';
 
 	private const FIELD_PREFIX = 'pusers_';
 
@@ -79,6 +80,13 @@ final class SettingsScreen {
 				$raw[ $key ] = sanitize_text_field( $value );
 			}
 		}
+		// Grupa pól to zamknięta lista z zaufanego źródła: klucz spoza listy to manipulacja
+		// albo zepsuta konfiguracja, więc zapis jest odrzucany, nie degradowany. Pusty przechodzi.
+		if ( isset( $raw['acf_group_key'] ) && '' !== $raw['acf_group_key'] && ! array_key_exists( $raw['acf_group_key'], AcfGroupList::groups() ) ) {
+			Request::redirect( Menu::SLUG_SETTINGS, self::NOTICE_INVALID_GROUP );
+			return;
+		}
+
 		// Domena oczekuje tablicy: surowy tekst po cichu dałby pustą listę.
 		foreach ( self::LIST_FIELDS as $key ) {
 			$value = self::posted( $key );
@@ -137,6 +145,9 @@ final class SettingsScreen {
 
 		if ( Request::NOTICE_SAVED === Request::notice() ) {
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Ustawienia zostały zapisane.', 'portal-users' ) . '</p></div>';
+		}
+		if ( self::NOTICE_INVALID_GROUP === Request::notice() ) {
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nie zapisano ustawień: wybrana grupa pól ACF nie istnieje.', 'portal-users' ) . '</p></div>';
 		}
 		self::render_page_issues();
 
