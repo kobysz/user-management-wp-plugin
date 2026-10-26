@@ -51,6 +51,12 @@ Problem: pole ACF typu `true_false` renderuje ukryty input z `value="0"` plus ch
 
 Warstwa formularza musi albo nie wysyłać ukrytego zera, albo mapować je na wartość pustą przed walidacją. Jeśli Plan 3 użyje `acf_render_field()` bez tej korekty, wymóg pęknie po cichu.
 
+### Formularz nie może twardo wymagać pola, którego nie renderuje
+
+`FieldMatrix::requiredFields( $profesja )` zwraca wszystko, co ma w macierzy stan `required` — także pole, którego **nie ma już w wybranej grupie ACF**. Taki wpis powstaje bez złej woli: administrator ma otwarty ekran macierzy, w tym czasie ktoś zmienia nazwę pola w ACF albo przełącza grupę, administrator zapisuje, a macierz dostaje `required` dla pola, którego formularz nigdy nie wyrenderuje. `SubmissionValidator` zgłasza wtedy twardy błąd `required` dla niewidocznego pola i **rejestracja całej profesji staje się niemożliwa** — dokładnie ten anty-cel, który specyfikacja nazywa najważniejszym („lekarz z prawdziwym numerem nie może się zarejestrować").
+
+Ekran macierzy odcina drogę zapisu (Plan 2 nie przyjmuje kluczy pól spoza źródła, gdy źródło da się przeczytać), a `ConsistencyChecker` zgłasza taki wpis jako `matrix_field_not_in_source`. Nie zamyka to jednak przypadku, w którym wpis już w macierzy jest, a grupa zmieniła się później. Dlatego **warstwa formularza musi przeciąć ten stan sama**: pole wymagane, którego formularz nie renderuje, nie może blokować zgłoszenia. Dwa dopuszczalne wyjścia — pominąć takie pole przy walidacji (zgłoszenie przechodzi, redakcja weryfikuje) albo wyrenderować je, skoro jest wymagane. Czego **nie** wolno: zostawić twardego `required` dla pola, którego nie ma w formularzu.
+
 ### Sanityzacja wartości przy zapisie do metadanych jest obowiązkowa
 
 `SubmissionResult::values()` może zawierać wartości nietekstowe. Tablica w polu numeru zostaje bez zmian — świadomie, bo zerowanie kasowałoby dowód tego, co użytkownik wpisał. Bez sanityzacji taka wartość wejdzie do metadanych zserializowana, a każdy późniejszy konsument deklarujący `string` przy `strict_types` wywali `TypeError`.
