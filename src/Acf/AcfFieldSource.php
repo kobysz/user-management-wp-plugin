@@ -93,7 +93,7 @@ final class AcfFieldSource implements FieldSource {
 	 * ACF Pro w środowisku testowym testy podstawiają surowe pola tym filtrem) oraz punktem
 	 * rozszerzeń. Dostaje surową listę pól ACF (tablice z kluczami `name` i `label`) i grupę.
 	 *
-	 * @return array<int|string, string> Klucz pola => etykieta. Nazwa o postaci liczby (np. `123`) staje się kluczem int.
+	 * @return array<string, string> Klucz pola => etykieta.
 	 */
 	public function fields(): array {
 		$fields = array();
@@ -112,7 +112,7 @@ final class AcfFieldSource implements FieldSource {
 	 * pary klucz => etykieta. Pola bez nazwy lub bez typu są pomijane. Korzysta z tej samej
 	 * migawki definicji co `fields()`, więc oba widoki nie mogą się rozjechać.
 	 *
-	 * @return array<int|string, string> Klucz pola => typ ACF. Nazwa o postaci liczby (np. `123`) staje się kluczem int.
+	 * @return array<string, string> Klucz pola => typ ACF.
 	 */
 	public function fieldTypes(): array {
 		$types = array();
@@ -126,8 +126,8 @@ final class AcfFieldSource implements FieldSource {
 		 * Filtruje mapę klucz pola => typ ACF. Punkt rozszerzeń dla pól, których typ
 		 * definiuje inne źródło niż ACF.
 		 *
-		 * @param array<int|string, string> $types    Klucz pola => typ ACF.
-		 * @param string                    $groupKey Klucz grupy.
+		 * @param array<string, string> $types    Klucz pola => typ ACF.
+		 * @param string                $groupKey Klucz grupy.
 		 */
 		$filtered = apply_filters( 'pusers_acf_field_types', $types, $this->groupKey );
 		if ( ! is_array( $filtered ) ) {
@@ -137,7 +137,7 @@ final class AcfFieldSource implements FieldSource {
 		$result = array();
 		foreach ( $filtered as $name => $type ) {
 			if ( is_string( $type ) ) {
-				$result[ $name ] = $type;
+				$result[ (string) $name ] = $type;
 			}
 		}
 
@@ -213,6 +213,11 @@ final class AcfFieldSource implements FieldSource {
 		$definitions = array();
 		foreach ( $raw as $field ) {
 			if ( ! is_array( $field ) || ! isset( $field['name'] ) || ! is_string( $field['name'] ) || '' === $field['name'] ) {
+				continue;
+			}
+			// Nazwa będąca liczbą całkowitą (PHP zapisałby ją pod kluczem int) jest traktowana jak brak
+			// nazwy: źródło obiecuje klucze tekstowe, a administrator i tak nie odróżniłby takiego pola.
+			if ( (string) (int) $field['name'] === $field['name'] ) {
 				continue;
 			}
 			if ( isset( $field['type'] ) && is_string( $field['type'] ) && in_array( $field['type'], self::UNSUPPORTED_TYPES, true ) ) {

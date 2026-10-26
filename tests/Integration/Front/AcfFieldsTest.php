@@ -69,7 +69,7 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 		$this->assertSame( array(), $fields->fromRequest( array( AcfFields::INPUT => array( 'dane' => array( 'zgoda2' => '0' ) ) ) ) );
 	}
 
-	public function test_numeric_field_name_is_a_string_in_boolean_keys_and_still_read_from_the_request(): void {
+	public function test_boolean_field_with_an_integer_like_name_is_not_a_field_at_all(): void {
 		add_filter(
 			'pusers_acf_fields',
 			static function ( array $raw ): array {
@@ -79,9 +79,8 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 			20
 		);
 		$fields = new AcfFields( 'group_abc' );
-		// Rzutowanie w booleanKeys() działa, bo wartości trafiają do listy (w źródle klucz jest int).
-		$this->assertSame( array( 'zgoda', 'newsletter', '123' ), $fields->booleanKeys() );
-		$this->assertSame( array( 123 => '1' ), $fields->fromRequest( array( AcfFields::INPUT => array( '123' => '1' ) ) ) );
+		$this->assertSame( array( 'zgoda', 'newsletter' ), $fields->booleanKeys() );
+		$this->assertSame( array(), $fields->fromRequest( array( AcfFields::INPUT => array( '123' => '1' ) ) ) );
 	}
 
 	public function test_boolean_keys_are_empty_when_the_group_disappeared(): void {

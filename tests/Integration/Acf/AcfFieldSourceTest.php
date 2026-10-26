@@ -160,14 +160,21 @@ final class AcfFieldSourceTest extends WP_UnitTestCase {
 		$this->assertSame( array_keys( $source->fields() ), array_keys( $source->fieldTypes() ) );
 	}
 
-	public function test_numeric_field_name_becomes_an_int_key_in_fields_and_field_types(): void {
+	public function test_field_with_an_integer_like_name_never_enters_the_source(): void {
 		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
-		add_filter( 'pusers_acf_fields', static fn (): array => array( array( 'name' => '123', 'label' => 'Numeryczne', 'type' => 'true_false' ) ) );
+		add_filter( 'pusers_acf_fields', static fn (): array => array(
+			array( 'name' => '123', 'label' => 'Numeryczne', 'type' => 'true_false' ),
+			array( 'name' => '0', 'label' => 'Zero', 'type' => 'text' ),
+			array( 'name' => '007', 'label' => 'Z zerami', 'type' => 'text' ),
+			array( 'name' => 'pwz', 'label' => 'PWZ', 'type' => 'text' ),
+		) );
 		$source = new AcfFieldSource( 'group_abc' );
-		// PHP przywraca klucz numeryczny do int, więc adnotacje mówią int|string.
-		$this->assertSame( array( 123 => 'Numeryczne' ), $source->fields() );
-		$this->assertSame( array( 123 => 'true_false' ), $source->fieldTypes() );
-		$this->assertNotNull( $source->definition( '123' ) );
+		// Klucz int zostałby w PHP zapisany jako int; źródło obiecuje klucze tekstowe, więc takie pole jest pomijane.
+		// '007' nie jest liczbą całkowitą w sensie klucza tablicy (zostaje stringiem), więc zostaje w źródle.
+		$this->assertSame( array( '007' => 'Z zerami', 'pwz' => 'PWZ' ), $source->fields() );
+		$this->assertSame( array( '007' => 'text', 'pwz' => 'text' ), $source->fieldTypes() );
+		$this->assertNull( $source->definition( '123' ) );
+		$this->assertNull( $source->definition( '0' ) );
 	}
 
 	public function test_snapshot_is_stale_within_an_instance_and_a_new_instance_sees_new_filters(): void {
