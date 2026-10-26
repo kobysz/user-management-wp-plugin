@@ -476,6 +476,19 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'pusers_notice=matrix_field_refused', $this->redirected );
 	}
 
+	public function test_a_source_field_with_capital_letters_can_be_saved(): void {
+		$this->withSource( array( 'PWZ' => 'Numer PWZ' ) );
+		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'PWZ' => 'required' ) ) ) );
+		MatrixScreen::handle_save();
+		$this->assertSame( FieldState::Required, FieldMatrixRepository::get()->stateFor( 'lekarz', 'PWZ' ) );
+	}
+
+	public function test_an_unreadable_group_does_not_lowercase_field_keys(): void {
+		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'PWZ' => 'visible' ) ) ) );
+		MatrixScreen::handle_save();
+		$this->assertSame( array( 'lekarz' => array( 'PWZ' => 'visible' ) ), FieldMatrixRepository::get()->toArray() );
+	}
+
 	public function test_a_field_outside_a_readable_source_is_not_saved_and_does_not_become_required(): void {
 		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
 		$this->asAdminPosting(
@@ -495,7 +508,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'smiec', $matrix->toArray()['lekarz'] );
 	}
 
-	public function test_keys_from_the_request_are_sanitized_at_both_levels(): void {
+	public function test_unreadable_group_cleans_keys_but_keeps_the_case_of_field_keys(): void {
 		$this->asAdminPosting(
 			'pusers_save_matrix',
 			array(
@@ -503,7 +516,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 			)
 		);
 		MatrixScreen::handle_save();
-		$this->assertSame( array( 'lekarzb' => array( 'pwz' => 'required' ) ), FieldMatrixRepository::get()->toArray() );
+		$this->assertSame( array( 'lekarzb' => array( 'PWZ' => 'required' ) ), FieldMatrixRepository::get()->toArray() );
 	}
 
 	public function test_a_get_request_to_save_is_refused_and_changes_nothing(): void {

@@ -85,7 +85,10 @@ final class MatrixScreen {
 		$merged = FieldMatrixRepository::get()->toArray();
 		foreach ( self::posted_matrix() as $profession => $fields ) {
 			foreach ( $fields as $field => $state ) {
-				if ( '' === $state || ( null !== $known && ! array_key_exists( $field, $known ) ) ) {
+				// Czytelne źródło: przynależność do niego jest sanityzacją, klucz porównujemy surowy
+				// (nazwa pola ACF może mieć wielkie litery). Bez źródła czyścimy, nie zmieniając wielkości liter.
+				$field = null !== $known ? $field : self::clean_field_key( $field );
+				if ( '' === $state || '' === $field || ( null !== $known && ! array_key_exists( $field, $known ) ) ) {
 					continue;
 				}
 				$merged[ $profession ][ $field ] = $state;
@@ -340,7 +343,18 @@ final class MatrixScreen {
 	}
 
 	/**
-	 * Macierz z żądania: profesja => pole => stan (tekst). Elementy o złym kształcie są pomijane.
+	 * Klucz pola, gdy źródła nie da się przeczytać: zostają litery (obu wielkości), cyfry, podkreślenie i myślnik,
+	 * czyli to, co może wystąpić w nazwie pola ACF. W odróżnieniu od sanitize_key() nie zmienia wielkości liter.
+	 *
+	 * @param int|string $key Klucz z żądania.
+	 */
+	private static function clean_field_key( int|string $key ): string {
+		return (string) preg_replace( '/[^A-Za-z0-9_-]/', '', (string) $key );
+	}
+
+	/**
+	 * Macierz z żądania: profesja => pole => stan (tekst). Klucze pól zostają surowe (patrz handle_save()).
+	 * Elementy o złym kształcie są pomijane.
 	 *
 	 * @return array<string, array<string, string>>
 	 */
@@ -357,9 +371,8 @@ final class MatrixScreen {
 				continue;
 			}
 			foreach ( $fields as $field => $state ) {
-				$field = sanitize_key( (string) $field );
-				if ( is_string( $state ) && '' !== $field ) {
-					$out[ $profession ][ $field ] = sanitize_text_field( $state );
+				if ( is_string( $state ) && '' !== (string) $field ) {
+					$out[ $profession ][ (string) $field ] = sanitize_text_field( $state );
 				}
 			}
 		}
