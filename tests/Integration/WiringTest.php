@@ -14,6 +14,7 @@ use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
@@ -54,6 +55,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'settings'    => array( SettingsScreen::class ),
 			'professions' => array( ProfessionsScreen::class ),
 			'matrix'      => array( MatrixScreen::class ),
+			'registration' => array( RegistrationForm::class ),
 		);
 	}
 
