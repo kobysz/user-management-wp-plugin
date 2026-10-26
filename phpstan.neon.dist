@@ -1,0 +1,10 @@
+includes:
+    - vendor/szepeviktor/phpstan-wordpress/extension.neon
+
+parameters:
+    level: max
+    paths:
+        - src
+    scanFiles:
+        - portal-users.php
+    treatPhpDocTypesAsCertain: false

@@ -1,0 +1,8 @@
+{
+  "name": "portal-users",
+  "private": true,
+  "description": "Narzędzia deweloperskie wtyczki Portal Users (wp-env).",
+  "devDependencies": {
+    "@wordpress/env": "^10.0.0"
+  }
+}

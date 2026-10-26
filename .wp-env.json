@@ -1,0 +1,14 @@
+{
+  "phpVersion": "8.1",
+  "plugins": [],
+  "mappings": {
+    "wp-content/plugins/portal-users": "."
+  },
+  "port": 8893,
+  "testsPort": 8894,
+  "config": {
+    "WP_DEBUG": true,
+    "WP_DEBUG_LOG": true,
+    "SCRIPT_DEBUG": true
+  }
+}

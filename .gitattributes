@@ -1,0 +1,7 @@
+# Wymuszenie LF dla wszystkich plików tekstowych — spójne z WPCS i kontenerem wp-env.
+* text=auto eol=lf
+
+# Binaria bez konwersji.
+*.png binary
+*.jpg binary
+*.zip binary

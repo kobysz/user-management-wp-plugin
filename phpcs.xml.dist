@@ -1,0 +1,44 @@
+<?xml version="1.0"?>
+<ruleset name="Portal Users">
+    <description>Standardy kodu dla wtyczki Portal Users.</description>
+
+    <file>src</file>
+    <file>portal-users.php</file>
+
+    <exclude-pattern>*/vendor/*</exclude-pattern>
+    <exclude-pattern>*/node_modules/*</exclude-pattern>
+
+    <arg name="extensions" value="php"/>
+    <arg value="ps"/>
+
+    <rule ref="WordPress-Core">
+        <exclude name="WordPress.Files.FileName"/>
+        <exclude name="WordPress.NamingConventions.ValidVariableName"/>
+        <exclude name="WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid"/>
+    </rule>
+    <rule ref="WordPress-Docs">
+        <exclude name="WordPress.Files.FileName"/>
+        <exclude name="WordPress.NamingConventions.ValidVariableName"/>
+        <exclude name="WordPress.NamingConventions.ValidFunctionName.MethodNameInvalid"/>
+    </rule>
+
+    <rule ref="WordPress.WP.I18n">
+        <properties>
+            <property name="text_domain" type="array">
+                <element value="portal-users"/>
+            </property>
+        </properties>
+    </rule>
+
+    <rule ref="WordPress.NamingConventions.PrefixAllGlobals">
+        <properties>
+            <property name="prefixes" type="array">
+                <element value="pusers"/>
+                <element value="PortalUsers"/>
+            </property>
+        </properties>
+    </rule>
+
+    <config name="minimum_wp_version" value="6.5"/>
+    <config name="testVersion" value="8.1-"/>
+</ruleset>
