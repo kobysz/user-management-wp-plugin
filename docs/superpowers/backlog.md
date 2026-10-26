@@ -71,6 +71,14 @@ Gdy `errorFor( pole ) === 'required'`, interfejs **nie** pokazuje osobno ostrze�
 
 ---
 
+## Plany 3 i 4 — granulacja limitu prób
+
+**Plan 2 zrealizował ten wymóg tylko częściowo i nie zapisał tego nigdzie — stąd ta pozycja.**
+
+Specyfikacja wymaga liczenia prób **per adres IP i per konto, osobno dla rejestracji, logowania i odzyskiwania hasła, z progami konfigurowalnymi**, i nazywa anty-celem odcięcie szpitala siedzącego za jednym adresem wyjściowym. Ustawienia z Planu 2 mają natomiast **jeden** próg `rate_limit_per_hour` z etykietą „Limit zgłoszeń z jednego adresu na godzinę" (`src/Admin/SettingsScreen.php`), czyli jedną granulację: per IP, wspólną dla wszystkich trzech ścieżek.
+
+Nie jest to mina — `Settings::fromArray()` dopełnia brakujące klucze domyślnymi, więc dosypanie kolejnych progów jest zmianą addytywną i nie poruszy zapisanych konfiguracji. Ale ścieżka, która wprowadzi własne liczenie prób, musi **dodać brakujące progi do ustawień**, a nie oprzeć się na tym jednym: pojedynczy licznik per IP przy rejestracji z jednego szpitala zadziała dokładnie jak anty-cel.
+
 ## Plan 4 — Logowanie
 
 ### Adapter stanu konta MUSI odróżnić brak klucza od wartości nierozpoznanej
