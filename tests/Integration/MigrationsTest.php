@@ -20,9 +20,13 @@ final class MigrationsTest extends WP_UnitTestCase {
 
 	public function tear_down(): void {
 		// DDL nie cofa się z transakcją testu: baza musi zostać z tabelami dla innych testów.
-		$this->remove_temporary_table_filters();
-		Migrations::run();
-		parent::tear_down();
+		try {
+			$this->remove_temporary_table_filters();
+			remove_filter( 'query', array( $this, 'block_create_table' ) );
+			Migrations::run();
+		} finally {
+			parent::tear_down();
+		}
 	}
 
 	public function test_creates_both_tables(): void {
@@ -65,6 +69,37 @@ final class MigrationsTest extends WP_UnitTestCase {
 
 		$this->assertTrue( $this->table_exists( Migrations::table( 'event_log' ) ) );
 		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
+	}
+
+	public function test_failed_create_does_not_store_db_version(): void {
+		$this->fresh_install();
+		// Symulacja nieudanego CREATE (brak uprawnień, pełny dysk): dbDelta() nic nie zgłosi.
+		add_filter( 'query', array( $this, 'block_create_table' ) );
+
+		Migrations::run();
+
+		$this->assertFalse( get_option( 'pusers_db_version' ), 'Bez tabel wersja nie może zostać zapisana.' );
+		foreach ( self::TABLES as $name ) {
+			$this->assertFalse( $this->table_exists( Migrations::table( $name ) ) );
+		}
+	}
+
+	public function test_maybe_upgrade_does_not_run_when_version_is_current(): void {
+		$this->fresh_install();
+		update_option( 'pusers_db_version', Migrations::DB_VERSION );
+
+		Migrations::maybe_upgrade();
+
+		$this->assertFalse( $this->table_exists( Migrations::table( 'event_log' ) ), 'run() nie powinno być wołane przy aktualnej wersji.' );
+	}
+
+	/**
+	 * Filtr zapytań: zamienia CREATE TABLE na no-op.
+	 *
+	 * @param string $query Zapytanie SQL.
+	 */
+	public function block_create_table( $query ) {
+		return 0 === stripos( ltrim( (string) $query ), 'CREATE TABLE' ) ? 'SELECT 1' : $query;
 	}
 
 	public function test_event_log_schema(): void {

@@ -40,7 +40,12 @@ final class Dependencies {
 	}
 
 	/**
-	 * Czy ACF Pro jest załadowany (klasa `acf_pro` lub stała `ACF_PRO`).
+	 * Czy ACF Pro jest załadowany.
+	 *
+	 * Trzy niezależne warunki, wystarczy jeden: klasa `acf_pro` (gałąź 5.x), stała `ACF_PRO`
+	 * (starsze wersje) oraz ustawienie `pro` zwracane przez `acf_get_setting()` (niezależne od
+	 * nazw klas, więc pokrywa też 6.x). Warunki mają pokrywać 5.x i 6.x, ale weryfikacja na
+	 * realnej instalacji ACF Pro jest nadal otwarta.
 	 */
 	private static function acf_pro_loaded(): bool {
 		/**
@@ -48,7 +53,12 @@ final class Dependencies {
 		 *
 		 * @param bool $loaded Czy ACF Pro jest załadowany.
 		 */
-		return (bool) apply_filters( 'pusers_acf_pro_loaded', class_exists( 'acf_pro', false ) || defined( 'ACF_PRO' ) );
+		return (bool) apply_filters(
+			'pusers_acf_pro_loaded',
+			class_exists( 'acf_pro', false )
+				|| defined( 'ACF_PRO' )
+				|| ( function_exists( 'acf_get_setting' ) && (bool) acf_get_setting( 'pro' ) )
+		);
 	}
 
 	/**
@@ -85,12 +95,18 @@ final class Dependencies {
 	 */
 	public static function register(): void {
 		add_action( 'admin_notices', array( self::class, 'render_notice' ) );
+		add_action( 'network_admin_notices', array( self::class, 'render_notice' ) );
 	}
 
 	/**
 	 * Wypisuje komunikat o brakującym ACF Pro.
 	 */
 	public static function render_notice(): void {
+		// Komunikat wewnętrzny: nie dla subskrybentów na profile.php.
+		if ( ! current_user_can( 'activate_plugins' ) ) {
+			return;
+		}
+
 		$missing = self::current_missing();
 		if ( array() === $missing ) {
 			return;

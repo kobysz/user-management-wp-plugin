@@ -37,7 +37,7 @@ final class Migrations {
 	}
 
 	/**
-	 * Tworzy lub aktualizuje tabele i zapisuje wersję schematu.
+	 * Tworzy lub aktualizuje tabele i zapisuje wersję schematu, o ile obie tabele istnieją.
 	 */
 	public static function run(): void {
 		global $wpdb;
@@ -75,7 +75,21 @@ final class Migrations {
 ) ENGINE=InnoDB {$charset};"
 		);
 
-		update_option( self::OPTION, self::DB_VERSION );
+		// dbDelta() nie sygnalizuje błędów. Wersję zapisujemy dopiero, gdy obie tabele istnieją,
+		// inaczej maybe_upgrade() nigdy nie ponowiłby próby.
+		if ( self::table_exists( $log ) && self::table_exists( $terms ) ) {
+			update_option( self::OPTION, self::DB_VERSION );
+		}
+	}
+
+	/**
+	 * Czy tabela istnieje w bazie.
+	 *
+	 * @param string $table Pełna nazwa tabeli.
+	 */
+	private static function table_exists( string $table ): bool {
+		global $wpdb;
+		return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
 	}
 
 	/**

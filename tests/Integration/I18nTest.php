@@ -32,7 +32,7 @@ final class I18nTest extends WP_UnitTestCase {
 		if ( is_file( $this->mo_file ) ) {
 			unlink( $this->mo_file );
 		}
-		unload_textdomain( 'portal-users' );
+		unload_textdomain( 'portal-users', true );
 		remove_filter( 'locale', array( $this, 'force_pl_locale' ), 99 );
 		parent::tear_down();
 	}
@@ -66,7 +66,7 @@ final class I18nTest extends WP_UnitTestCase {
 	public function test_mo_file_from_languages_dir_is_used(): void {
 		file_put_contents( $this->mo_file, $this->build_mo( self::MSGID, 'Test translation key' ) ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_system_operations_file_put_contents
 
-		unload_textdomain( 'portal-users' );
+		unload_textdomain( 'portal-users', true );
 		I18n::load();
 
 		$this->assertSame( 'Test translation key', __( 'Testowy klucz tłumaczenia', 'portal-users' ) );
