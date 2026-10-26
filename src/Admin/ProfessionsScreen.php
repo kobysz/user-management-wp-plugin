@@ -261,9 +261,8 @@ final class ProfessionsScreen {
 			)
 		) . ' ' . esc_html(
 			sprintf(
-				/* translators: 1: etykieta profesji, 2: liczba kont. */
-				__( 'Liczba kont przypisanych do profesji „%1$s”: %2$d.', 'portal-users' ),
-				$target->label,
+				/* translators: %d: liczba kont. */
+				__( 'Liczba przypisanych kont: %d.', 'portal-users' ),
 				$accounts
 			)
 		) . '</p>';

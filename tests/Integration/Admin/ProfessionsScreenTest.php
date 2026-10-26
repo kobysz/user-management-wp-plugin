@@ -289,8 +289,9 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 			ob_start();
 			ProfessionsScreen::render();
 			$html = (string) ob_get_clean();
-			$this->assertStringContainsString( 'Liczba kont przypisanych do profesji „Lekarz”: ' . $expected . '.', $html );
-			$this->assertStringNotContainsString( 'kont.', str_replace( 'Liczba kont przypisanych', '', $html ) );
+			$this->assertStringContainsString( 'Liczba przypisanych kont: ' . $expected . '.', $html );
+			// Stara forma mnoga brzmiała „2 kont.”; nowa kończy zdanie liczbą, więc „kont.” nie ma prawa wystąpić.
+			$this->assertStringNotContainsString( 'kont.', $html );
 		}
 	}
 
@@ -310,8 +311,8 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		ob_start();
 		ProfessionsScreen::render();
 		$html = (string) ob_get_clean();
-		$this->assertStringContainsString( 'Liczba kont przypisanych do profesji „Lekarz”: 3.', $html );
-		$this->assertStringNotContainsString( 'przypisanych do profesji „Lekarz”: 99', $html );
+		$this->assertStringContainsString( 'Liczba przypisanych kont: 3.', $html );
+		$this->assertStringNotContainsString( 'Liczba przypisanych kont: 99', $html );
 		$this->assertStringContainsString( 'name="pusers_confirm_accounts" value="1"', $html );
 	}
 
