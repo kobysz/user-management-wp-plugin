@@ -22,3 +22,9 @@ if ( is_readable( __DIR__ . '/vendor/autoload.php' ) ) {
 }
 
 \PortalUsers\Plugin::boot( __FILE__ );
+
+// Hook aktywacji musi stać w zasięgu pliku głównego, nie wewnątrz innego hooka.
+register_activation_hook( __FILE__, array( \PortalUsers\Persistence\Migrations::class, 'run' ) );
+
+// Aktualizacja wtyczki nie odpala hooka aktywacji. Bezwarunkowo, bez zależności od ACF Pro.
+add_action( 'plugins_loaded', array( \PortalUsers\Persistence\Migrations::class, 'maybe_upgrade' ) );
