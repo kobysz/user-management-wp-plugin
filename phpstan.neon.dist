@@ -5,6 +5,7 @@ parameters:
     level: max
     paths:
         - src
+        - uninstall.php
     scanFiles:
         - portal-users.php
     treatPhpDocTypesAsCertain: false

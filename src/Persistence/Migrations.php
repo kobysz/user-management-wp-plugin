@@ -22,6 +22,14 @@ final class Migrations {
 	public const DB_VERSION = 1;
 
 	/**
+	 * Nazwy tabel wtyczki bez prefiksu. Jedyne źródło dla odinstalowania i warunku zapisu wersji w run();
+	 * każda nowa tabela musi tu trafić obok swojego CREATE, a test pilnuje zgodności z bazą.
+	 *
+	 * @var array<int, string>
+	 */
+	public const TABLES = array( 'event_log', 'terms_versions' );
+
+	/**
 	 * Nazwa opcji z zapisaną wersją schematu.
 	 */
 	public const OPTION_DB_VERSION = 'pusers_db_version';
@@ -75,9 +83,13 @@ final class Migrations {
 ) ENGINE=InnoDB {$charset};"
 		);
 
-		// dbDelta() nie sygnalizuje błędów. Wersję zapisujemy dopiero, gdy obie tabele istnieją,
+		// dbDelta() nie sygnalizuje błędów. Wersję zapisujemy dopiero, gdy istnieją wszystkie tabele z TABLES,
 		// inaczej maybe_upgrade() nigdy nie ponowiłby próby.
-		if ( self::table_exists( $log ) && self::table_exists( $terms ) ) {
+		$all_exist = true;
+		foreach ( self::TABLES as $name ) {
+			$all_exist = $all_exist && self::table_exists( self::table( $name ) );
+		}
+		if ( $all_exist ) {
 			update_option( self::OPTION_DB_VERSION, self::DB_VERSION );
 		}
 	}

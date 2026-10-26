@@ -4,6 +4,7 @@
 
     <file>src</file>
     <file>portal-users.php</file>
+    <file>uninstall.php</file>
 
     <exclude-pattern>*/vendor/*</exclude-pattern>
     <exclude-pattern>*/node_modules/*</exclude-pattern>

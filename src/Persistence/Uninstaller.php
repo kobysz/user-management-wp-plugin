@@ -37,7 +37,8 @@ final class Uninstaller {
 	 */
 	public static function should_delete_data(): bool {
 		if ( defined( self::CONSTANT_GATE ) ) {
-			return (bool) constant( self::CONSTANT_GATE );
+			// Śmieć (np. napis 'false') nie może otworzyć nieodwracalnego kasowania.
+			return filter_var( constant( self::CONSTANT_GATE ), FILTER_VALIDATE_BOOLEAN );
 		}
 		return SettingsRepository::get()->deleteDataOnUninstall;
 	}
@@ -57,9 +58,8 @@ final class Uninstaller {
 		}
 		delete_option( Migrations::OPTION_DB_VERSION );
 
-		foreach ( array( 'event_log', 'terms_versions' ) as $name ) {
-			$table = Migrations::table( $name );
-			$wpdb->query( "DROP TABLE IF EXISTS {$table}" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared, WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange -- Nazwa z Migrations::table(), bez danych wejściowych.
+		foreach ( Migrations::TABLES as $name ) {
+			$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', Migrations::table( $name ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.SchemaChange -- Nazwa z Migrations::table(), bez danych wejściowych.
 		}
 	}
 }

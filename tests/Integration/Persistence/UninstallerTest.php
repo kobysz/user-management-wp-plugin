@@ -7,7 +7,14 @@
  * (tak jak MigrationsTest) i w tear_down odtwarzają bazę.
  *
  * DDL (DROP/CREATE) zatwierdza transakcję testu, więc opcje zapisane po nim nie zostałyby
- * wycofane; tear_down sprząta je jawnie.
+ * wycofane; tear_down sprząta je jawnie, a wersję schematu odtwarza i zatwierdza.
+ *
+ * UWAGA o @runInSeparateProcess (dwa testy stałej): stała nie wycieka, ale proces potomny
+ * powtarza bootstrap suity WP, w tym includes/install.php, a WP_TESTS_SKIP_INSTALL nie jest
+ * ustawione. Potomek usuwa i odtwarza tabele rdzenia WordPressa w bazie dzieloną z procesem
+ * rodzica. Stąd ok. 20 s na test. Dziś to działa, bo tabele wtyczki nie należą do $wpdb->tables()
+ * i każdy test buduje fixtury od nowa; pierwszy test, który oprze się na zatwierdzonym stanie
+ * bazy, pęknie bez widocznej przyczyny.
  */
 
 declare( strict_types=1 );
@@ -32,6 +39,9 @@ final class UninstallerTest extends WP_UnitTestCase {
 				OptionStore::delete( $option );
 			}
 			Migrations::run();
+			// Rollback parent::tear_down() cofnąłby zapis po DDL, więc zapis zatwierdzamy.
+			update_option( Migrations::OPTION_DB_VERSION, Migrations::DB_VERSION );
+			$GLOBALS['wpdb']->query( 'COMMIT' );
 		} finally {
 			parent::tear_down();
 		}
@@ -61,6 +71,7 @@ final class UninstallerTest extends WP_UnitTestCase {
 
 	public function test_does_nothing_by_default(): void {
 		$this->install_with_data();
+		delete_option( OptionStore::OPTION_SETTINGS );
 
 		Uninstaller::run();
 
@@ -145,6 +156,53 @@ final class UninstallerTest extends WP_UnitTestCase {
 		$this->assert_data_gone();
 	}
 
+	/**
+	 * Stała ustawiona na napis 'false' nie może otworzyć kasowania.
+	 *
+	 * @runInSeparateProcess
+	 * @preserveGlobalState disabled
+	 */
+	public function test_constant_string_false_does_not_delete(): void {
+		$this->install_with_data();
+		$this->save_gate( true );
+		define( Uninstaller::CONSTANT_GATE, 'false' );
+
+		$this->assertFalse( Uninstaller::should_delete_data() );
+		Uninstaller::run();
+
+		$this->assert_data_intact();
+	}
+
+	/**
+	 * Wszystkie tabele z bazy o prefiksie wtyczki to dokładnie Migrations::TABLES, w obie strony.
+	 * Start od zdjętych filtrów tabel tymczasowych i twardego usunięcia, inaczej test nic nie dowodzi.
+	 */
+	public function test_plugin_tables_in_database_match_the_tables_constant(): void {
+		global $wpdb;
+		$this->remove_temporary_table_filters();
+		foreach ( $this->plugin_tables_in_database() as $table ) {
+			$wpdb->query( $wpdb->prepare( 'DROP TABLE IF EXISTS %i', $table ) );
+		}
+		delete_option( Migrations::OPTION_DB_VERSION );
+		$this->assertSame( array(), $this->plugin_tables_in_database(), 'Stan wyjściowy: żadna tabela wtyczki nie istnieje.' );
+
+		Migrations::run();
+
+		$expected = array_map( array( Migrations::class, 'table' ), Migrations::TABLES );
+		$actual   = $this->plugin_tables_in_database();
+		$this->assertSame( array(), array_values( array_diff( $expected, $actual ) ), 'Tabele z TABLES, których run() nie utworzyło.' );
+		$this->assertSame( array(), array_values( array_diff( $actual, $expected ) ), 'Tabele w bazie nieobecne w TABLES (odinstalowanie by ich nie usunęło).' );
+	}
+
+	/**
+	 * @return array<int, string>
+	 */
+	private function plugin_tables_in_database(): array {
+		global $wpdb;
+		$like = $wpdb->esc_like( $wpdb->prefix . 'pusers_' ) . '%';
+		return array_map( 'strval', $wpdb->get_col( $wpdb->prepare( 'SHOW TABLES LIKE %s', $like ) ) );
+	}
+
 	private function save_gate( bool $enabled ): void {
 		SettingsRepository::save( Settings::fromArray( array( 'delete_data_on_uninstall' => $enabled ) ) );
 	}
@@ -193,6 +251,6 @@ final class UninstallerTest extends WP_UnitTestCase {
 
 	private function table_exists( string $table ): bool {
 		global $wpdb;
-		return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+		return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $wpdb->esc_like( $table ) ) );
 	}
 }
