@@ -255,13 +255,14 @@ final class ProfessionsScreen {
 
 		echo '<div class="notice notice-warning"><p>' . esc_html(
 			sprintf(
+				/* translators: %s: etykieta profesji. */
+				__( 'Do profesji „%s” przypisano konta. Po usunięciu konta zachowają klucz profesji, którego nie ma już w konfiguracji.', 'portal-users' ),
+				$target->label
+			)
+		) . ' ' . esc_html(
+			sprintf(
 				/* translators: 1: etykieta profesji, 2: liczba kont. */
-				_n(
-					'Profesja „%1$s” jest przypisana do %2$d konta. Po usunięciu konto zachowa klucz profesji, którego nie ma już w konfiguracji.',
-					'Profesja „%1$s” jest przypisana do %2$d kont. Po usunięciu konta zachowają klucz profesji, którego nie ma już w konfiguracji.',
-					$accounts,
-					'portal-users'
-				),
+				__( 'Liczba kont przypisanych do profesji „%1$s”: %2$d.', 'portal-users' ),
 				$target->label,
 				$accounts
 			)

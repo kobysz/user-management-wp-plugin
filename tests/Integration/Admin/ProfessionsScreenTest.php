@@ -278,6 +278,22 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'pusers_notice=saved', $this->redirected );
 	}
 
+	public function test_account_count_message_needs_no_inflection_for_one_or_two_accounts(): void {
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz' ),
+		) ) );
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		$_GET = array( 'pusers_notice' => 'profession_confirm_accounts', 'profession' => 'lekarz' );
+		foreach ( array( 1, 2 ) as $expected ) {
+			update_user_meta( self::factory()->user->create(), 'pusers_profession', 'lekarz' );
+			ob_start();
+			ProfessionsScreen::render();
+			$html = (string) ob_get_clean();
+			$this->assertStringContainsString( 'Liczba kont przypisanych do profesji „Lekarz”: ' . $expected . '.', $html );
+			$this->assertStringNotContainsString( 'kont.', str_replace( 'Liczba kont przypisanych', '', $html ) );
+		}
+	}
+
 	public function test_refused_delete_reports_how_many_accounts_are_affected(): void {
 		ProfessionRepository::save( ProfessionCollection::fromArray( array(
 			array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz' ),
@@ -294,8 +310,8 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		ob_start();
 		ProfessionsScreen::render();
 		$html = (string) ob_get_clean();
-		$this->assertStringContainsString( 'przypisana do 3 kont', $html );
-		$this->assertStringNotContainsString( 'przypisana do 99', $html );
+		$this->assertStringContainsString( 'Liczba kont przypisanych do profesji „Lekarz”: 3.', $html );
+		$this->assertStringNotContainsString( 'przypisanych do profesji „Lekarz”: 99', $html );
 		$this->assertStringContainsString( 'name="pusers_confirm_accounts" value="1"', $html );
 	}
 
@@ -480,14 +496,14 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
 		$html = $this->renderScreenAsAdmin();
 		$this->assertStringContainsString( 'notice-error pusers-consistency-notice', $html );
-		$this->assertStringContainsString( 'wykryto 1 błąd', $html );
+		$this->assertStringContainsString( 'Liczba wykrytych błędów: 1.', $html );
 		$this->assertStringContainsString( 'page=' . Menu::SLUG_MATRIX, $html );
 	}
 
 	public function test_screen_counts_every_error(): void {
 		$this->withConfiguredSourceAndProfessions( 'lekarz', 'pielegniarka' );
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array() ) );
-		$this->assertStringContainsString( 'wykryto 2 błędów', $this->renderScreenAsAdmin() );
+		$this->assertStringContainsString( 'Liczba wykrytych błędów: 2.', $this->renderScreenAsAdmin() );
 	}
 
 	public function test_screen_shows_nothing_when_the_configuration_is_consistent(): void {

@@ -386,14 +386,14 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
 		$html = $this->renderScreenAsAdmin();
 		$this->assertStringContainsString( 'notice-error pusers-consistency-notice', $html );
-		$this->assertStringContainsString( 'wykryto 1 błąd', $html );
+		$this->assertStringContainsString( 'Liczba wykrytych błędów: 1.', $html );
 		$this->assertStringContainsString( 'page=' . Menu::SLUG_MATRIX, $html );
 	}
 
 	public function test_screen_counts_every_error(): void {
 		$this->withConfiguredSourceAndProfessions( 'lekarz', 'pielegniarka' );
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array() ) );
-		$this->assertStringContainsString( 'wykryto 2 błędów', $this->renderScreenAsAdmin() );
+		$this->assertStringContainsString( 'Liczba wykrytych błędów: 2.', $this->renderScreenAsAdmin() );
 	}
 
 	public function test_screen_shows_nothing_when_the_configuration_is_consistent(): void {

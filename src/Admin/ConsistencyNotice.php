@@ -42,15 +42,11 @@ final class ConsistencyNotice {
 		}
 
 		echo '<div class="notice notice-error pusers-consistency-notice"><p>'
-			. esc_html(
+			. esc_html__( 'Konfiguracja jest niespójna. Dopóki błędów nie poprawisz, rejestracja niektórych profesji może przepuszczać konta bez numeru uprawnień albo być zablokowana.', 'portal-users' )
+			. ' ' . esc_html(
 				sprintf(
 					/* translators: %d: liczba błędów. */
-					_n(
-						'Konfiguracja jest niespójna: wykryto %d błąd. Dopóki go nie poprawisz, rejestracja niektórych profesji może przepuszczać konta bez numeru uprawnień albo być zablokowana.',
-						'Konfiguracja jest niespójna: wykryto %d błędów. Dopóki ich nie poprawisz, rejestracja niektórych profesji może przepuszczać konta bez numeru uprawnień albo być zablokowana.',
-						$count,
-						'portal-users'
-					),
+					__( 'Liczba wykrytych błędów: %d.', 'portal-users' ),
 					$count
 				)
 			)
