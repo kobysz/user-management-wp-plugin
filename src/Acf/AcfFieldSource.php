@@ -20,6 +20,24 @@ defined( 'ABSPATH' ) || exit;
 final class AcfFieldSource implements FieldSource {
 
 	/**
+	 * Typy ACF, których wtyczka nie obsługuje, więc źródło ich nie widzi.
+	 *
+	 * Specyfikacja dopuszcza typy pól: tekst, e-mail, liczba, select, radio, checkbox, pole
+	 * wielokrotne. Kontenery (`group`, `repeater`, `flexible_content`, `clone`) niosą wartości
+	 * zagnieżdżone: odznaczona zgoda w środku spełniałaby `required` kontenera i omijała
+	 * normalizację pól logicznych. Typy układowe (`tab`, `message`, `accordion`) nie niosą
+	 * żadnej wartości, a bez wykluczenia dałoby się im ustawić stan w macierzy.
+	 */
+	private const UNSUPPORTED_TYPES = array( 'group', 'repeater', 'flexible_content', 'clone', 'tab', 'message', 'accordion' );
+
+	/**
+	 * Migawka definicji pól (null, dopóki niewczytana).
+	 *
+	 * @var array<string, array<string, mixed>>|null
+	 */
+	private ?array $snapshot = null;
+
+	/**
 	 * Klucz grupy ACF.
 	 *
 	 * @var string
@@ -45,7 +63,8 @@ final class AcfFieldSource implements FieldSource {
 	}
 
 	/**
-	 * Pola grupy w kolejności z ACF; puste, gdy grupa zniknęła.
+	 * Pola grupy w kolejności z ACF; puste, gdy grupa zniknęła. Typy kontenerowe i układowe
+	 * (patrz `UNSUPPORTED_TYPES`) są pominięte.
 	 *
 	 * Filtr `pusers_acf_fields` pełni dwie role: jest szwem testowym (bez licencjonowanego
 	 * ACF Pro w środowisku testowym testy podstawiają surowe pola tym filtrem) oraz punktem
@@ -54,36 +73,10 @@ final class AcfFieldSource implements FieldSource {
 	 * @return array<string, string> Klucz pola => etykieta.
 	 */
 	public function fields(): array {
-		if ( ! $this->groupExists() ) {
-			return array();
-		}
-
-		$raw = array();
-		if ( function_exists( 'acf_get_fields' ) ) {
-			$loaded = acf_get_fields( $this->groupKey );
-			if ( is_array( $loaded ) ) {
-				$raw = $loaded;
-			}
-		}
-
-		/**
-		 * Filtruje surową listę pól ACF przed mapowaniem.
-		 *
-		 * @param array<int, mixed> $raw      Pola ACF.
-		 * @param string            $groupKey Klucz grupy.
-		 */
-		$raw = apply_filters( 'pusers_acf_fields', $raw, $this->groupKey );
-		if ( ! is_array( $raw ) ) {
-			return array();
-		}
-
 		$fields = array();
-		foreach ( $raw as $field ) {
-			if ( ! is_array( $field ) || ! isset( $field['name'] ) || ! is_string( $field['name'] ) || '' === $field['name'] ) {
-				continue;
-			}
-			$label                    = isset( $field['label'] ) && is_string( $field['label'] ) && '' !== $field['label'] ? $field['label'] : $field['name'];
-			$fields[ $field['name'] ] = $label;
+		foreach ( $this->definitions() as $name => $field ) {
+			$label           = isset( $field['label'] ) && is_string( $field['label'] ) && '' !== $field['label'] ? $field['label'] : (string) $name;
+			$fields[ $name ] = $label;
 		}
 
 		return $fields;
@@ -93,7 +86,8 @@ final class AcfFieldSource implements FieldSource {
 	 * Typ ACF każdego pola grupy (np. `true_false`, `text`); pusta lista, gdy grupa zniknęła.
 	 *
 	 * Osobna metoda, a nie rozszerzenie `fields()`: macierz i raport spójności zależą od
-	 * pary klucz => etykieta. Pola bez nazwy lub bez typu są pomijane.
+	 * pary klucz => etykieta. Pola bez nazwy lub bez typu są pomijane. Korzysta z tej samej
+	 * migawki definicji co `fields()`, więc oba widoki nie mogą się rozjechać.
 	 *
 	 * @return array<string, string> Klucz pola => typ ACF.
 	 */
@@ -131,20 +125,26 @@ final class AcfFieldSource implements FieldSource {
 	 * Surowa definicja pola ACF z grupy, potrzebna do jego wyrenderowania.
 	 *
 	 * @param string $fieldKey Klucz (nazwa) pola.
-	 * @return array<string, mixed>|null Definicja albo null, gdy pola nie ma w grupie.
+	 * @return array<string, mixed>|null Definicja albo null, gdy pola nie ma w źródle.
 	 */
 	public function definition( string $fieldKey ): ?array {
 		return $this->definitions()[ $fieldKey ] ?? null;
 	}
 
 	/**
-	 * Surowe definicje pól grupy po nazwie, przez ten sam filtr `pusers_acf_fields` co `fields()`.
+	 * Migawka surowych definicji pól grupy po nazwie, wczytana raz na instancję (ACF i filtr
+	 * `pusers_acf_fields` wykonują się raz, nie raz na pole). Bez pól typów nieobsługiwanych.
 	 *
 	 * @return array<string, array<string, mixed>>
 	 */
 	private function definitions(): array {
+		if ( null !== $this->snapshot ) {
+			return $this->snapshot;
+		}
+
+		$this->snapshot = array();
 		if ( ! $this->groupExists() ) {
-			return array();
+			return $this->snapshot;
 		}
 
 		$raw = array();
@@ -155,19 +155,27 @@ final class AcfFieldSource implements FieldSource {
 			}
 		}
 
+		/**
+		 * Filtruje surową listę pól ACF przed mapowaniem.
+		 *
+		 * @param array<int, mixed> $raw      Pola ACF.
+		 * @param string            $groupKey Klucz grupy.
+		 */
 		$raw = apply_filters( 'pusers_acf_fields', $raw, $this->groupKey );
 		if ( ! is_array( $raw ) ) {
-			return array();
+			return $this->snapshot;
 		}
 
-		$definitions = array();
 		foreach ( $raw as $field ) {
 			if ( ! is_array( $field ) || ! isset( $field['name'] ) || ! is_string( $field['name'] ) || '' === $field['name'] ) {
 				continue;
 			}
-			$definitions[ $field['name'] ] = $field;
+			if ( isset( $field['type'] ) && is_string( $field['type'] ) && in_array( $field['type'], self::UNSUPPORTED_TYPES, true ) ) {
+				continue;
+			}
+			$this->snapshot[ $field['name'] ] = $field;
 		}
 
-		return $definitions;
+		return $this->snapshot;
 	}
 }

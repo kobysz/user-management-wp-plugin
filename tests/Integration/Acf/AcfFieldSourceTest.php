@@ -102,6 +102,64 @@ final class AcfFieldSourceTest extends WP_UnitTestCase {
 		$this->assertSame( array(), ( new AcfFieldSource( 'group_abc' ) )->fieldTypes() );
 	}
 
+	public function test_container_and_layout_types_are_invisible_to_the_source(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static fn (): array => array(
+			array( 'name' => 'dane', 'label' => 'Dane', 'type' => 'group' ),
+			array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false' ),
+			array( 'name' => 'lista', 'label' => 'Lista', 'type' => 'repeater' ),
+			array( 'name' => 'elastyczne', 'label' => 'Elastyczne', 'type' => 'flexible_content' ),
+			array( 'name' => 'klon', 'label' => 'Klon', 'type' => 'clone' ),
+			array( 'name' => 'zakladka', 'label' => 'Zakladka', 'type' => 'tab' ),
+			array( 'name' => 'opis', 'label' => 'Opis', 'type' => 'message' ),
+			array( 'name' => 'akordeon', 'label' => 'Akordeon', 'type' => 'accordion' ),
+		) );
+		$source = new AcfFieldSource( 'group_abc' );
+		$this->assertSame( array( 'zgoda' => 'Regulamin' ), $source->fields() );
+		$this->assertSame( array( 'zgoda' => 'true_false' ), $source->fieldTypes() );
+		$this->assertNull( $source->definition( 'dane' ) );
+	}
+
+	public function test_every_type_allowed_by_the_specification_stays_in_the_source(): void {
+		// Specyfikacja: tekst, e-mail, liczba, select, radio, checkbox, pole wielokrotne.
+		$types = array(
+			'tekst'      => 'text',
+			'email'      => 'email',
+			'liczba'     => 'number',
+			'wybor'      => 'select',
+			'opcja'      => 'radio',
+			'pole'       => 'checkbox',
+			'wielokrotne' => 'select',
+		);
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static function () use ( $types ): array {
+			$raw = array();
+			foreach ( $types as $name => $type ) {
+				$raw[] = array( 'name' => $name, 'label' => $name, 'type' => $type, 'multiple' => 'wielokrotne' === $name ? 1 : 0 );
+			}
+			return $raw;
+		} );
+		$source = new AcfFieldSource( 'group_abc' );
+		$this->assertSame( array_keys( $types ), array_keys( $source->fields() ) );
+		$this->assertSame( $types, $source->fieldTypes() );
+	}
+
+	public function test_definitions_are_loaded_once_and_shared_by_fields_and_types(): void {
+		$calls = 0;
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static function () use ( &$calls ): array {
+			++$calls;
+			return array( array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false' ) );
+		} );
+		$source = new AcfFieldSource( 'group_abc' );
+		$source->fields();
+		$source->fieldTypes();
+		$source->definition( 'zgoda' );
+		$source->fields();
+		$this->assertSame( 1, $calls );
+		$this->assertSame( array_keys( $source->fields() ), array_keys( $source->fieldTypes() ) );
+	}
+
 	public function test_adding_types_does_not_change_what_fields_returns(): void {
 		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
 		add_filter( 'pusers_acf_fields', static fn (): array => array(

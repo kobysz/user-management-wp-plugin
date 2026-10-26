@@ -53,6 +53,20 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 		$this->assertSame( array( 'zgoda', 'newsletter', 'regulamin_v2' ), ( new AcfFields( 'group_abc' ) )->booleanKeys() );
 	}
 
+	public function test_boolean_field_beside_a_container_is_still_detected_and_the_container_is_not_a_field(): void {
+		add_filter(
+			'pusers_acf_fields',
+			static function ( array $raw ): array {
+				$raw[] = array( 'name' => 'dane', 'label' => 'Dane', 'type' => 'group', 'sub_fields' => array( array( 'name' => 'zgoda2', 'type' => 'true_false' ) ) );
+				return $raw;
+			},
+			20
+		);
+		$fields = new AcfFields( 'group_abc' );
+		$this->assertSame( array( 'zgoda', 'newsletter' ), $fields->booleanKeys() );
+		$this->assertSame( array(), $fields->fromRequest( array( AcfFields::INPUT => array( 'dane' => array( 'zgoda2' => '0' ) ) ) ) );
+	}
+
 	public function test_boolean_keys_are_empty_when_the_group_disappeared(): void {
 		remove_all_filters( 'pusers_acf_groups' );
 		add_filter( 'pusers_acf_groups', static fn (): array => array() );

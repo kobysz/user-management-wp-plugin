@@ -14,8 +14,10 @@ use PortalUsers\Acf\AcfFieldSource;
 defined( 'ABSPATH' ) || exit;
 
 /**
- * Warstwa integracji z ACF: renderowanie i zapis pól oddaje ACF, wtyczka kontroluje
- * tylko nazwy w żądaniu, atrybut wymagalności i wartość początkową.
+ * Warstwa integracji z ACF. Renderowanie pól należy do ACF; wtyczka kontroluje tylko nazwy
+ * w żądaniu, atrybut wymagalności i wartość początkową. Zapis i sanityzacja należą do
+ * wtyczki: input jest świadomie poza kontenerem `acf[...]`, więc `acf_save_post()` oraz
+ * walidacja ACF nigdy się nie uruchomią i nic nie sanityzuje wartości za wtyczkę.
  */
 final class AcfFields {
 
@@ -54,7 +56,7 @@ final class AcfFields {
 		$keys = array();
 		foreach ( $this->source->fieldTypes() as $fieldKey => $type ) {
 			if ( self::BOOLEAN_TYPE === $type ) {
-				$keys[] = $fieldKey;
+				$keys[] = (string) $fieldKey;
 			}
 		}
 
