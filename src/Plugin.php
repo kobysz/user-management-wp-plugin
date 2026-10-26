@@ -90,7 +90,8 @@ final class Plugin {
 	 */
 	public static function parse_version( string $file ): string {
 		// Nagłówek WP mieści się w pierwszych 8 KB pliku.
-		$head = file_get_contents( $file, false, null, 0, 8192 );
+		// Odczyt lokalnego pliku wtyczki, nie adresu zdalnego (reguła celuje w URL-e); get_file_data() jest niedostępne bez WordPressa.
+		$head = file_get_contents( $file, false, null, 0, 8192 ); // phpcs:ignore WordPress.WP.AlternativeFunctions.file_get_contents_file_get_contents
 		if ( false !== $head && 1 === preg_match( '/^[ \t\/*#@]*Version:[ \t]*(\S+)/mi', $head, $m ) ) {
 			return $m[1];
 		}

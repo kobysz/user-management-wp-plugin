@@ -2,7 +2,9 @@
 <phpunit
     bootstrap="tests/bootstrap-integration.php"
     colors="true"
-    beStrictAboutTestsThatDoNotTestAnything="true">
+    beStrictAboutTestsThatDoNotTestAnything="true"
+    failOnRisky="true"
+    failOnWarning="true">
     <testsuites>
         <testsuite name="integration">
             <directory suffix="Test.php">tests/Integration</directory>
