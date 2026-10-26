@@ -1,6 +1,10 @@
 <?php
 /**
  * Testy migracji tabel w prawdziwej bazie WordPressa.
+ *
+ * Tabele wtyczki powstają już przy bootstrapie (plugins_loaded -> maybe_upgrade),
+ * a WP_UnitTestCase zamienia CREATE TABLE na tymczasowe. Dlatego testy zdejmują
+ * te filtry i odtwarzają stan "świeżej instalacji", żeby asertować realne run().
  */
 
 declare( strict_types=1 );
@@ -12,24 +16,80 @@ use WP_UnitTestCase;
 
 final class MigrationsTest extends WP_UnitTestCase {
 
-	public function test_creates_both_tables(): void {
-		global $wpdb;
+	private const TABLES = array( 'event_log', 'terms_versions' );
+
+	public function tear_down(): void {
+		// DDL nie cofa się z transakcją testu: baza musi zostać z tabelami dla innych testów.
+		$this->remove_temporary_table_filters();
 		Migrations::run();
-		foreach ( array( 'event_log', 'terms_versions' ) as $name ) {
-			$table = Migrations::table( $name );
-			$this->assertSame( $table, $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) ) );
+		parent::tear_down();
+	}
+
+	public function test_creates_both_tables(): void {
+		$this->fresh_install();
+		foreach ( self::TABLES as $name ) {
+			$this->assertFalse( $this->table_exists( Migrations::table( $name ) ), 'Stan wyjściowy: tabeli nie ma.' );
+		}
+
+		Migrations::run();
+
+		foreach ( self::TABLES as $name ) {
+			$this->assertTrue( $this->table_exists( Migrations::table( $name ) ) );
 		}
 	}
 
 	public function test_stores_db_version(): void {
+		$this->fresh_install();
+		$this->assertFalse( get_option( 'pusers_db_version' ), 'Stan wyjściowy: brak opcji.' );
+
 		Migrations::run();
+
 		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
 	}
 
 	public function test_run_is_idempotent(): void {
+		$this->fresh_install();
 		Migrations::run();
+		$before = $this->create_statements();
+
 		Migrations::run();
+
+		$this->assertSame( $before, $this->create_statements() );
 		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
+	}
+
+	public function test_maybe_upgrade_runs_when_version_is_missing(): void {
+		$this->fresh_install();
+
+		Migrations::maybe_upgrade();
+
+		$this->assertTrue( $this->table_exists( Migrations::table( 'event_log' ) ) );
+		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
+	}
+
+	public function test_event_log_schema(): void {
+		global $wpdb;
+		$this->fresh_install();
+		Migrations::run();
+		$table = Migrations::table( 'event_log' );
+
+		$this->assertNotEmpty( $wpdb->get_results( "SHOW COLUMNS FROM {$table} LIKE 'anonymized'" ) );
+		$this->assertSame( 'InnoDB', $this->engine( $table ) );
+		$indexes = $this->index_names( $table );
+		$this->assertContains( 'subject_user_id', $indexes );
+		$this->assertContains( 'created_at', $indexes );
+	}
+
+	public function test_terms_versions_schema(): void {
+		global $wpdb;
+		$this->fresh_install();
+		Migrations::run();
+		$table = Migrations::table( 'terms_versions' );
+
+		$this->assertSame( 'InnoDB', $this->engine( $table ) );
+		$rows = $wpdb->get_results( "SHOW INDEX FROM {$table} WHERE Key_name = 'version_hash'" );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0', (string) $rows[0]->Non_unique );
 	}
 
 	public function test_terms_version_hash_is_unique(): void {
@@ -55,5 +115,55 @@ final class MigrationsTest extends WP_UnitTestCase {
 		);
 		$wpdb->suppress_errors( false );
 		$this->assertFalse( (bool) $second );
+	}
+
+	private function remove_temporary_table_filters(): void {
+		remove_filter( 'query', array( $this, '_create_temporary_tables' ) );
+		remove_filter( 'query', array( $this, '_drop_temporary_tables' ) );
+	}
+
+	/**
+	 * Stan "świeżej instalacji": prawdziwe tabele i opcja usunięte.
+	 */
+	private function fresh_install(): void {
+		global $wpdb;
+		$this->remove_temporary_table_filters();
+		foreach ( self::TABLES as $name ) {
+			$table = Migrations::table( $name );
+			$wpdb->query( "DROP TABLE IF EXISTS {$table}" );
+		}
+		delete_option( 'pusers_db_version' );
+	}
+
+	private function table_exists( string $table ): bool {
+		global $wpdb;
+		return $table === $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $table ) );
+	}
+
+	/**
+	 * @return array<string, string>
+	 */
+	private function create_statements(): array {
+		global $wpdb;
+		$out = array();
+		foreach ( self::TABLES as $name ) {
+			$table         = Migrations::table( $name );
+			$row           = $wpdb->get_row( "SHOW CREATE TABLE {$table}", ARRAY_N );
+			$out[ $table ] = (string) $row[1];
+		}
+		return $out;
+	}
+
+	private function engine( string $table ): string {
+		global $wpdb;
+		return (string) $wpdb->get_var( $wpdb->prepare( 'SELECT ENGINE FROM information_schema.TABLES WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = %s', $table ) );
+	}
+
+	/**
+	 * @return array<int, string>
+	 */
+	private function index_names( string $table ): array {
+		global $wpdb;
+		return array_map( static fn( $r ) => (string) $r->Key_name, $wpdb->get_results( "SHOW INDEX FROM {$table}" ) );
 	}
 }
