@@ -33,4 +33,10 @@ final class DiagnosticianPwzdlTest extends TestCase {
 	public function test_rejects_empty(): void {
 		$this->assertSame( 'empty', ( new DiagnosticianPwzdl() )->validate( '' )->code() );
 	}
+
+	public function test_enforces_maximum_length_of_nine_digits(): void {
+		$this->assertTrue( ( new DiagnosticianPwzdl() )->validate( '123456789' )->isValid() );
+		$this->assertSame( 'invalid_format', ( new DiagnosticianPwzdl() )->validate( '1234567890' )->code() );
+		$this->assertSame( 'invalid_format', ( new DiagnosticianPwzdl() )->validate( str_repeat( '1', 120 ) )->code() );
+	}
 }

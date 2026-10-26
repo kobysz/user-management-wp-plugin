@@ -56,4 +56,10 @@ final class PhysicianPwzTest extends TestCase {
 		$this->assertTrue( $result->isValid() );
 		$this->assertSame( '5425740', $result->normalized() );
 	}
+
+	public function test_accepts_number_pasted_with_typographic_dash(): void {
+		$result = ( new PhysicianPwz() )->validate( "542\u{2013}5740" );
+		$this->assertTrue( $result->isValid() );
+		$this->assertSame( '5425740', $result->normalized() );
+	}
 }

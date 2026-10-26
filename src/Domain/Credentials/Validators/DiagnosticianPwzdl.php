@@ -31,7 +31,7 @@ final class DiagnosticianPwzdl implements CredentialValidator {
 			return CredentialResult::invalid( CredentialResult::EMPTY );
 		}
 
-		if ( 1 !== preg_match( '/^\d+$/', $number ) ) {
+		if ( 1 !== preg_match( '/^\d{1,9}$/', $number ) ) {
 			return CredentialResult::invalid( CredentialResult::INVALID_FORMAT );
 		}
 
