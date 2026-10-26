@@ -60,9 +60,13 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 
 	public function test_settings_submenu_is_registered_under_users(): void {
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
-		do_action( 'pusers_register_features' );
-		do_action( 'admin_menu' );
+		// Izolacja Menu::register(): ekrany profesji i macierzy podpinają własne podstrony pod
+		// admin_menu, więc zdejmujemy wszystkie callbacki i sprawdzamy wyłącznie to, co dodaje Menu.
+		remove_all_actions( 'admin_menu' );
 		global $submenu;
+		$submenu = array();
+		Menu::register();
+		do_action( 'admin_menu' );
 		$slugs = wp_list_pluck( $submenu['users.php'] ?? array(), 2 );
 		$this->assertContains( Menu::SLUG_SETTINGS, $slugs );
 		// Ekrany profesji i macierzy rejestrują swoje podstrony same (Taski 6 i 7), nie Menu.

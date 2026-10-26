@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers;
 
 use PortalUsers\Admin\Menu;
+use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
 
 defined( 'ABSPATH' ) || exit;
@@ -53,6 +54,7 @@ final class Plugin {
 		// Ekrany panelu rejestrują się dopiero przy spełnionych zależnościach (hook odpala load_features()).
 		add_action( 'pusers_register_features', array( Menu::class, 'register' ) );
 		add_action( 'pusers_register_features', array( SettingsScreen::class, 'register' ) );
+		add_action( 'pusers_register_features', array( ProfessionsScreen::class, 'register' ) );
 	}
 
 	/**
