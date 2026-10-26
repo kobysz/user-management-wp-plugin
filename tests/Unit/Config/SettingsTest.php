@@ -42,6 +42,19 @@ final class SettingsTest extends TestCase {
 		$this->assertSame( array( 'a@example.test', 'b@example.test' ), $s->notifyEmails );
 	}
 
+	public function test_rejects_addresses_that_would_split_or_corrupt_the_recipient_list(): void {
+		foreach ( array( 'a,b@x.co', 'a<b@x.co', 'a>b@x.co', 'a;b@x.co', 'a b@x.co', 'a@x,y.co', '.a@x.co', 'a..b@x.co' ) as $bad ) {
+			$s = Settings::fromArray( array( 'notify_emails' => array( $bad ) ) );
+			$this->assertSame( array(), $s->notifyEmails, $bad . ' nie jest poprawnym adresem odbiorcy.' );
+		}
+	}
+
+	public function test_accepts_addresses_with_dot_plus_underscore_and_hyphen(): void {
+		$good = array( 'jan.kowalski@x.co', 'jan+portal@x.co', 'jan_k@x.co', 'jan-k@x.co', 'a@mail.example-host.co' );
+		$s    = Settings::fromArray( array( 'notify_emails' => $good ) );
+		$this->assertSame( $good, $s->notifyEmails );
+	}
+
 	public function test_deduplicates_and_trims_emails_case_insensitively(): void {
 		$s = Settings::fromArray( array( 'notify_emails' => array( ' A@example.test ', 'a@example.test' ) ) );
 		$this->assertSame( array( 'a@example.test' ), $s->notifyEmails );

@@ -19,6 +19,13 @@ namespace PortalUsers\Domain\Config;
  */
 final class Settings {
 
+	/**
+	 * Adres e-mail: część lokalna z dozwolonych znaków (bez przecinka, średnika, nawiasów ostrokątnych
+	 * i spacji, które rozbijałyby listę odbiorców), kropki tylko między znakami; domena z etykiet
+	 * liter, cyfr i myślników, co najmniej dwie etykiety.
+	 */
+	private const EMAIL_PATTERN = '/^[a-z0-9!#$%&\x27*+\/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&\x27*+\/=?^_`{|}~-]+)*@[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)+$/';
+
 	private const DEFAULT_TOKEN_HOURS = 48;
 	private const DEFAULT_PURGE_DAYS  = 7;
 	private const DEFAULT_RATE_LIMIT  = 10;
@@ -214,7 +221,7 @@ final class Settings {
 		$out = array();
 		foreach ( self::texts( $value ) as $candidate ) {
 			$email = strtolower( $candidate );
-			if ( 1 === preg_match( '/^[^@\s]+@[^@\s.]+(?:\.[^@\s.]+)+$/', $email ) ) {
+			if ( 1 === preg_match( self::EMAIL_PATTERN, $email ) ) {
 				$out[ $email ] = $email;
 			}
 		}
