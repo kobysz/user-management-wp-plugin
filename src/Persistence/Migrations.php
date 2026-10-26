@@ -24,7 +24,7 @@ final class Migrations {
 	/**
 	 * Nazwa opcji z zapisaną wersją schematu.
 	 */
-	private const OPTION = 'pusers_db_version';
+	public const OPTION_DB_VERSION = 'pusers_db_version';
 
 	/**
 	 * Pełna nazwa tabeli wtyczki (z prefiksem WordPressa).
@@ -78,7 +78,7 @@ final class Migrations {
 		// dbDelta() nie sygnalizuje błędów. Wersję zapisujemy dopiero, gdy obie tabele istnieją,
 		// inaczej maybe_upgrade() nigdy nie ponowiłby próby.
 		if ( self::table_exists( $log ) && self::table_exists( $terms ) ) {
-			update_option( self::OPTION, self::DB_VERSION );
+			update_option( self::OPTION_DB_VERSION, self::DB_VERSION );
 		}
 	}
 
@@ -97,7 +97,7 @@ final class Migrations {
 	 * Aktualizacja wtyczki nie odpala hooka aktywacji, więc to jest konieczne.
 	 */
 	public static function maybe_upgrade(): void {
-		$stored = get_option( self::OPTION, 0 );
+		$stored = get_option( self::OPTION_DB_VERSION, 0 );
 		$stored = is_numeric( $stored ) ? (int) $stored : 0;
 		if ( $stored < self::DB_VERSION ) {
 			self::run();
