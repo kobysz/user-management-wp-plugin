@@ -38,8 +38,24 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 	 */
 	private string $originalMethod = 'GET';
 
+	/**
+	 * Stan globalnych hooków admin_menu i menu sprzed testu (testy izolują rejestrację menu).
+	 *
+	 * @var mixed
+	 */
+	private $savedAdminMenuHooks;
+
+	/**
+	 * Stan globalnego $submenu sprzed testu.
+	 *
+	 * @var mixed
+	 */
+	private $savedSubmenu;
+
 	public function set_up(): void {
 		parent::set_up();
+		$this->savedAdminMenuHooks = isset( $GLOBALS['wp_filter']['admin_menu'] ) ? clone $GLOBALS['wp_filter']['admin_menu'] : null;
+		$this->savedSubmenu        = $GLOBALS['submenu'] ?? null;
 		$this->redirected     = '';
 		$this->originalMethod = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
 		$this->cancelRedirect = function ( $location ) {
@@ -56,6 +72,16 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		$_GET     = array();
 		$_REQUEST = array();
 		$_SERVER['REQUEST_METHOD'] = $this->originalMethod;
+		if ( null === $this->savedAdminMenuHooks ) {
+			unset( $GLOBALS['wp_filter']['admin_menu'] );
+		} else {
+			$GLOBALS['wp_filter']['admin_menu'] = $this->savedAdminMenuHooks;
+		}
+		if ( null === $this->savedSubmenu ) {
+			unset( $GLOBALS['submenu'] );
+		} else {
+			$GLOBALS['submenu'] = $this->savedSubmenu;
+		}
 		parent::tear_down();
 	}
 
@@ -134,7 +160,7 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		foreach ( CredentialType::cases() as $case ) {
 			$this->assertStringContainsString( 'value="' . $case->value . '"', $html );
 		}
-		$this->assertStringNotContainsString( 'name="profession[credential_type]" type="text"', $html );
+		$this->assertStringContainsString( '<select id="pusers_profession[credential_type]" name="pusers_profession[credential_type]">', $html );
 	}
 
 	// --- Testy dopisane przez implementera (patrz raport: testy z briefu, które same nie dowodzą). ---
@@ -256,14 +282,14 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'lekarz' ) );
 		ProfessionsScreen::handle_delete();
 		$this->assertStringContainsString( 'pusers_notice=profession_confirm_accounts', $this->redirected );
-		$this->assertStringContainsString( 'accounts=3', $this->redirected );
 
-		// Ekran po przekierowaniu pokazuje liczbę kont i formularz potwierdzenia.
-		$_GET = array( 'pusers_notice' => 'profession_confirm_accounts', 'profession' => 'lekarz', 'accounts' => '3' );
+		// Ekran liczy konta od nowa: podrobiony parametr accounts=99 w adresie nie ma wpływu.
+		$_GET = array( 'pusers_notice' => 'profession_confirm_accounts', 'profession' => 'lekarz', 'accounts' => '99' );
 		ob_start();
 		ProfessionsScreen::render();
 		$html = (string) ob_get_clean();
 		$this->assertStringContainsString( 'przypisana do 3 kont', $html );
+		$this->assertStringNotContainsString( 'przypisana do 99', $html );
 		$this->assertStringContainsString( 'name="pusers_confirm_accounts" value="1"', $html );
 	}
 
@@ -333,6 +359,48 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '<option value="pole_spoza_listy" selected=\'selected\'>', $html );
 		$this->assertStringContainsString( 'name="pusers_original_key" value="lekarz"', $html );
 		$this->assertStringContainsString( 'readonly="readonly"', $html );
+	}
+
+	public function test_editing_a_key_that_does_not_exist_creates_nothing(): void {
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz' ),
+		) ) );
+		$this->asAdminPosting( 'pusers_save_professions', array(
+			'original_key' => 'nie-ma-takiej',
+			'profession'   => array( 'key' => 'nowa', 'label' => 'Nowa', 'credential_type' => 'none' ),
+		) );
+		ProfessionsScreen::handle_save();
+		$this->assertSame( array( 'lekarz' ), ProfessionRepository::get()->keys() );
+		$this->assertStringContainsString( 'pusers_notice=profession_invalid_key', $this->redirected );
+	}
+
+	public function test_deleting_is_refused_for_a_user_without_the_capability_and_the_profession_stays(): void {
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
+		) ) );
+		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'student' ) );
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'subscriber' ) ) );
+		try {
+			ProfessionsScreen::handle_delete();
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertNotNull( ProfessionRepository::get()->get( 'student' ) );
+		}
+	}
+
+	public function test_deleting_is_refused_with_a_bad_nonce_and_the_profession_stays(): void {
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
+		) ) );
+		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'student' ) );
+		$_POST['pusers_nonce'] = 'zly-nonce';
+		$_REQUEST              = $_POST;
+		try {
+			ProfessionsScreen::handle_delete();
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertNotNull( ProfessionRepository::get()->get( 'student' ) );
+		}
 	}
 
 	/**

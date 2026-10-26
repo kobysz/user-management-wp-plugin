@@ -167,7 +167,6 @@ final class ProfessionsScreen {
 				self::NOTICE_CONFIRM_ACCOUNTS,
 				array(
 					'profession' => $key,
-					'accounts'   => $accounts,
 				)
 			);
 			return;
@@ -244,12 +243,13 @@ final class ProfessionsScreen {
 			return;
 		}
 		// Odczyt parametrów powiadomienia po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje.
-		$key      = isset( $_GET['profession'] ) && is_string( $_GET['profession'] ) ? sanitize_text_field( wp_unslash( $_GET['profession'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		$accounts = isset( $_GET['accounts'] ) ? absint( $_GET['accounts'] ) : 0; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		$target   = $collection->get( $key );
+		$key    = isset( $_GET['profession'] ) && is_string( $_GET['profession'] ) ? sanitize_text_field( wp_unslash( $_GET['profession'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$target = $collection->get( $key );
 		if ( null === $target ) {
 			return;
 		}
+		// Liczba kont jest przeliczana teraz, a nie brana z adresu: komunikat nie może kłamać o zasięgu usunięcia.
+		$accounts = self::accounts_using( $key );
 
 		echo '<div class="notice notice-warning"><p>' . esc_html(
 			sprintf(

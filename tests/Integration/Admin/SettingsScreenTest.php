@@ -37,8 +37,24 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 	 */
 	private string $originalMethod = 'GET';
 
+	/**
+	 * Stan globalnych hooków admin_menu i menu sprzed testu (testy izolują rejestrację menu).
+	 *
+	 * @var mixed
+	 */
+	private $savedAdminMenuHooks;
+
+	/**
+	 * Stan globalnego $submenu sprzed testu.
+	 *
+	 * @var mixed
+	 */
+	private $savedSubmenu;
+
 	public function set_up(): void {
 		parent::set_up();
+		$this->savedAdminMenuHooks = isset( $GLOBALS['wp_filter']['admin_menu'] ) ? clone $GLOBALS['wp_filter']['admin_menu'] : null;
+		$this->savedSubmenu        = $GLOBALS['submenu'] ?? null;
 		$this->redirected     = '';
 		$this->originalMethod = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
 		$this->cancelRedirect = function ( $location ) {
@@ -55,6 +71,16 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		$_REQUEST = array();
 		unset( $_GET['pusers_notice'] );
 		$_SERVER['REQUEST_METHOD'] = $this->originalMethod;
+		if ( null === $this->savedAdminMenuHooks ) {
+			unset( $GLOBALS['wp_filter']['admin_menu'] );
+		} else {
+			$GLOBALS['wp_filter']['admin_menu'] = $this->savedAdminMenuHooks;
+		}
+		if ( null === $this->savedSubmenu ) {
+			unset( $GLOBALS['submenu'] );
+		} else {
+			$GLOBALS['submenu'] = $this->savedSubmenu;
+		}
 		parent::tear_down();
 	}
 
