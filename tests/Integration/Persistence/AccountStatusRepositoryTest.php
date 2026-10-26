@@ -33,6 +33,42 @@ final class AccountStatusRepositoryTest extends WP_UnitTestCase {
 		$this->assertNull( AccountStatusRepository::get( $id ) );
 	}
 
+	public function test_absent_meta_is_no_state_not_corruption(): void {
+		$id = self::factory()->user->create();
+		$this->assertFalse( AccountStatusRepository::isUnrecognised( $id ) );
+		$this->assertNull( AccountStatusRepository::get( $id ) );
+	}
+
+	public function test_unrecognised_value_is_flagged_as_corruption(): void {
+		$id = self::factory()->user->create();
+		update_user_meta( $id, UserMeta::STATUS, 'cokolwiek' );
+		$this->assertTrue( AccountStatusRepository::isUnrecognised( $id ) );
+		$this->assertNull( AccountStatusRepository::get( $id ) );
+	}
+
+	public function test_empty_value_is_no_state_not_corruption(): void {
+		$id = self::factory()->user->create();
+		update_user_meta( $id, UserMeta::STATUS, '' );
+		$this->assertFalse( AccountStatusRepository::isUnrecognised( $id ) );
+		$this->assertNull( AccountStatusRepository::get( $id ) );
+	}
+
+	public function test_non_string_value_is_flagged_as_corruption(): void {
+		$id = self::factory()->user->create();
+		update_user_meta( $id, UserMeta::STATUS, array( 'pending' ) );
+		$this->assertTrue( AccountStatusRepository::isUnrecognised( $id ) );
+		$this->assertNull( AccountStatusRepository::get( $id ) );
+	}
+
+	public function test_every_valid_state_is_recognised(): void {
+		foreach ( AccountStatus::cases() as $status ) {
+			$id = self::factory()->user->create();
+			AccountStatusRepository::set( $id, $status );
+			$this->assertFalse( AccountStatusRepository::isUnrecognised( $id ), $status->value );
+			$this->assertSame( $status, AccountStatusRepository::get( $id ), $status->value );
+		}
+	}
+
 	/**
 	 * Porównanie z UserMeta::PROFESSION byłoby tautologią (USER_META jest do niej przypisane),
 	 * więc przeżyłoby zmianę wartości. Literał pilnuje wartości, którą klienci mają w bazach.

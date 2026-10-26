@@ -31,6 +31,26 @@ final class AccountStatusRepository {
 	}
 
 	/**
+	 * Czy metadana stanu jest obecna i niepusta, ale nie da się jej rozpoznać jako stan konta.
+	 *
+	 * Obejmuje też wartość nietekstową (tablica, liczba). Brak metadanej i wartość pusta to
+	 * "brak stanu", nie uszkodzenie, więc dają fałsz.
+	 *
+	 * Konsument bramy logowania MUSI przy prawdzie odmówić wejścia i zapisać wpis do logu,
+	 * zamiast przekazywać wynik get() (null) do LoginGate::decide(): ta metoda przy null
+	 * wpuszcza, bo null oznacza konto bez stanu (np. administratora dodanego ręcznie).
+	 *
+	 * @param int $user_id Identyfikator użytkownika.
+	 */
+	public static function isUnrecognised( int $user_id ): bool {
+		$raw = get_user_meta( $user_id, UserMeta::STATUS, true );
+		if ( '' === $raw ) {
+			return false;
+		}
+		return ! is_string( $raw ) || null === AccountStatus::tryFromStored( $raw );
+	}
+
+	/**
 	 * Zapisuje stan konta.
 	 *
 	 * @param int           $user_id Identyfikator użytkownika.
