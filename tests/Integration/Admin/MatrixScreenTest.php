@@ -457,6 +457,20 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'value="pusers_delete_matrix_field"', $html );
 	}
 
+	public function test_the_dead_field_removal_form_action_has_the_registered_handler_behind_it(): void {
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		$this->withProfessions( 'lekarz' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible', 'martwe' => 'visible' ) ) ) );
+		$html = $this->renderAsAdmin();
+		$this->assertSame( 1, preg_match( '#<tr data-dead-field="martwe">.*?name="action" value="([^"]+)"#s', $html, $m ), 'Brak formularza usuwania martwego pola.' );
+		remove_all_actions( 'admin_post_' . $m[1] );
+		MatrixScreen::register();
+		$this->assertNotFalse(
+			has_action( 'admin_post_' . $m[1], array( MatrixScreen::class, 'handle_delete_field' ) ),
+			'Akcja formularza usuwania martwego pola nie ma handlera usuwania.'
+		);
+	}
+
 	public function test_the_screen_registers_its_own_submenu_page_under_users(): void {
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
 		remove_all_actions( 'admin_menu' );
