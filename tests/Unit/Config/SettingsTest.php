@@ -85,4 +85,104 @@ final class SettingsTest extends TestCase {
 	public function test_trusted_proxy_header_is_normalised_to_a_header_name(): void {
 		$this->assertSame( 'HTTP_X_FORWARDED_FOR', Settings::fromArray( array( 'trusted_proxy_header' => ' x-forwarded-for ' ) )->trustedProxyHeader );
 	}
+
+	public function test_round_trip_preserves_non_default_values_in_every_field(): void {
+		$s = new Settings(
+			false,
+			11,
+			12,
+			13,
+			array( 'redakcja@example.test' ),
+			24,
+			14,
+			20,
+			5,
+			'HTTP_X_REAL_IP',
+			array( 'numer nieprawidłowy' ),
+			true,
+			'group_abc'
+		);
+
+		$this->assertSame(
+			array(
+				'approval_enabled',
+				'login_page_id',
+				'register_page_id',
+				'reset_page_id',
+				'notify_emails',
+				'confirmation_token_hours',
+				'unconfirmed_purge_days',
+				'rate_limit_per_hour',
+				'time_trap_seconds',
+				'trusted_proxy_header',
+				'rejection_reasons',
+				'delete_data_on_uninstall',
+				'acf_group_key',
+			),
+			array_keys( $s->toArray() )
+		);
+		$this->assertSame( $s->toArray(), Settings::fromArray( $s->toArray() )->toArray() );
+	}
+
+	/**
+	 * @return array<string, array{0: mixed, 1: bool}>
+	 */
+	public static function delete_data_flag_provider(): array {
+		return array(
+			'true'                      => array( true, true ),
+			'string one'                => array( '1', true ),
+			'int one'                   => array( 1, true ),
+			'false'                     => array( false, false ),
+			'string zero'               => array( '0', false ),
+			'int zero'                  => array( 0, false ),
+			'empty string'              => array( '', false ),
+			'unrecognised false string' => array( 'false', false ),
+			'unrecognised yes string'   => array( 'yes', false ),
+		);
+	}
+
+	/**
+	 * @dataProvider delete_data_flag_provider
+	 *
+	 * @param mixed $input    Wartość z zapisu.
+	 * @param bool  $expected Oczekiwana flaga.
+	 */
+	public function test_delete_data_flag_converts_values_including_unrecognised_ones( mixed $input, bool $expected ): void {
+		$this->assertSame( $expected, Settings::fromArray( array( 'delete_data_on_uninstall' => $input ) )->deleteDataOnUninstall );
+	}
+
+	public function test_delete_data_flag_missing_key_defaults_to_not_deleting(): void {
+		$this->assertFalse( Settings::fromArray( array() )->deleteDataOnUninstall );
+	}
+
+	/**
+	 * @return array<string, array{0: mixed, 1: bool}>
+	 */
+	public static function approval_flag_provider(): array {
+		return array(
+			'true'                      => array( true, true ),
+			'string one'                => array( '1', true ),
+			'int one'                   => array( 1, true ),
+			'false'                     => array( false, false ),
+			'string zero'               => array( '0', false ),
+			'int zero'                  => array( 0, false ),
+			'empty string'              => array( '', false ),
+			'unrecognised false string' => array( 'false', true ),
+			'unrecognised yes string'   => array( 'yes', true ),
+		);
+	}
+
+	/**
+	 * @dataProvider approval_flag_provider
+	 *
+	 * @param mixed $input    Wartość z zapisu.
+	 * @param bool  $expected Oczekiwana flaga.
+	 */
+	public function test_approval_flag_converts_values_including_unrecognised_ones( mixed $input, bool $expected ): void {
+		$this->assertSame( $expected, Settings::fromArray( array( 'approval_enabled' => $input ) )->approvalEnabled );
+	}
+
+	public function test_approval_flag_missing_key_defaults_to_enabled(): void {
+		$this->assertTrue( Settings::fromArray( array() )->approvalEnabled );
+	}
 }
