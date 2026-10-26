@@ -21,18 +21,20 @@ final class Profession {
 	/**
 	 * Konstruktor.
 	 *
-	 * @param string         $key            Stały klucz profesji.
-	 * @param string         $label          Nazwa wyświetlana.
-	 * @param CredentialType $credentialType Rodzaj numeru uprawnień.
-	 * @param string         $registryUrl    Adres rejestru zawodowego (może być pusty).
-	 * @param string         $notifyEmail    Adres redakcji dla tej profesji (może być pusty).
+	 * @param string         $key             Stały klucz profesji.
+	 * @param string         $label           Nazwa wyświetlana.
+	 * @param CredentialType $credentialType  Rodzaj numeru uprawnień.
+	 * @param string         $registryUrl     Adres rejestru zawodowego (może być pusty).
+	 * @param string         $notifyEmail     Adres redakcji dla tej profesji (może być pusty).
+	 * @param string         $credentialField Klucz pola, w którym profesja podaje numer uprawnień (pusty, gdy bez numeru).
 	 */
 	public function __construct(
 		public readonly string $key,
 		public readonly string $label,
 		public readonly CredentialType $credentialType,
 		public readonly string $registryUrl = '',
-		public readonly string $notifyEmail = ''
+		public readonly string $notifyEmail = '',
+		public readonly string $credentialField = ''
 	) {}
 
 	/**
@@ -62,7 +64,8 @@ final class Profession {
 			'' === $label ? $key : $label,
 			CredentialType::tryFrom( self::text( $raw, 'credential_type' ) ) ?? CredentialType::None,
 			self::text( $raw, 'registry_url' ),
-			self::text( $raw, 'notify_email' )
+			self::text( $raw, 'notify_email' ),
+			self::text( $raw, 'credential_field' )
 		);
 	}
 
@@ -86,11 +89,12 @@ final class Profession {
 	 */
 	public function toArray(): array {
 		return array(
-			'key'             => $this->key,
-			'label'           => $this->label,
-			'credential_type' => $this->credentialType->value,
-			'registry_url'    => $this->registryUrl,
-			'notify_email'    => $this->notifyEmail,
+			'key'              => $this->key,
+			'label'            => $this->label,
+			'credential_type'  => $this->credentialType->value,
+			'registry_url'     => $this->registryUrl,
+			'notify_email'     => $this->notifyEmail,
+			'credential_field' => $this->credentialField,
 		);
 	}
 }

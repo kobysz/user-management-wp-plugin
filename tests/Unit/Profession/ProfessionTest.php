@@ -27,11 +27,12 @@ final class ProfessionTest extends TestCase {
 
 	public function test_round_trips_through_array(): void {
 		$raw = array(
-			'key'             => 'pielegniarka',
-			'label'           => 'Pielęgniarka',
-			'credential_type' => 'nurse_pwz',
-			'registry_url'    => 'https://nipip.pl/weryfikacja-pwz',
-			'notify_email'    => 'redakcja@example.test',
+			'key'              => 'pielegniarka',
+			'label'            => 'Pielęgniarka',
+			'credential_type'  => 'nurse_pwz',
+			'registry_url'     => 'https://nipip.pl/weryfikacja-pwz',
+			'notify_email'     => 'redakcja@example.test',
+			'credential_field' => '',
 		);
 		$this->assertSame( $raw, Profession::fromArray( $raw )->toArray() );
 	}
@@ -60,5 +61,22 @@ final class ProfessionTest extends TestCase {
 	public function test_whitespace_only_label_falls_back_to_key(): void {
 		$p = Profession::fromArray( array( 'key' => 'lekarz', 'label' => "  	 " ) );
 		$this->assertSame( 'lekarz', $p->label );
+	}
+
+	public function test_credential_field_round_trips_through_array(): void {
+		$raw = array(
+			'key'              => 'lekarz',
+			'label'            => 'Lekarz',
+			'credential_type'  => 'physician_pwz',
+			'registry_url'     => 'https://rejestr.nil.org.pl/',
+			'notify_email'     => 'redakcja@example.test',
+			'credential_field' => 'pwz',
+		);
+		$this->assertSame( $raw, Profession::fromArray( $raw )->toArray() );
+	}
+
+	public function test_credential_field_defaults_to_empty_and_is_trimmed(): void {
+		$this->assertSame( '', Profession::fromArray( array( 'key' => 'x', 'label' => 'X' ) )->credentialField );
+		$this->assertSame( 'pwz', Profession::fromArray( array( 'key' => 'x', 'label' => 'X', 'credential_field' => ' pwz ' ) )->credentialField );
 	}
 }

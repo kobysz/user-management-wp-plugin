@@ -56,6 +56,17 @@ final class RepositoriesTest extends WP_UnitTestCase {
 		$this->assertSame( 'redakcja@example.test', $loaded->get( 'lekarz' )->notifyEmail );
 	}
 
+	public function test_profession_repository_preserves_the_credential_field(): void {
+		ProfessionRepository::save(
+			ProfessionCollection::fromArray(
+				array(
+					array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ),
+				)
+			)
+		);
+		$this->assertSame( 'pwz', ProfessionRepository::get()->get( 'lekarz' )->credentialField );
+	}
+
 	public function test_matrix_repository_round_trip(): void {
 		$matrix = FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required', 'miasto' => 'visible' ) ) );
 		FieldMatrixRepository::save( $matrix );
