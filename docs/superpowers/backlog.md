@@ -126,6 +126,36 @@ Nie do rozstrzygnięcia z kodu, wymagają weryfikacji w źródłach:
 
 ---
 
+## Zaparkowane po fali poprawek Planu 1
+
+Trzy pozycje zostały zaparkowane z rozstrzygnięciem po jedynej fali poprawek — proces nie przewiduje drugiej rundy.
+
+### `Migrations::table_exists()` a `lower_case_table_names=1`
+
+Porównanie wyniku `SHOW TABLES LIKE` z nazwą dosłownie. Przy `lower_case_table_names=1` (typowe na Windowsie i macOS) i prefiksie z wielkimi literami baza zwróci nazwę małymi literami, weryfikacja nigdy nie przejdzie, wersja schematu się nie zapisze — i migracja będzie się powtarzać przy każdym żądaniu.
+
+Rdzeń WordPressa stosuje to samo porównanie, więc ryzyko jest znikome. **Wiedzieć o tym, jeśli ktoś zgłosi „migracja chodzi przy każdym żądaniu" na lokalnym środowisku.**
+
+### Strażnik czystości domeny nie widzi wywołań przez łańcuch
+
+Allowlista na `token_get_all()` nie wykrywa funkcji przekazanych jako łańcuch do `call_user_func` albo `array_map` (np. `array_map( 'get_option', ... )`), ani wywołań dynamicznych `$f()`. Druga, mniejsza luka: stała przed dwukropkiem zaraz po `(` albo `,` jest pomijana jak argument nazwany, więc `case WP_CONST:` w takiej pozycji przeszłoby.
+
+W obecnej bazie kodu żadna z tych konstrukcji nie występuje. Wyłapywane są natomiast `$wpdb`, `ABSPATH`, wzmianki w komentarzach i wszystkie wywołania bezpośrednie. **Gdy `src/Domain` urośnie w Planach 2–7, warto dołożyć wykrywanie łańcuchów przekazywanych do `array_map`/`call_user_func`.**
+
+Uwaga uboczna: lista funkcji wbudowanych zależy od rozszerzeń PHP załadowanych w kontenerze testowym. Brak rozszerzenia sprawi, że strażnik zaświeci czerwono, nie zielono — czyli myli się w bezpieczną stronę.
+
+### Komentarz przy `phpcs:ignore` w `Plugin::parse_version()`
+
+Wyciszenie jest uzasadnione i wąskie (jedna linia, pełny kod sniffa, powód w komentarzu): `parse_version()` musi działać także wtedy, gdy WordPress nie jest załadowany, więc `WP_Filesystem` i `get_file_data()` nie wchodzą w grę.
+
+Sam komentarz mówi jednak, że reguła „celuje w adresy zdalne", a sniff `WordPress.WP.AlternativeFunctions` zaleca `WP_Filesystem` także dla plików lokalnych. Dokładniejsze sformułowanie: „`WP_Filesystem` niedostępny bez WordPressa". Kosmetyka.
+
+### Brak testu „jedna tabela jest, drugiej brak"
+
+Weryfikacja przed zapisem wersji schematu używa `&&` na obu tabelach, więc przypadek jest pokryty w kodzie, ale nie w teście.
+
+---
+
 ## Świadomie odłożone drobiazgi
 
 Te pozycje przeszły triage recenzji końcowej jako „mogą zostać". Spisane, żeby nie wracały jako odkrycia:
