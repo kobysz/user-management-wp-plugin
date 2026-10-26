@@ -57,7 +57,7 @@ node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users 
 node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- vendor/bin/phpunit -c phpunit-integration.xml.dist
 
 # Analiza statyczna i styl
-node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- vendor/bin/phpstan analyse
+node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- vendor/bin/phpstan analyse --memory-limit=512M
 node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- vendor/bin/phpcs
 ```
 
