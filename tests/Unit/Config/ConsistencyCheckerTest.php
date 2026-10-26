@@ -109,13 +109,39 @@ final class ConsistencyCheckerTest extends TestCase {
 		$this->assertSame( 'student', $issues[0]->context['profession'] );
 	}
 
-	public function test_matrix_field_missing_from_source_is_a_warning(): void {
+	public function test_required_matrix_field_missing_from_source_is_an_error_that_blocks_registration(): void {
 		$checker = new ConsistencyChecker(
 			ProfessionCollection::fromArray( array( array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ) ) ),
 			FieldMatrix::fromArray( array( 'student' => array( 'skasowane' => 'required' ) ) ),
 			$this->source( array() )
 		);
+		$issues = $checker->issues();
+		$this->assertSame( array( 'matrix_required_field_not_in_source' ), $this->codes( $checker ) );
+		$this->assertSame( SettingsIssue::ERROR, $issues[0]->severity );
+		$this->assertSame( 'skasowane', $issues[0]->context['field'] );
+		$this->assertSame( 'student', $issues[0]->context['profession'] );
+	}
+
+	public function test_visible_matrix_field_missing_from_source_stays_a_warning(): void {
+		$checker = new ConsistencyChecker(
+			ProfessionCollection::fromArray( array( array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ) ) ),
+			FieldMatrix::fromArray( array( 'student' => array( 'skasowane' => 'visible' ) ) ),
+			$this->source( array() )
+		);
+		$issues = $checker->issues();
 		$this->assertSame( array( 'matrix_field_not_in_source' ), $this->codes( $checker ) );
+		$this->assertSame( SettingsIssue::WARNING, $issues[0]->severity );
+	}
+
+	public function test_hidden_matrix_field_missing_from_source_stays_a_warning(): void {
+		$checker = new ConsistencyChecker(
+			ProfessionCollection::fromArray( array( array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ) ) ),
+			FieldMatrix::fromArray( array( 'student' => array( 'skasowane' => 'hidden' ) ) ),
+			$this->source( array() )
+		);
+		$issues = $checker->issues();
+		$this->assertSame( array( 'matrix_field_not_in_source' ), $this->codes( $checker ) );
+		$this->assertSame( SettingsIssue::WARNING, $issues[0]->severity );
 	}
 
 	public function test_matrix_row_for_an_unknown_profession_is_a_warning(): void {

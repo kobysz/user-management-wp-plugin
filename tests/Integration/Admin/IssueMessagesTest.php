@@ -55,6 +55,17 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 		$this->assertNotSame( '', $noReason );
 	}
 
+	public function test_required_field_outside_the_source_says_registration_is_blocked(): void {
+		$context = array( 'profession' => 'lekarz', 'field' => 'pwz_stare' );
+		$blocked = IssueMessages::text( SettingsIssue::error( 'matrix_required_field_not_in_source', $context ) );
+		$plain   = IssueMessages::text( SettingsIssue::warning( 'matrix_field_not_in_source', $context ) );
+		$this->assertStringContainsString( 'zablokowana', $blocked );
+		$this->assertStringContainsString( 'lekarz', $blocked );
+		$this->assertStringContainsString( 'pwz_stare', $blocked );
+		$this->assertStringNotContainsString( 'zablokowana', $plain );
+		$this->assertStringNotContainsString( 'matrix_required_field_not_in_source', $blocked );
+	}
+
 	public function test_unknown_code_falls_back_to_a_generic_message(): void {
 		$text = IssueMessages::text( SettingsIssue::warning( 'cos_nowego' ) );
 		$this->assertNotSame( '', $text );

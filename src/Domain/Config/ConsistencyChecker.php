@@ -89,14 +89,21 @@ final class ConsistencyChecker {
 			}
 
 			foreach ( array_keys( $fields ) as $fieldKey ) {
-				if ( ! in_array( (string) $fieldKey, $source, true ) ) {
-					$found[] = SettingsIssue::warning(
-						'matrix_field_not_in_source',
-						array(
-							'profession' => $professionKey,
-							'field'      => (string) $fieldKey,
-						)
-					);
+				if ( in_array( (string) $fieldKey, $source, true ) ) {
+					continue;
+				}
+
+				$context = array(
+					'profession' => $professionKey,
+					'field'      => (string) $fieldKey,
+				);
+				// Wymagane pole, którego formularz nigdy nie wyrenderuje: walidator zgłosi twardy błąd
+				// "required" i profesja przestaje być rejestrowalna. Dotyczy tylko istniejącej profesji
+				// (wiersz bez profesji nikogo nie blokuje); pozostałe stany tylko zaśmiecają.
+				if ( $this->professions->has( $professionKey ) && FieldState::Required === $this->matrix->stateFor( $professionKey, (string) $fieldKey ) ) {
+					$found[] = SettingsIssue::error( 'matrix_required_field_not_in_source', $context );
+				} else {
+					$found[] = SettingsIssue::warning( 'matrix_field_not_in_source', $context );
 				}
 			}
 		}
