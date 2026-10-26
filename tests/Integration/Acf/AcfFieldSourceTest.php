@@ -51,8 +51,25 @@ final class AcfFieldSourceTest extends WP_UnitTestCase {
 
 	public function test_group_that_disappeared_reports_absent_and_yields_no_fields(): void {
 		add_filter( 'pusers_acf_groups', static fn (): array => array() );
+		add_filter( 'pusers_acf_fields', static fn (): array => array( array( 'name' => 'pwz', 'label' => 'Numer PWZ' ) ) );
 		$source = new AcfFieldSource( 'group_znikla' );
 		$this->assertFalse( $source->groupExists() );
 		$this->assertSame( array(), $source->fields() );
+	}
+
+	public function test_fields_filter_returning_non_array_yields_no_fields(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter( 'pusers_acf_fields', static fn (): string => 'bzdura' );
+		$this->assertSame( array(), ( new AcfFieldSource( 'group_abc' ) )->fields() );
+
+		remove_all_filters( 'pusers_acf_fields' );
+		add_filter( 'pusers_acf_fields', static fn () => null );
+		$this->assertSame( array(), ( new AcfFieldSource( 'group_abc' ) )->fields() );
+	}
+
+	public function test_groups_filter_returning_non_array_yields_no_groups(): void {
+		add_filter( 'pusers_acf_groups', static fn (): string => 'bzdura' );
+		$this->assertSame( array(), AcfGroupList::groups() );
+		$this->assertFalse( ( new AcfFieldSource( 'group_abc' ) )->groupExists() );
 	}
 }
