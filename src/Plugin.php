@@ -31,13 +31,23 @@ final class Plugin {
 	private static ?string $version = null;
 
 	/**
-	 * Zapamiętuje plik główny. Kolejne zadania podepną tu hooki.
+	 * Zapamiętuje plik główny i podpina hooki. Komunikat o zależnościach oraz
+	 * tłumaczenia działają zawsze; reszta wtyczki tylko przy spełnionych zależnościach.
 	 *
 	 * @param string $pluginFile Ścieżka pliku głównego wtyczki.
 	 */
 	public static function boot( string $pluginFile ): void {
 		self::$plugin_file = $pluginFile;
 		self::$version     = null;
+
+		Dependencies::register();
+		I18n::register();
+
+		if ( ! Dependencies::satisfied() ) {
+			return; // Brak ACF Pro: widoczny komunikat i bezczynna wtyczka, nie fatal.
+		}
+
+		// Kolejne zadania podpinają tu pozostałe hooki.
 	}
 
 	/**
