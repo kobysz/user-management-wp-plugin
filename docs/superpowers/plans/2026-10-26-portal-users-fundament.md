@@ -44,8 +44,8 @@ Spec pokrywa kilka niezależnych podsystemów. Każdy dostaje własny plan, każ
 ### Komendy referencyjne
 
 ```bash
-# Zależności PHP (host, przez obraz Dockera)
-docker run --rm -v "$PWD:/app" -w //app composer:2 install
+# Zależności PHP (host, przez obraz Dockera; Git Bash wymaga wyłączenia przepisywania ścieżek)
+MSYS_NO_PATHCONV=1 docker run --rm -v "$(pwd -W):/app" -w /app composer:2 install
 
 # Środowisko
 node scripts/wp-env.cjs start
@@ -62,6 +62,8 @@ node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users 
 ```
 
 **Nie używaj gołego `npx wp-env`** — na tej maszynie rozwiązuje się do przestarzałej pustej paczki i Node ma kwirk DNS. Wrapper `scripts/wp-env.cjs` skopiuj z `C:\Users\kuba\SynologyDrive\WebDevAI\event-registration\scripts\wp-env.cjs`. Porty: dev 8891 i tests 8892 są zajęte przez tamtą wtyczkę — użyj 8893 i 8894.
+
+**Katalog repozytorium (`wp-plugin-user-management`) nie pokrywa się ze slugiem wtyczki (`portal-users`)**, więc `"plugins": ["."]` zamontowałoby ją pod złą nazwą. W `.wp-env.json` użyj `mappings` (`wp-content/plugins/portal-users` → `.`) z pustym `plugins`. Ścieżka `--env-cwd=wp-content/plugins/portal-users` z komend wyżej działa dzięki temu mapowaniu.
 
 ## Review Focus
 
