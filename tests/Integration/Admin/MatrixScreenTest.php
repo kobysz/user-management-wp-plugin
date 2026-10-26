@@ -115,6 +115,23 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_abc' ) ) );
 	}
 
+	/**
+	 * Zapisuje profesje o podanych kluczach (zapis macierzy przyjmuje tylko klucze z kolekcji).
+	 *
+	 * @param string ...$keys Klucze profesji.
+	 */
+	private function withProfessions( string ...$keys ): void {
+		$items = array();
+		foreach ( $keys as $key ) {
+			$items[] = array(
+				'key'             => $key,
+				'label'           => $key,
+				'credential_type' => 'none',
+			);
+		}
+		ProfessionRepository::save( ProfessionCollection::fromArray( $items ) );
+	}
+
 	private function renderAsAdmin(): string {
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
 		ob_start();
@@ -123,6 +140,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_saving_the_matrix_persists_the_three_states(): void {
+		$this->withProfessions( 'lekarz' );
 		$this->withSource(
 			array(
 				'pwz'    => 'PWZ',
@@ -151,6 +169,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_unknown_state_from_the_request_is_stored_as_hidden(): void {
+		$this->withProfessions( 'lekarz' );
 		$this->withSource( array( 'pwz' => 'PWZ' ) );
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
 		$this->asAdminPosting(
@@ -267,6 +286,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	// --- Dopisane na polecenie: scalanie, puste wartości, usuwanie martwych wierszy, uprawnienia. ---
 
 	public function test_saving_merges_into_the_stored_matrix_instead_of_replacing_it(): void {
+		$this->withProfessions( 'lekarz', 'pielegniarka' );
 		$this->withSource( array( 'pwz' => 'PWZ' ) );
 		FieldMatrixRepository::save(
 			FieldMatrix::fromArray(
@@ -293,6 +313,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_an_empty_state_leaves_the_cell_unconfigured(): void {
+		$this->withProfessions( 'lekarz' );
 		$this->withSource(
 			array(
 				'pwz'  => 'PWZ',
@@ -494,6 +515,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_a_source_field_with_capital_letters_can_be_saved(): void {
+		$this->withProfessions( 'lekarz' );
 		$this->withSource( array( 'PWZ' => 'Numer PWZ' ) );
 		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'PWZ' => 'required' ) ) ) );
 		MatrixScreen::handle_save();
@@ -501,6 +523,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_a_field_outside_a_readable_source_is_not_saved_and_does_not_become_required(): void {
+		$this->withProfessions( 'lekarz' );
 		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
 		$this->asAdminPosting(
 			'pusers_save_matrix',
@@ -517,6 +540,35 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$matrix = FieldMatrixRepository::get();
 		$this->assertSame( array( 'pwz' ), $matrix->requiredFields( 'lekarz' ) );
 		$this->assertArrayNotHasKey( 'smiec', $matrix->toArray()['lekarz'] );
+	}
+
+	public function test_a_profession_key_with_capital_letters_is_saved_and_read_under_the_same_form(): void {
+		$this->withSource( array( 'pwz' => 'PWZ' ) );
+		$this->withProfessions( 'Lekarz' );
+		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'Lekarz' => array( 'pwz' => 'required' ) ) ) );
+		MatrixScreen::handle_save();
+		$matrix = FieldMatrixRepository::get();
+		$this->assertSame( FieldState::Required, $matrix->stateFor( 'Lekarz', 'pwz' ), 'Klucz profesji ma zostać taki, jaki jest w kolekcji.' );
+		$this->assertArrayNotHasKey( 'lekarz', $matrix->toArray(), 'Klucz nie może zostać zmieniony na małe litery.' );
+		$this->assertSame( array( 'pwz' ), $matrix->requiredFields( 'Lekarz' ) );
+	}
+
+	public function test_a_profession_key_missing_from_the_collection_is_not_saved(): void {
+		$this->withSource( array( 'pwz' => 'PWZ' ) );
+		$this->withProfessions( 'lekarz' );
+		$this->asAdminPosting(
+			'pusers_save_matrix',
+			array(
+				'matrix' => array(
+					'lekarz'  => array( 'pwz' => 'required' ),
+					'LEKARZ'  => array( 'pwz' => 'hidden' ),
+					'duch'    => array( 'pwz' => 'required' ),
+				),
+			)
+		);
+		MatrixScreen::handle_save();
+		$saved = FieldMatrixRepository::get()->toArray();
+		$this->assertSame( array( 'lekarz' => array( 'pwz' => 'required' ) ), $saved, 'Obca profesja nie trafia do macierzy, a wielkość liter nie jest skłaniana do istniejącego klucza.' );
 	}
 
 	public function test_a_get_request_to_save_is_refused_and_changes_nothing(): void {
@@ -615,6 +667,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_an_unknown_key_is_skipped_but_the_rest_of_the_request_is_saved(): void {
+		$this->withProfessions( 'lekarz', 'pielegniarka' );
 		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
 		$this->asAdminPosting(
 			'pusers_save_matrix',

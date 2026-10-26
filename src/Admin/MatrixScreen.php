@@ -90,8 +90,16 @@ final class MatrixScreen {
 		// rejestrację. Klucz porównujemy surowo - przynależność do źródła jest sanityzacją.
 		$known = $source->fields();
 
+		// Tak samo profesje: klucz spoza kolekcji jest odrzucany, nie sanityzowany. Sanityzacja
+		// (np. zmiana wielkości liter) zapisałaby wpis pod innym kluczem, niż czyta macierz,
+		// i pole po cichu przestałoby być wymagane.
+		$professions = ProfessionRepository::get();
+
 		$merged = FieldMatrixRepository::get()->toArray();
 		foreach ( self::posted_matrix() as $profession => $fields ) {
+			if ( ! $professions->has( (string) $profession ) ) {
+				continue;
+			}
 			foreach ( $fields as $field => $state ) {
 				if ( '' === $state || ! array_key_exists( $field, $known ) ) {
 					continue;
@@ -367,7 +375,7 @@ final class MatrixScreen {
 	}
 
 	/**
-	 * Macierz z żądania: profesja => pole => stan (tekst). Klucze pól zostają surowe (patrz handle_save()).
+	 * Macierz z żądania: profesja => pole => stan (tekst). Klucze profesji i pól zostają surowe (patrz handle_save()).
 	 * Elementy o złym kształcie są pomijane.
 	 *
 	 * @return array<string, array<string, string>>
@@ -380,7 +388,7 @@ final class MatrixScreen {
 		$raw = wp_unslash( $_POST[ $name ] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- guard() w obsłudze żądania; wartości czyszczone niżej.
 		$out = array();
 		foreach ( $raw as $profession => $fields ) {
-			$profession = sanitize_key( (string) $profession );
+			$profession = (string) $profession;
 			if ( ! is_array( $fields ) || '' === $profession ) {
 				continue;
 			}
