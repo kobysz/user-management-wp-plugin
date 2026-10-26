@@ -123,6 +123,13 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_saving_the_matrix_persists_the_three_states(): void {
+		$this->withSource(
+			array(
+				'pwz'    => 'PWZ',
+				'miasto' => 'Miasto',
+				'pwzp'   => 'PWZ pielęgniarki',
+			)
+		);
 		$this->asAdminPosting(
 			'pusers_save_matrix',
 			array(
@@ -144,6 +151,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_unknown_state_from_the_request_is_stored_as_hidden(): void {
+		$this->withSource( array( 'pwz' => 'PWZ' ) );
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
 		$this->asAdminPosting(
 			'pusers_save_matrix',
@@ -259,6 +267,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	// --- Dopisane na polecenie: scalanie, puste wartości, usuwanie martwych wierszy, uprawnienia. ---
 
 	public function test_saving_merges_into_the_stored_matrix_instead_of_replacing_it(): void {
+		$this->withSource( array( 'pwz' => 'PWZ' ) );
 		FieldMatrixRepository::save(
 			FieldMatrix::fromArray(
 				array(
@@ -284,6 +293,12 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_an_empty_state_leaves_the_cell_unconfigured(): void {
+		$this->withSource(
+			array(
+				'pwz'  => 'PWZ',
+				'nowe' => 'Nowe',
+			)
+		);
 		$this->asAdminPosting(
 			'pusers_save_matrix',
 			array(
@@ -302,6 +317,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_saving_redirects_back_with_a_saved_notice(): void {
+		$this->withSource( array( 'pwz' => 'PWZ' ) );
 		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'pwz' => 'visible' ) ) ) );
 		MatrixScreen::handle_save();
 		$this->assertStringContainsString( 'page=pusers-matrix', $this->redirected );
@@ -309,6 +325,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_saving_is_refused_for_a_user_without_the_capability_and_changes_nothing(): void {
+		$this->withSource( array( 'pwz' => 'PWZ' ) );
 		$this->asRolePosting( 'subscriber', 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
 		try {
 			MatrixScreen::handle_save();
@@ -483,12 +500,6 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->assertSame( FieldState::Required, FieldMatrixRepository::get()->stateFor( 'lekarz', 'PWZ' ) );
 	}
 
-	public function test_an_unreadable_group_does_not_lowercase_field_keys(): void {
-		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'PWZ' => 'visible' ) ) ) );
-		MatrixScreen::handle_save();
-		$this->assertSame( array( 'lekarz' => array( 'PWZ' => 'visible' ) ), FieldMatrixRepository::get()->toArray() );
-	}
-
 	public function test_a_field_outside_a_readable_source_is_not_saved_and_does_not_become_required(): void {
 		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
 		$this->asAdminPosting(
@@ -496,8 +507,8 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 			array(
 				'matrix' => array(
 					'lekarz' => array(
-						'pwz'   => 'required',
 						'smiec' => 'required',
+						'pwz'   => 'required',
 					),
 				),
 			)
@@ -508,18 +519,8 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'smiec', $matrix->toArray()['lekarz'] );
 	}
 
-	public function test_unreadable_group_cleans_keys_but_keeps_the_case_of_field_keys(): void {
-		$this->asAdminPosting(
-			'pusers_save_matrix',
-			array(
-				'matrix' => array( 'Lekarz <b>' => array( 'PW Z!' => 'required' ) ),
-			)
-		);
-		MatrixScreen::handle_save();
-		$this->assertSame( array( 'lekarzb' => array( 'PWZ' => 'required' ) ), FieldMatrixRepository::get()->toArray() );
-	}
-
 	public function test_a_get_request_to_save_is_refused_and_changes_nothing(): void {
+		$this->withSource( array( 'pwz' => 'PWZ' ) );
 		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 		try {
@@ -560,6 +561,7 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '<tr data-dead-field="pwz">', $html, 'Wiersze nadal widać.' );
 		$this->assertStringNotContainsString( 'value="pusers_delete_matrix_field"', $html );
 		$this->assertStringContainsString( 'nie istnieje już w ACF', $html );
+		$this->assertStringContainsString( 'Usuwanie jest wyłączone', $html, 'Akapit w sekcji martwych wierszy.' );
 	}
 
 	public function test_an_existing_but_empty_group_gets_its_own_message(): void {
@@ -578,5 +580,94 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$html = $this->renderAsAdmin();
 		$this->assertStringContainsString( 'nie zawiera żadnych pól', $html );
 		$this->assertStringNotContainsString( 'nie istnieje już w ACF', $html );
+	}
+
+	// --- Runda poprawek 3. ---
+
+	public function test_saving_is_rejected_as_a_whole_when_the_group_is_not_selected(): void {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible' ) ) ) );
+		$before = FieldMatrixRepository::get()->toArray();
+		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		MatrixScreen::handle_save();
+		$this->assertSame( $before, FieldMatrixRepository::get()->toArray() );
+		$this->assertStringContainsString( 'pusers_notice=matrix_save_refused', $this->redirected );
+		$this->assertStringNotContainsString( 'pusers_notice=saved', $this->redirected );
+	}
+
+	public function test_saving_is_rejected_when_the_selected_group_is_gone_from_acf(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_inna' => 'Inna' ) );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array(
+				array(
+					'name'  => 'pwz',
+					'label' => 'PWZ',
+				),
+			)
+		);
+		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_usunieta' ) ) );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible' ) ) ) );
+		$before = FieldMatrixRepository::get()->toArray();
+		$this->asAdminPosting( 'pusers_save_matrix', array( 'matrix' => array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		MatrixScreen::handle_save();
+		$this->assertSame( $before, FieldMatrixRepository::get()->toArray() );
+		$this->assertStringContainsString( 'pusers_notice=matrix_save_refused', $this->redirected );
+	}
+
+	public function test_an_unknown_key_is_skipped_but_the_rest_of_the_request_is_saved(): void {
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		$this->asAdminPosting(
+			'pusers_save_matrix',
+			array(
+				'matrix' => array(
+					'lekarz'       => array(
+						'smiec' => 'required',
+						'pwz'   => 'required',
+					),
+					'pielegniarka' => array( 'pwz' => 'visible' ),
+				),
+			)
+		);
+		MatrixScreen::handle_save();
+		$saved = FieldMatrixRepository::get()->toArray();
+		$this->assertSame( array( 'pwz' => 'required' ), $saved['lekarz'] );
+		$this->assertSame( array( 'pwz' => 'visible' ), $saved['pielegniarka'] );
+	}
+
+	public function test_removing_a_field_that_is_nowhere_in_the_matrix_reports_no_success(): void {
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$this->asAdminPosting( 'pusers_delete_matrix_field', array( 'field' => 'nie-ma-takiego' ) );
+		MatrixScreen::handle_delete_field();
+		$this->assertStringNotContainsString( 'matrix_field_removed', $this->redirected );
+		$this->assertStringContainsString( 'pusers_notice=matrix_field_refused', $this->redirected );
+		$this->assertSame( array( 'lekarz' => array( 'pwz' => 'required' ) ), FieldMatrixRepository::get()->toArray() );
+	}
+
+	public function test_dead_rows_explain_that_removal_is_off_when_the_group_is_gone_from_acf(): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_inna' => 'Inna' ) );
+		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_usunieta' ) ) );
+		ProfessionRepository::save(
+			ProfessionCollection::fromArray(
+				array(
+					array(
+						'key'             => 'lekarz',
+						'label'           => 'Lekarz',
+						'credential_type' => 'none',
+					),
+				)
+			)
+		);
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$html = $this->renderAsAdmin();
+		$this->assertStringContainsString( '<tr data-dead-field="pwz">', $html );
+		$this->assertStringNotContainsString( 'value="pusers_delete_matrix_field"', $html );
+	}
+
+	public function test_refusal_notices_are_rendered_as_errors(): void {
+		$_GET = array( 'pusers_notice' => 'matrix_field_refused' );
+		$this->assertMatchesRegularExpression( '#<div class="notice notice-error"><p>Nie usunięto#u', $this->renderAsAdmin() );
+		$_GET = array( 'pusers_notice' => 'matrix_save_refused' );
+		$this->assertMatchesRegularExpression( '#<div class="notice notice-error"><p>Nie zapisano macierzy#u', $this->renderAsAdmin() );
 	}
 }

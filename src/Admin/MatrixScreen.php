@@ -32,6 +32,7 @@ final class MatrixScreen {
 
 	public const NOTICE_FIELD_REMOVED = 'matrix_field_removed';
 	public const NOTICE_FIELD_REFUSED = 'matrix_field_refused';
+	public const NOTICE_SAVE_REFUSED  = 'matrix_save_refused';
 
 	private const FIELD_PREFIX = 'pusers_';
 
@@ -77,18 +78,22 @@ final class MatrixScreen {
 		Request::guard( self::ACTION_SAVE );
 		self::require_post();
 
-		// Gdy grupa jest czytelna, przyjmujemy tylko jej pola: wpis pola, którego formularz nie
-		// wyrenderuje, blokowałby rejestrację (pole wymagane, którego nikt nie może wypełnić).
+		// Bez czytelnej grupy nie ma czego zapisywać (ekran nie renderuje wierszy), a wpis dla pola,
+		// którego nikt nie umie zweryfikować, mógłby zablokować rejestrację. Odrzucamy całość.
 		$source = self::source();
-		$known  = $source->groupExists() ? $source->fields() : null;
+		if ( ! $source->groupExists() ) {
+			Request::redirect( Menu::SLUG_MATRIX, self::NOTICE_SAVE_REFUSED );
+			return;
+		}
+
+		// Przyjmujemy tylko pola grupy: wpis pola, którego formularz nie wyrenderuje, blokowałby
+		// rejestrację. Klucz porównujemy surowo - przynależność do źródła jest sanityzacją.
+		$known = $source->fields();
 
 		$merged = FieldMatrixRepository::get()->toArray();
 		foreach ( self::posted_matrix() as $profession => $fields ) {
 			foreach ( $fields as $field => $state ) {
-				// Czytelne źródło: przynależność do niego jest sanityzacją, klucz porównujemy surowy
-				// (nazwa pola ACF może mieć wielkie litery). Bez źródła czyścimy, nie zmieniając wielkości liter.
-				$field = null !== $known ? $field : self::clean_field_key( $field );
-				if ( '' === $state || '' === $field || ( null !== $known && ! array_key_exists( $field, $known ) ) ) {
+				if ( '' === $state || ! array_key_exists( $field, $known ) ) {
 					continue;
 				}
 				$merged[ $profession ][ $field ] = $state;
@@ -113,12 +118,12 @@ final class MatrixScreen {
 		// przeczytać, nie wiadomo, co jest martwe, więc macierz zostaje nietknięta.
 		$field  = self::posted_string( 'field' );
 		$source = self::source();
-		if ( '' === $field || ! $source->groupExists() || array_key_exists( $field, $source->fields() ) ) {
+		$rows   = FieldMatrixRepository::get()->toArray();
+		if ( '' === $field || ! $source->groupExists() || array_key_exists( $field, $source->fields() ) || ! self::in_matrix( $rows, $field ) ) {
 			Request::redirect( Menu::SLUG_MATRIX, self::NOTICE_FIELD_REFUSED );
 			return;
 		}
 
-		$rows = FieldMatrixRepository::get()->toArray();
 		foreach ( $rows as $profession => $fields ) {
 			unset( $rows[ $profession ][ $field ] );
 		}
@@ -171,8 +176,12 @@ final class MatrixScreen {
 		if ( isset( $texts[ $notice ] ) ) {
 			echo '<div class="notice notice-success"><p>' . esc_html( $texts[ $notice ] ) . '</p></div>';
 		}
-		if ( self::NOTICE_FIELD_REFUSED === $notice ) {
-			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nie usunięto: pole jest w wybranej grupie albo grupy nie da się odczytać.', 'portal-users' ) . '</p></div>';
+		$errors = array(
+			self::NOTICE_FIELD_REFUSED => __( 'Nie usunięto: wskazane pole nie jest martwym polem macierzy albo wybranej grupy nie da się odczytać.', 'portal-users' ),
+			self::NOTICE_SAVE_REFUSED  => __( 'Nie zapisano macierzy: wybranej grupy pól nie wskazano albo nie istnieje już w ACF.', 'portal-users' ),
+		);
+		if ( isset( $errors[ $notice ] ) ) {
+			echo '<div class="notice notice-error"><p>' . esc_html( $errors[ $notice ] ) . '</p></div>';
 		}
 	}
 
@@ -343,13 +352,18 @@ final class MatrixScreen {
 	}
 
 	/**
-	 * Klucz pola, gdy źródła nie da się przeczytać: zostają litery (obu wielkości), cyfry, podkreślenie i myślnik,
-	 * czyli to, co może wystąpić w nazwie pola ACF. W odróżnieniu od sanitize_key() nie zmienia wielkości liter.
+	 * Czy pole występuje w którymkolwiek wierszu macierzy.
 	 *
-	 * @param int|string $key Klucz z żądania.
+	 * @param array<string, array<string, string>> $rows  Macierz w postaci tablicy.
+	 * @param string                               $field Klucz pola.
 	 */
-	private static function clean_field_key( int|string $key ): string {
-		return (string) preg_replace( '/[^A-Za-z0-9_-]/', '', (string) $key );
+	private static function in_matrix( array $rows, string $field ): bool {
+		foreach ( $rows as $fields ) {
+			if ( array_key_exists( $field, $fields ) ) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/**
