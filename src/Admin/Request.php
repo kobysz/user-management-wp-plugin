@@ -31,8 +31,9 @@ final class Request {
 		$allowed = current_user_can( Menu::CAPABILITY );
 
 		if ( $allowed ) {
-			$nonce   = isset( $_REQUEST[ self::NONCE_FIELD ] ) && is_string( $_REQUEST[ self::NONCE_FIELD ] )
-				? sanitize_text_field( wp_unslash( $_REQUEST[ self::NONCE_FIELD ] ) )
+			// Tylko $_POST: nonce w adresie trafiałby do logów serwera i nagłówka referer.
+			$nonce   = isset( $_POST[ self::NONCE_FIELD ] ) && is_string( $_POST[ self::NONCE_FIELD ] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- to jest weryfikacja nonce'a.
+				? sanitize_text_field( wp_unslash( $_POST[ self::NONCE_FIELD ] ) ) // phpcs:ignore WordPress.Security.NonceVerification.Missing
 				: '';
 			$allowed = '' !== $nonce && false !== wp_verify_nonce( $nonce, $action );
 		}
