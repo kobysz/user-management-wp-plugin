@@ -9,6 +9,9 @@ declare( strict_types=1 );
 
 namespace PortalUsers;
 
+use PortalUsers\Admin\Menu;
+use PortalUsers\Admin\SettingsScreen;
+
 defined( 'ABSPATH' ) || exit;
 
 /**
@@ -46,6 +49,10 @@ final class Plugin {
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.
 		add_action( 'plugins_loaded', array( self::class, 'load_features' ) );
+
+		// Ekrany panelu rejestrują się dopiero przy spełnionych zależnościach (hook odpala load_features()).
+		add_action( 'pusers_register_features', array( Menu::class, 'register' ) );
+		add_action( 'pusers_register_features', array( SettingsScreen::class, 'register' ) );
 	}
 
 	/**
