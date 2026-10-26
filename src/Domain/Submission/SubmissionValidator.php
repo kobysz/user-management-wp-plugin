@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Domain\Submission;
 
+use PortalUsers\Domain\Credentials\CredentialResult;
 use PortalUsers\Domain\Credentials\Normalizer;
 use PortalUsers\Domain\Credentials\ValidatorRegistry;
 use PortalUsers\Domain\Fields\FieldMatrix;
@@ -36,6 +37,9 @@ final class SubmissionValidator {
 
 	/**
 	 * Waliduje zgłoszenie.
+	 *
+	 * Wartości w `values()` mogą być nietekstowe (tablice, liczby, wartości logiczne),
+	 * więc sanityzacja przy zapisie należy do warstwy zapisu, nie do walidatora.
 	 *
 	 * @param string               $professionKey      Klucz wybranej profesji.
 	 * @param string               $credentialFieldKey Klucz pola z numerem uprawnień.
@@ -78,7 +82,7 @@ final class SubmissionValidator {
 					}
 				}
 			} else {
-				$warning = 'invalid_format';
+				$warning = CredentialResult::INVALID_FORMAT;
 			}
 		}
 
@@ -86,7 +90,13 @@ final class SubmissionValidator {
 	}
 
 	/**
-	 * Czy wartość to brak: null, pusty lub biały tekst albo tablica samych braków.
+	 * Czy wartość to brak. Zamknięta lista braków: `[]`, `['']`, `''`, `'   '`, `null`
+	 * (oraz tablica złożona wyłącznie z takich braków).
+	 *
+	 * Wartości fałszywe, w tym `'0'`, `0`, `0.0` i `false`, NIE są brakiem: zero jest legalną
+	 * wartością (np. lata praktyki równe 0) i spełnia `required`. Za to, by odznaczone pole
+	 * logiczne (checkbox, ACF `true_false` z ukrytym inputem `0`) wysyłało wartość pustą, a nie
+	 * `'0'`, odpowiada warstwa formularza. Świadoma decyzja, przypięta testem.
 	 *
 	 * @param mixed $value Wartość z żądania.
 	 * @return bool

@@ -183,4 +183,56 @@ final class SubmissionValidatorTest extends TestCase {
 		$this->assertSame( 'empty', $r->credentialWarning() );
 		$this->assertSame( '-', $r->values()['pwz'] );
 	}
+
+	public function test_falsy_values_count_as_present_by_deliberate_decision(): void {
+		// Świadoma decyzja (nie luka): zero jest legalną wartością, więc '0', 0, 0.0 i false
+		// spełniają `required`. Odznaczony checkbox musi w warstwie formularza wysłać wartość pustą.
+		foreach ( array( '0', 0, 0.0, false ) as $falsy ) {
+			$r = $this->validator()->validate(
+				'lekarz',
+				'pwz',
+				array(
+					'pwz'   => '5425740',
+					'zgoda' => $falsy,
+				)
+			);
+			$this->assertTrue( $r->isValid(), 'Wartość ' . var_export( $falsy, true ) . ' miała liczyć się jako obecna.' );
+			$this->assertSame( $falsy, $r->values()['zgoda'] );
+		}
+	}
+
+	public function test_non_string_credential_value_gives_invalid_format_warning_and_stays_untouched(): void {
+		// Kontrakt, od którego zależy obowiązkowa sanityzacja przy zapisie (Plan 3).
+		$r = $this->validator()->validate(
+			'lekarz',
+			'pwz',
+			array(
+				'pwz'   => array( '5425740' ),
+				'zgoda' => '1',
+			)
+		);
+		$this->assertTrue( $r->isValid() );
+		$this->assertSame( 'invalid_format', $r->credentialWarning() );
+		$this->assertSame( array( '5425740' ), $r->values()['pwz'] );
+	}
+
+	public function test_profession_missing_from_matrix_gives_valid_submission_with_no_values(): void {
+		// Pułapka produktowa, utrwalona testem: profesja jest w kolekcji, ale nie ma jej w macierzy,
+		// więc wszystkie pola są „ukryte” - zgłoszenie przechodzi z pustymi values().
+		$professions = ProfessionCollection::fromArray(
+			array(
+				array(
+					'key'             => 'lekarz',
+					'label'           => 'Lekarz',
+					'credential_type' => 'physician_pwz',
+				),
+			)
+		);
+		$validator   = new SubmissionValidator( $professions, FieldMatrix::fromArray( array() ), new ValidatorRegistry() );
+
+		$r = $validator->validate( 'lekarz', 'pwz', array( 'pwz' => '5425740', 'zgoda' => '1' ) );
+
+		$this->assertTrue( $r->isValid() );
+		$this->assertSame( array(), $r->values() );
+	}
 }
