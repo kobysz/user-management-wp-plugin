@@ -129,4 +129,44 @@ final class RegistrationPlanTest extends TestCase {
 		$this->assertSame( array(), $plan->fieldsFor( 'nie-ma' ) );
 		$this->assertSame( array(), $plan->requiredFor( 'nie-ma' ) );
 	}
+
+	public function test_required_for_ignores_a_required_entry_for_a_field_absent_from_the_source(): void {
+		// Plan dostaje macierz NIEprzycietą: requiredFor() samo nie moze wymagac pola, ktorego formularz nie wyrenderuje.
+		$plan = new RegistrationPlan(
+			FieldMatrix::fromArray(
+				array(
+					'lekarz' => array(
+						'pwz'    => 'required',
+						'znikle' => 'required',
+					),
+				)
+			),
+			$this->source( array( 'pwz' => 'Numer PWZ' ) )
+		);
+
+		$this->assertSame( array( 'pwz' ), $plan->requiredFor( 'lekarz' ) );
+	}
+
+	public function test_required_for_lists_required_fields_in_source_order_not_matrix_order(): void {
+		$plan = new RegistrationPlan(
+			FieldMatrix::fromArray(
+				array(
+					'lekarz' => array(
+						'zgoda'  => 'required',
+						'pwz'    => 'required',
+						'miasto' => 'visible',
+					),
+				)
+			),
+			$this->source(
+				array(
+					'pwz'    => 'Numer PWZ',
+					'miasto' => 'Miasto',
+					'zgoda'  => 'Zgoda',
+				)
+			)
+		);
+
+		$this->assertSame( array( 'pwz', 'zgoda' ), $plan->requiredFor( 'lekarz' ) );
+	}
 }

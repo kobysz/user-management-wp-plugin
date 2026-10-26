@@ -124,4 +124,43 @@ final class FieldMatrixTest extends TestCase {
 		$this->assertSame( array( 'a' ), $p->visibleFields( 'student' ) );
 		$this->assertSame( array(), $p->requiredFields( 'student' ) );
 	}
+
+	public function test_pruning_to_an_empty_list_removes_every_entry_including_required_credential_field(): void {
+		// OSTRZEZENIE: pusta lista znosi WSZYSTKIE wymagania, lacznie z wymogiem numeru uprawnien (pwz).
+		// Wywolujacy odpowiada za to, by lista pochodzila z czytelnego zrodla.
+		$m = FieldMatrix::fromArray(
+			array(
+				'lekarz'  => array(
+					'pwz'    => 'required',
+					'miasto' => 'visible',
+				),
+				'student' => array(
+					'uczelnia' => 'required',
+				),
+			)
+		);
+		$p = $m->prunedTo( array() );
+
+		$this->assertSame( array(), $p->requiredFields( 'lekarz' ) );
+		$this->assertSame( array(), $p->requiredFields( 'student' ) );
+		$this->assertSame( FieldState::Hidden, $p->stateFor( 'lekarz', 'pwz' ) );
+		$this->assertSame(
+			array(
+				'lekarz'  => array(),
+				'student' => array(),
+			),
+			$p->toArray()
+		);
+	}
+
+	public function test_a_profession_with_all_fields_pruned_behaves_like_an_absent_one(): void {
+		$p = FieldMatrix::fromArray( array( 'lekarz' => array( 'znikle' => 'required' ) ) )->prunedTo( array( 'pwz' ) );
+
+		$this->assertSame( array(), $p->requiredFields( 'lekarz' ) );
+		$this->assertSame( array(), $p->visibleFields( 'lekarz' ) );
+		$this->assertSame( FieldState::Hidden, $p->stateFor( 'lekarz', 'znikle' ) );
+		$this->assertSame( $p->requiredFields( 'nie-ma' ), $p->requiredFields( 'lekarz' ) );
+		$this->assertSame( $p->visibleFields( 'nie-ma' ), $p->visibleFields( 'lekarz' ) );
+		$this->assertSame( $p->stateFor( 'nie-ma', 'pwz' ), $p->stateFor( 'lekarz', 'pwz' ) );
+	}
 }

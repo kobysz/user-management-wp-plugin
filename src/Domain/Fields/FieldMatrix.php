@@ -89,6 +89,11 @@ final class FieldMatrix {
 	 * Przycięcie tylko usuwa: nie dodaje wpisu i nie podnosi stanu, więc macierz
 	 * pozostaje jedynym źródłem prawdy. Oryginał się nie zmienia.
 	 *
+	 * UWAGA: metoda ufa swojemu argumentowi. Pusta lista usuwa KAŻDY wpis, także
+	 * wymóg numeru uprawnień zawodowych, więc zgłoszenie bez numeru przeszłoby
+	 * walidację. Wywołujący odpowiada za to, by lista pochodziła z czytelnego
+	 * źródła definicji pól; nieczytelnego źródła nie wolno zamieniać na pustą listę.
+	 *
 	 * @param array<int, string> $fieldKeys Klucze pól, które istnieją w źródle definicji.
 	 * @return self
 	 */
