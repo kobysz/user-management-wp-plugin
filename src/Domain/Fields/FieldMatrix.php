@@ -84,6 +84,26 @@ final class FieldMatrix {
 	}
 
 	/**
+	 * Nowa macierz bez wpisów dla pól spoza podanej listy.
+	 *
+	 * Przycięcie tylko usuwa: nie dodaje wpisu i nie podnosi stanu, więc macierz
+	 * pozostaje jedynym źródłem prawdy. Oryginał się nie zmienia.
+	 *
+	 * @param array<int, string> $fieldKeys Klucze pól, które istnieją w źródle definicji.
+	 * @return self
+	 */
+	public function prunedTo( array $fieldKeys ): self {
+		$allowed = array_fill_keys( $fieldKeys, true );
+		$states  = array();
+
+		foreach ( $this->states as $professionKey => $fields ) {
+			$states[ $professionKey ] = array_intersect_key( $fields, $allowed );
+		}
+
+		return new self( $states );
+	}
+
+	/**
 	 * Postać do zapisu: profesja => pole => tekst stanu.
 	 *
 	 * @return array<string, array<string, string>>

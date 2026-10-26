@@ -61,4 +61,67 @@ final class FieldMatrixTest extends TestCase {
 		$this->assertSame( array( 'pwz' ), $this->matrix()->requiredFields( 'lekarz' ) );
 		$this->assertSame( array( 'uczelnia' ), $this->matrix()->requiredFields( 'student' ) );
 	}
+
+	public function test_pruning_drops_entries_for_fields_absent_from_the_list(): void {
+		$m = FieldMatrix::fromArray(
+			array(
+				'lekarz' => array(
+					'pwz'    => 'required',
+					'znikle' => 'required',
+				),
+			)
+		);
+		$p = $m->prunedTo( array( 'pwz' ) );
+
+		$this->assertSame( array( 'pwz' ), $p->requiredFields( 'lekarz' ) );
+		$this->assertSame( FieldState::Hidden, $p->stateFor( 'lekarz', 'znikle' ) );
+		$this->assertSame( array( 'lekarz' => array( 'pwz' => 'required' ) ), $p->toArray() );
+	}
+
+	public function test_pruning_never_adds_an_entry_or_raises_a_state(): void {
+		$m = FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible' ) ) );
+		$p = $m->prunedTo( array( 'pwz', 'miasto' ) );
+
+		$this->assertSame( FieldState::Visible, $p->stateFor( 'lekarz', 'pwz' ) );
+		$this->assertSame( FieldState::Hidden, $p->stateFor( 'lekarz', 'miasto' ) );
+		$this->assertSame( array(), $p->requiredFields( 'lekarz' ) );
+		$this->assertSame( $m->toArray(), $p->toArray() );
+	}
+
+	public function test_pruning_leaves_the_original_untouched(): void {
+		$m = FieldMatrix::fromArray(
+			array(
+				'lekarz' => array(
+					'pwz'    => 'required',
+					'znikle' => 'required',
+				),
+			)
+		);
+		$p = $m->prunedTo( array( 'pwz' ) );
+
+		$this->assertNotSame( $m, $p );
+		$this->assertSame( array( 'pwz', 'znikle' ), $m->requiredFields( 'lekarz' ) );
+		$this->assertSame( FieldState::Required, $m->stateFor( 'lekarz', 'znikle' ) );
+	}
+
+	public function test_pruning_keeps_the_order_of_surviving_entries_and_applies_to_every_profession(): void {
+		$m = FieldMatrix::fromArray(
+			array(
+				'lekarz'  => array(
+					'b' => 'visible',
+					'x' => 'required',
+					'a' => 'required',
+				),
+				'student' => array(
+					'x' => 'required',
+					'a' => 'visible',
+				),
+			)
+		);
+		$p = $m->prunedTo( array( 'a', 'b' ) );
+
+		$this->assertSame( array( 'b', 'a' ), $p->visibleFields( 'lekarz' ) );
+		$this->assertSame( array( 'a' ), $p->visibleFields( 'student' ) );
+		$this->assertSame( array(), $p->requiredFields( 'student' ) );
+	}
 }
