@@ -43,11 +43,20 @@ final class Plugin {
 		Dependencies::register();
 		I18n::register();
 
+		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
+		// są już załadowane, niezależnie od kolejności katalogów.
+		add_action( 'plugins_loaded', array( self::class, 'load_features' ) );
+	}
+
+	/**
+	 * Rejestruje funkcjonalną część wtyczki, o ile zależności są spełnione.
+	 */
+	public static function load_features(): void {
 		if ( ! Dependencies::satisfied() ) {
 			return; // Brak ACF Pro: widoczny komunikat i bezczynna wtyczka, nie fatal.
 		}
 
-		// Kolejne zadania podpinają tu pozostałe hooki.
+		// Kolejne zadania podpinają tu swoje rejestracje.
 	}
 
 	/**
