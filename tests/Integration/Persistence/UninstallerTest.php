@@ -30,8 +30,6 @@ use WP_UnitTestCase;
 
 final class UninstallerTest extends WP_UnitTestCase {
 
-	private const TABLES = array( 'event_log', 'terms_versions' );
-
 	public function tear_down(): void {
 		try {
 			$this->remove_temporary_table_filters();
@@ -213,14 +211,14 @@ final class UninstallerTest extends WP_UnitTestCase {
 	private function install_with_data(): void {
 		global $wpdb;
 		$this->remove_temporary_table_filters();
-		foreach ( self::TABLES as $name ) {
+		foreach ( Migrations::TABLES as $name ) {
 			$table = Migrations::table( $name );
 			$wpdb->query( "DROP TABLE IF EXISTS {$table}" );
 		}
 		delete_option( Migrations::OPTION_DB_VERSION );
 		Migrations::run();
 
-		foreach ( self::TABLES as $name ) {
+		foreach ( Migrations::TABLES as $name ) {
 			$this->assertTrue( $this->table_exists( Migrations::table( $name ) ), 'Stan wyjściowy: tabela istnieje.' );
 		}
 		$this->assertNotFalse( get_option( Migrations::OPTION_DB_VERSION ), 'Stan wyjściowy: wersja schematu zapisana.' );
@@ -228,7 +226,7 @@ final class UninstallerTest extends WP_UnitTestCase {
 	}
 
 	private function assert_data_intact(): void {
-		foreach ( self::TABLES as $name ) {
+		foreach ( Migrations::TABLES as $name ) {
 			$this->assertTrue( $this->table_exists( Migrations::table( $name ) ), $name . ' nie powinna zniknąć.' );
 		}
 		$this->assertNotFalse( get_option( Migrations::OPTION_DB_VERSION ) );
@@ -236,7 +234,7 @@ final class UninstallerTest extends WP_UnitTestCase {
 	}
 
 	private function assert_data_gone(): void {
-		foreach ( self::TABLES as $name ) {
+		foreach ( Migrations::TABLES as $name ) {
 			$this->assertFalse( $this->table_exists( Migrations::table( $name ) ), $name . ' powinna zniknąć.' );
 		}
 		$this->assertFalse( get_option( Migrations::OPTION_DB_VERSION ), 'Wersja schematu powinna zniknąć.' );

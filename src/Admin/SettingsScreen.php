@@ -29,9 +29,11 @@ final class SettingsScreen {
 	private const FIELD_PREFIX = 'pusers_';
 
 	/**
-	 * Pola logiczne. Niezaznaczony checkbox nie wysyła nic, a Settings::fromArray()
-	 * mapuje brak klucza na wartość domyślną (dla akceptacji: włączone), więc zapis
-	 * zawsze podstawia jawne `0`.
+	 * Pola logiczne. Niezaznaczony checkbox nie wysyła nic, więc formularz poprzedza
+	 * każdy checkbox ukrytym polem z jawnym `0` (patrz checkbox()): odznaczenie dociera
+	 * do zapisu jako `0`. Zapis podstawia `1` albo `0` tylko dla klucza, który przyszedł
+	 * w żądaniu; klucz nieobecny zachowuje zapisaną wartość (baza zapisu to bieżące
+	 * ustawienia), a nie domyślną. Nowa flaga musi więc użyć checkbox(), inaczej nie da się jej wyłączyć.
 	 */
 	private const FLAG_FIELDS = array( 'approval_enabled', 'delete_data_on_uninstall' );
 
