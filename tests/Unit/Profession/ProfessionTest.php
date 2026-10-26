@@ -40,4 +40,14 @@ final class ProfessionTest extends TestCase {
 		$p = Profession::fromArray( array( 'key' => 'x', 'label' => 'X', 'credential_type' => 'bzdura' ) );
 		$this->assertSame( CredentialType::None, $p->credentialType );
 	}
+
+	public function test_array_label_falls_back_to_key(): void {
+		$p = Profession::fromArray( array( 'key' => 'lekarz', 'label' => array( 'x' ), 'credential_type' => 'physician_pwz' ) );
+		$this->assertSame( 'lekarz', $p->label );
+	}
+
+	public function test_null_label_falls_back_to_key(): void {
+		$p = Profession::fromArray( array( 'key' => 'lekarz', 'label' => null ) );
+		$this->assertSame( 'lekarz', $p->label );
+	}
 }

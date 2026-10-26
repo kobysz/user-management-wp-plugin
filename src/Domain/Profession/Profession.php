@@ -47,14 +47,19 @@ final class Profession {
 	/**
 	 * Buduje profesję z zapisanej konfiguracji. Nieznany rodzaj numeru
 	 * degraduje się do braku numeru, żeby zepsuta konfiguracja nie zatrzymała wtyczki.
+	 * Pusta lub nietekstowa nazwa zastępowana jest kluczem, by profesja nigdy nie
+	 * zniknęła z listy ani nie została bez nazwy.
 	 *
 	 * @param array<string, mixed> $raw Zapisana konfiguracja.
 	 * @return self
 	 */
 	public static function fromArray( array $raw ): self {
+		$key   = self::text( $raw, 'key' );
+		$label = self::text( $raw, 'label' );
+
 		return new self(
-			self::text( $raw, 'key' ),
-			self::text( $raw, 'label' ),
+			$key,
+			'' === $label ? $key : $label,
 			CredentialType::tryFrom( self::text( $raw, 'credential_type' ) ) ?? CredentialType::None,
 			self::text( $raw, 'registry_url' ),
 			self::text( $raw, 'notify_email' )
