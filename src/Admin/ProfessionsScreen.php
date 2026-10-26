@@ -147,9 +147,10 @@ final class ProfessionsScreen {
 	/**
 	 * Usuwa profesję. Gdy używają jej konta, wymaga jawnego potwierdzenia. Metadane kont
 	 * zostają nietknięte: ConsistencyChecker zgłosi klucz, którego nie ma już w konfiguracji.
+	 * Operacja destrukcyjna, więc ma własną akcję nonce'a: nonce zapisu profesji jej nie autoryzuje.
 	 */
 	public static function handle_delete(): void {
-		Request::guard( self::ACTION );
+		Request::guard( self::ACTION_DELETE );
 		self::require_post();
 
 		$key        = self::posted( 'delete' );
@@ -415,7 +416,7 @@ final class ProfessionsScreen {
 	 */
 	private static function form_header( string $action ): void {
 		echo '<input type="hidden" name="action" value="' . esc_attr( $action ) . '" />';
-		wp_nonce_field( self::ACTION, Request::NONCE_FIELD );
+		wp_nonce_field( $action, Request::NONCE_FIELD );
 	}
 
 	/**

@@ -136,11 +136,11 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		) ) );
 		$user = self::factory()->user->create();
 		update_user_meta( $user, 'pusers_profession', 'lekarz' );
-		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'lekarz' ) );
+		$this->asAdminPosting( 'pusers_delete_profession', array( 'delete' => 'lekarz' ) );
 		ProfessionsScreen::handle_delete();
 		$this->assertNotNull( ProfessionRepository::get()->get( 'lekarz' ), 'Bez potwierdzenia profesja zostaje.' );
 
-		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'lekarz', 'confirm_accounts' => '1' ) );
+		$this->asAdminPosting( 'pusers_delete_profession', array( 'delete' => 'lekarz', 'confirm_accounts' => '1' ) );
 		ProfessionsScreen::handle_delete();
 		$this->assertNull( ProfessionRepository::get()->get( 'lekarz' ) );
 	}
@@ -149,7 +149,7 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		ProfessionRepository::save( ProfessionCollection::fromArray( array(
 			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
 		) ) );
-		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'student' ) );
+		$this->asAdminPosting( 'pusers_delete_profession', array( 'delete' => 'student' ) );
 		ProfessionsScreen::handle_delete();
 		$this->assertNull( ProfessionRepository::get()->get( 'student' ) );
 	}
@@ -281,7 +281,7 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		foreach ( array( 1, 2, 3 ) as $ignored ) {
 			update_user_meta( self::factory()->user->create(), 'pusers_profession', 'lekarz' );
 		}
-		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'lekarz' ) );
+		$this->asAdminPosting( 'pusers_delete_profession', array( 'delete' => 'lekarz' ) );
 		ProfessionsScreen::handle_delete();
 		$this->assertStringContainsString( 'pusers_notice=profession_confirm_accounts', $this->redirected );
 
@@ -302,7 +302,7 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		) ) );
 		$user = self::factory()->user->create();
 		update_user_meta( $user, 'pusers_profession', 'lekarz' );
-		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'lekarz', 'confirm_accounts' => '1' ) );
+		$this->asAdminPosting( 'pusers_delete_profession', array( 'delete' => 'lekarz', 'confirm_accounts' => '1' ) );
 		ProfessionsScreen::handle_delete();
 		$this->assertSame( array( 'student' ), ProfessionRepository::get()->keys() );
 		$this->assertSame( 'lekarz', get_user_meta( $user, 'pusers_profession', true ) );
@@ -324,7 +324,7 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		ProfessionRepository::save( ProfessionCollection::fromArray( array(
 			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
 		) ) );
-		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'student' ) );
+		$this->asAdminPosting( 'pusers_delete_profession', array( 'delete' => 'student' ) );
 		$_SERVER['REQUEST_METHOD'] = 'GET';
 		try {
 			ProfessionsScreen::handle_delete();
@@ -379,7 +379,7 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		ProfessionRepository::save( ProfessionCollection::fromArray( array(
 			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
 		) ) );
-		$this->asRolePosting( 'subscriber', 'pusers_save_professions', array( 'delete' => 'student' ) );
+		$this->asRolePosting( 'subscriber', 'pusers_delete_profession', array( 'delete' => 'student' ) );
 		try {
 			ProfessionsScreen::handle_delete();
 			$this->fail( 'Oczekiwano wp_die().' );
@@ -392,7 +392,7 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		ProfessionRepository::save( ProfessionCollection::fromArray( array(
 			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
 		) ) );
-		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'student' ) );
+		$this->asAdminPosting( 'pusers_delete_profession', array( 'delete' => 'student' ) );
 		$_POST['pusers_nonce'] = 'zly-nonce';
 		$_REQUEST              = $_POST;
 		try {
@@ -400,6 +400,39 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 			$this->fail( 'Oczekiwano wp_die().' );
 		} catch ( WPDieException $e ) {
 			$this->assertNotNull( ProfessionRepository::get()->get( 'student' ) );
+		}
+	}
+
+	public function test_a_nonce_issued_for_saving_does_not_authorise_deleting_a_profession(): void {
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
+		) ) );
+		$this->asAdminPosting( 'pusers_save_professions', array( 'delete' => 'student' ) );
+		try {
+			ProfessionsScreen::handle_delete();
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertNotNull( ProfessionRepository::get()->get( 'student' ) );
+		}
+	}
+
+	public function test_each_rendered_form_carries_a_nonce_for_its_own_action(): void {
+		ProfessionRepository::save( ProfessionCollection::fromArray( array(
+			array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
+		) ) );
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		ob_start();
+		ProfessionsScreen::render();
+		$html = (string) ob_get_clean();
+
+		foreach ( array(
+			'pusers_delete_profession' => 'pusers_save_professions',
+			'pusers_save_professions'  => 'pusers_delete_profession',
+		) as $own => $other ) {
+			$pattern = '/name="action" value="' . $own . '" \/><input type="hidden" id="pusers_nonce" name="pusers_nonce" value="([^"]+)"/';
+			$this->assertSame( 1, preg_match( $pattern, $html, $m ), 'Brak formularza akcji ' . $own );
+			$this->assertNotFalse( wp_verify_nonce( $m[1], $own ), 'Nonce formularza ' . $own . ' nie jest dla jego akcji.' );
+			$this->assertFalse( wp_verify_nonce( $m[1], $other ), 'Nonce formularza ' . $own . ' autoryzuje też ' . $other . '.' );
 		}
 	}
 }
