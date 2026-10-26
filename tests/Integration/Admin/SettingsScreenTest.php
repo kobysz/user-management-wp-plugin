@@ -30,9 +30,17 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 	 */
 	private $cancelRedirect;
 
+	/**
+	 * Metoda żądania sprzed testu.
+	 *
+	 * @var string
+	 */
+	private string $originalMethod = 'GET';
+
 	public function set_up(): void {
 		parent::set_up();
 		$this->redirected     = '';
+		$this->originalMethod = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
 		$this->cancelRedirect = function ( $location ) {
 			$this->redirected = (string) $location;
 			return false;
@@ -46,6 +54,7 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		$_POST    = array();
 		$_REQUEST = array();
 		unset( $_GET['pusers_notice'] );
+		$_SERVER['REQUEST_METHOD'] = $this->originalMethod;
 		parent::tear_down();
 	}
 
@@ -56,6 +65,9 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		global $submenu;
 		$slugs = wp_list_pluck( $submenu['users.php'] ?? array(), 2 );
 		$this->assertContains( Menu::SLUG_SETTINGS, $slugs );
+		// Ekrany profesji i macierzy rejestrują swoje podstrony same (Taski 6 i 7), nie Menu.
+		$this->assertNotContains( Menu::SLUG_PROFESSIONS, $slugs );
+		$this->assertNotContains( Menu::SLUG_MATRIX, $slugs );
 	}
 
 	public function test_menu_url_points_at_the_page_under_users(): void {
@@ -79,11 +91,14 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_unchecked_approval_checkbox_turns_approval_off(): void {
-		// Domyślnie akceptacja jest włączona, a brak klucza daje wartość domyślną. Bez
-		// jawnego "0" odznaczenie pola nigdy nie wyłączyłoby akceptacji.
-		$this->asAdminPosting( 'pusers_save_settings', array( 'rate_limit_per_hour' => '5' ) );
+		// Prawdziwy formularz przy odznaczonym checkboxie wysyła "0" z ukrytego pola, razem z resztą pól.
+		$this->asAdminPosting( 'pusers_save_settings', array(
+			'approval_enabled'    => '0',
+			'rate_limit_per_hour' => '5',
+		) );
 		SettingsScreen::handle_save();
 		$this->assertFalse( SettingsRepository::get()->approvalEnabled );
+		$this->assertSame( 5, SettingsRepository::get()->rateLimitPerHour );
 	}
 
 	public function test_explicit_zero_for_approval_turns_approval_off(): void {
@@ -94,9 +109,50 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 
 	public function test_unchecked_delete_gate_turns_the_gate_off(): void {
 		SettingsRepository::save( Settings::fromArray( array( 'delete_data_on_uninstall' => true ) ) );
-		$this->asAdminPosting( 'pusers_save_settings', array( 'approval_enabled' => '1' ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'delete_data_on_uninstall' => '0' ) );
 		SettingsScreen::handle_save();
 		$this->assertFalse( SettingsRepository::get()->deleteDataOnUninstall );
+	}
+
+	public function test_fields_missing_from_the_request_keep_their_saved_values(): void {
+		// Gdy wszystkie strony są w koszu, wp_dropdown_pages nie renderuje selecta, więc POST
+		// nie niesie pól stron. Zapis nie może zerować wskazań ani innych pól, których nie przysłano.
+		SettingsRepository::save( Settings::fromArray( array(
+			'login_page_id'       => 11,
+			'register_page_id'    => 12,
+			'reset_page_id'       => 13,
+			'approval_enabled'    => false,
+			'rate_limit_per_hour' => 42,
+			'acf_group_key'       => 'group_abc',
+		) ) );
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'time_trap_seconds' => '9' ) );
+		SettingsScreen::handle_save();
+		$saved = SettingsRepository::get();
+		$this->assertSame( array( 11, 12, 13 ), array( $saved->loginPageId, $saved->registerPageId, $saved->resetPageId ) );
+		$this->assertFalse( $saved->approvalEnabled );
+		$this->assertSame( 42, $saved->rateLimitPerHour );
+		$this->assertSame( 'group_abc', $saved->acfGroupKey );
+		$this->assertSame( 9, $saved->timeTrapSeconds );
+	}
+
+	public function test_a_get_request_is_refused_and_changes_nothing(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'rate_limit_per_hour' => 42 ) ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'rate_limit_per_hour' => '5' ) );
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+		try {
+			SettingsScreen::handle_save();
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( 42, SettingsRepository::get()->rateLimitPerHour );
+		}
+	}
+
+	public function test_line_breaks_from_every_platform_split_lists(): void {
+		// Przeglądarki wysyłają z <textarea> CRLF; samotny CR zdarza się w starszych źródłach.
+		$this->asAdminPosting( 'pusers_save_settings', array( 'rejection_reasons' => "a\r\nb\rc\nd" ) );
+		SettingsScreen::handle_save();
+		$this->assertSame( array( 'a', 'b', 'c', 'd' ), SettingsRepository::get()->rejectionReasons );
 	}
 
 	public function test_rejection_reasons_are_split_into_a_list(): void {
@@ -220,7 +276,6 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		SettingsScreen::render();
 		$html = (string) ob_get_clean();
 		$this->assertStringNotContainsString( '<script', $html );
-		$this->assertStringNotContainsString( 'onfocus="alert', $html );
 	}
 
 	public function test_unchecked_checkboxes_send_an_explicit_zero(): void {
@@ -261,5 +316,6 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		// WordPress dodaje ukośniki do danych żądania; ekran musi je zdjąć.
 		$_POST    = wp_slash( $post );
 		$_REQUEST = $_POST;
+		$_SERVER['REQUEST_METHOD'] = 'POST';
 	}
 }

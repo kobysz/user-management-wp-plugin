@@ -69,10 +69,22 @@ final class SettingsScreen {
 	public static function handle_save(): void {
 		Request::guard( self::ACTION );
 
-		$raw = array();
+		// Zapis zmienia ustawienia, więc GET (admin_post_* odpala się dla każdej metody) odpada.
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) && is_string( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'POST' !== $method ) {
+			wp_die( esc_html__( 'Ta operacja wymaga żądania POST.', 'portal-users' ), '', array( 'response' => 405 ) );
+		}
+
+		// Baza to zapisane ustawienia, a nadpisywane są tylko pola, które przyszły w żądaniu:
+		// pole nieobecne (np. lista stron pusta, bo wszystkie są w koszu) zachowuje wartość.
+		$raw = SettingsRepository::get()->toArray();
 
 		foreach ( self::FLAG_FIELDS as $key ) {
-			$raw[ $key ] = '1' === self::posted( $key ) ? '1' : '0';
+			// Ukryte pole zawsze niesie jawne "0", więc odznaczony checkbox wyłącza opcję.
+			$value = self::posted( $key );
+			if ( null !== $value ) {
+				$raw[ $key ] = '1' === $value ? '1' : '0';
+			}
 		}
 		foreach ( self::TEXT_FIELDS as $key ) {
 			$value = self::posted( $key );
@@ -82,7 +94,8 @@ final class SettingsScreen {
 		}
 		// Grupa pól to zamknięta lista z zaufanego źródła: klucz spoza listy to manipulacja
 		// albo zepsuta konfiguracja, więc zapis jest odrzucany, nie degradowany. Pusty przechodzi.
-		if ( isset( $raw['acf_group_key'] ) && '' !== $raw['acf_group_key'] && ! array_key_exists( $raw['acf_group_key'], AcfGroupList::groups() ) ) {
+		$group = self::posted( 'acf_group_key' );
+		if ( null !== $group && '' !== sanitize_text_field( $group ) && ! array_key_exists( sanitize_text_field( $group ), AcfGroupList::groups() ) ) {
 			Request::redirect( Menu::SLUG_SETTINGS, self::NOTICE_INVALID_GROUP );
 			return;
 		}
