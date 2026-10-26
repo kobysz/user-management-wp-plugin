@@ -43,7 +43,12 @@ final class Dependencies {
 	 * Czy ACF Pro jest załadowany (klasa `acf_pro` lub stała `ACF_PRO`).
 	 */
 	private static function acf_pro_loaded(): bool {
-		return class_exists( 'acf_pro', false ) || defined( 'ACF_PRO' );
+		/**
+		 * Filtr stanu ACF Pro (szew testowy i dla integracji).
+		 *
+		 * @param bool $loaded Czy ACF Pro jest załadowany.
+		 */
+		return (bool) apply_filters( 'pusers_acf_pro_loaded', class_exists( 'acf_pro', false ) || defined( 'ACF_PRO' ) );
 	}
 
 	/**

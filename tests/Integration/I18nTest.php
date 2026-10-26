@@ -19,7 +19,13 @@ final class I18nTest extends WP_UnitTestCase {
 
 	public function set_up(): void {
 		parent::set_up();
+		// Niezależnie od locale kontenera.
+		add_filter( 'locale', array( $this, 'force_pl_locale' ), 99 );
 		$this->mo_file = Plugin::path( 'languages/portal-users-pl_PL.mo' );
+	}
+
+	public function force_pl_locale(): string {
+		return 'pl_PL';
 	}
 
 	public function tear_down(): void {
@@ -27,6 +33,7 @@ final class I18nTest extends WP_UnitTestCase {
 			unlink( $this->mo_file );
 		}
 		unload_textdomain( 'portal-users' );
+		remove_filter( 'locale', array( $this, 'force_pl_locale' ), 99 );
 		parent::tear_down();
 	}
 

@@ -56,7 +56,10 @@ final class Plugin {
 			return; // Brak ACF Pro: widoczny komunikat i bezczynna wtyczka, nie fatal.
 		}
 
-		// Kolejne zadania podpinają tu swoje rejestracje.
+		/**
+		 * Zależności spełnione: kolejne części wtyczki rejestrują się pod tym hookiem.
+		 */
+		do_action( 'pusers_register_features' );
 	}
 
 	/**
