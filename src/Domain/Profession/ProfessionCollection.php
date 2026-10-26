@@ -79,4 +79,19 @@ final class ProfessionCollection {
 	public function keys(): array {
 		return array_map( 'strval', array_keys( $this->items ) );
 	}
+
+	/**
+	 * Zapisywalna postać zbioru: lista (od zera) tablic profesji, w kolejności konfiguracji.
+	 * Odwrotność fromArray().
+	 *
+	 * @return array<int, array<string, mixed>>
+	 */
+	public function toArray(): array {
+		return array_values(
+			array_map(
+				static fn ( Profession $profession ): array => $profession->toArray(),
+				$this->items
+			)
+		);
+	}
 }

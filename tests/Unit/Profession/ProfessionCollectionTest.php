@@ -46,4 +46,15 @@ final class ProfessionCollectionTest extends TestCase {
 		$c = ProfessionCollection::fromArray( array( 'tekst', 5, null, array( 'key' => 'student', 'label' => 'Student' ) ) );
 		$this->assertSame( array( 'student' ), $c->keys() );
 	}
+
+	public function test_to_array_returns_a_list_that_round_trips(): void {
+		$c = ProfessionCollection::fromArray(
+			array(
+				array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz' ),
+				array( 'key' => 'student', 'label' => 'Student', 'credential_type' => 'none' ),
+			)
+		);
+		$this->assertSame( array( 0, 1 ), array_keys( $c->toArray() ) );
+		$this->assertSame( $c->keys(), ProfessionCollection::fromArray( $c->toArray() )->keys() );
+	}
 }

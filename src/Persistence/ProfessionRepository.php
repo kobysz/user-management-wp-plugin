@@ -11,7 +11,6 @@ namespace PortalUsers\Persistence;
 
 defined( 'ABSPATH' ) || exit;
 
-use PortalUsers\Domain\Profession\Profession;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 
 /**
@@ -32,12 +31,6 @@ final class ProfessionRepository {
 	 * @param ProfessionCollection $professions Wartość do zapisu.
 	 */
 	public static function save( ProfessionCollection $professions ): bool {
-		$rows = array_values(
-			array_map(
-				static fn ( Profession $profession ): array => $profession->toArray(),
-				$professions->all()
-			)
-		);
-		return OptionStore::write( OptionStore::OPTION_PROFESSIONS, $rows );
+		return OptionStore::write( OptionStore::OPTION_PROFESSIONS, $professions->toArray() );
 	}
 }
