@@ -12,6 +12,10 @@ namespace PortalUsers\Domain\Spam;
 /**
  * Adres klienta z tablicy serwera. Nagłówek proxy jest czytany WYŁĄCZNIE wtedy, gdy administrator
  * go nazwał w ustawieniach: inaczej każdy klient podstawiałby sobie dowolny adres i omijał limity.
+ * Z łańcucha (`a, b, c`) bierzemy OSTATNI niepusty wpis: obsługujemy JEDNO zaufane proxy, które dopisuje
+ * adres połączenia do nagłówka, więc prawy wpis jest tym, który wpisało samo proxy, a lewe wpisy klient
+ * podstawia dowolnie. Łańcuch wielu zaufanych proxy wymagałby konfigurowanej głębokości. Dla REMOTE_ADDR
+ * nic się nie zmienia.
  * Kierunek błędu jest zawsze ten sam: wszystko, co nie wygląda na adres IP, zastępuje REMOTE_ADDR.
  */
 final class IpAddress {
@@ -26,8 +30,8 @@ final class IpAddress {
 	 */
 	public static function from( array $server, string $trustedHeader ): string {
 		if ( '' !== $trustedHeader && isset( $server[ $trustedHeader ] ) && is_string( $server[ $trustedHeader ] ) ) {
-			$parts     = explode( ',', $server[ $trustedHeader ] );
-			$candidate = trim( $parts[0] );
+			$parts     = array_values( array_filter( array_map( 'trim', explode( ',', $server[ $trustedHeader ] ) ), static fn ( string $part ): bool => '' !== $part ) );
+			$candidate = array() === $parts ? '' : $parts[ count( $parts ) - 1 ];
 			if ( false !== filter_var( $candidate, \FILTER_VALIDATE_IP ) ) {
 				return $candidate;
 			}

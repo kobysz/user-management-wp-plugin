@@ -242,7 +242,52 @@ final class SpamGuardTest extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_a_rejected_honeypot_does_not_use_up_the_thresholds(): void {
+	public function test_a_filled_honeypot_uses_up_the_ip_threshold_and_then_the_ip_limit_applies(): void {
+		$this->configure( array( 'rate_limit_per_hour' => 3 ) );
+		$reasons = array();
+		for ( $i = 0; $i < 5; $i++ ) {
+			$reasons[] = SpamGuard::check( $this->server(), $this->filled_honeypot(), 'bot@example.test' )->reason();
+		}
+
+		$this->assertSame( array( 'honeypot', 'honeypot', 'honeypot', 'ip_limit', 'ip_limit' ), $reasons );
+		$this->assertCount( 1, $this->log_rows(), 'Jeden wiersz na okno, nie jeden na żądanie.' );
+	}
+
+	public function test_a_too_fast_form_also_uses_up_the_ip_threshold(): void {
+		$this->configure( array( 'rate_limit_per_hour' => 2 ) );
+		SpamGuard::check( $this->server(), $this->request( 0 ), 'a@example.test' );
+		SpamGuard::check( $this->server(), $this->request( 0 ), 'a@example.test' );
+
+		$this->assertSame( 'ip_limit', SpamGuard::check( $this->server(), $this->request(), 'b@example.test' )->reason() );
+	}
+
+	public function test_a_rejection_below_the_threshold_writes_nothing_to_the_log(): void {
+		SpamGuard::check( $this->server(), $this->filled_honeypot(), 'bot@example.test' );
+		SpamGuard::check( $this->server(), $this->request( 0 ), 'bot@example.test' );
+
+		$this->assertSame( array(), $this->log_rows() );
+	}
+
+	public function test_crossing_the_ip_threshold_writes_exactly_one_row_per_window(): void {
+		$this->configure( array( 'rate_limit_per_hour' => 2 ) );
+		for ( $i = 0; $i < 6; $i++ ) {
+			SpamGuard::check( $this->server(), $this->request(), "o{$i}@example.test" );
+		}
+
+		$this->assertCount( 1, $this->log_rows() );
+	}
+
+	public function test_crossing_the_email_threshold_writes_exactly_one_row(): void {
+		for ( $i = 0; $i < 7; $i++ ) {
+			SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' );
+		}
+
+		$rows = $this->log_rows();
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'email_limit', json_decode( (string) $rows[0]->context, true )['reason'] );
+	}
+
+	public function test_a_rejected_honeypot_does_not_use_up_the_email_threshold(): void {
 		for ( $i = 0; $i < 5; $i++ ) {
 			SpamGuard::check( $this->server(), $this->filled_honeypot(), 'jan@example.test' );
 		}
@@ -257,9 +302,7 @@ final class SpamGuardTest extends WP_UnitTestCase {
 
 		$this->assertFalse( $verdict->passed() );
 		$this->assertSame( 'turnstile', $verdict->reason() );
-		$rows = $this->log_rows();
-		$this->assertCount( 1, $rows );
-		$this->assertSame( 'turnstile', json_decode( (string) $rows[0]->context, true )['reason'] );
+		$this->assertSame( array(), $this->log_rows(), 'Odmowa rozszerzenia nie pisze do logu.' );
 	}
 
 	public function test_extension_point_cannot_turn_a_rejection_into_a_pass(): void {

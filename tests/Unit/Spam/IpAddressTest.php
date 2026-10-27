@@ -37,16 +37,32 @@ final class IpAddressTest extends TestCase {
 		$this->assertSame( '5.6.7.8', IpAddress::from( $server, 'HTTP_X_REAL_IP' ) );
 	}
 
-	public function test_first_address_is_taken_from_a_comma_separated_chain(): void {
+	public function test_last_address_is_taken_from_a_comma_separated_chain(): void {
+		$cases = array(
+			'1.2.3.4, 5.6.7.8'      => '5.6.7.8',
+			'1.2.3.4'               => '1.2.3.4',
+			'1.2.3.4, , 5.6.7.8 '   => '5.6.7.8',
+			' 1.2.3.4 , 5.6.7.8, '  => '5.6.7.8',
+		);
+		foreach ( $cases as $header => $expected ) {
+			$server = array(
+				'REMOTE_ADDR'          => '10.0.0.1',
+				'HTTP_X_FORWARDED_FOR' => $header,
+			);
+			$this->assertSame( $expected, IpAddress::from( $server, 'HTTP_X_FORWARDED_FOR' ), $header );
+		}
+	}
+
+	public function test_a_chain_is_ignored_without_trust(): void {
 		$server = array(
 			'REMOTE_ADDR'          => '10.0.0.1',
-			'HTTP_X_FORWARDED_FOR' => ' 1.2.3.4 , 172.16.0.9, 10.0.0.1',
+			'HTTP_X_FORWARDED_FOR' => '1.2.3.4, 5.6.7.8',
 		);
-		$this->assertSame( '1.2.3.4', IpAddress::from( $server, 'HTTP_X_FORWARDED_FOR' ) );
+		$this->assertSame( '10.0.0.1', IpAddress::from( $server, '' ) );
 	}
 
 	public function test_trusted_header_with_a_nonsense_value_falls_back_to_remote_addr(): void {
-		foreach ( array( 'not-an-ip', '999.1.1.1', '', ',1.2.3.4', 'unknown' ) as $junk ) {
+		foreach ( array( 'not-an-ip', '999.1.1.1', '', '1.2.3.4, junk', ',', 'unknown' ) as $junk ) {
 			$server = array(
 				'REMOTE_ADDR'          => '10.0.0.1',
 				'HTTP_X_FORWARDED_FOR' => $junk,

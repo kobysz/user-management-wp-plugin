@@ -30,12 +30,14 @@ final class SpamGuard {
 	/**
 	 * Punkt rozszerzenia (Turnstile, hCaptcha): filtr dostaje SpamVerdict, tablicę żądania i adres e-mail.
 	 * Może zamienić przepustkę na odmowę. Odmowy na przepustkę NIE zmieni: bramka zachowuje odmowę
-	 * własnych reguł niezależnie od tego, co zwrócił filtr.
+	 * własnych reguł niezależnie od tego, co zwrócił filtr. UWAGA: filtr jest wołany także przy odmowie,
+	 * więc filtr z zewnętrzną usługą (captcha) ma wyjść od razu, gdy `$verdict->passed()` jest fałszem,
+	 * inaczej zapłaci za odpytanie usługi o każdego bota.
 	 */
 	public const FILTER = 'pusers_registration_spam_check';
 
 	/**
-	 * Akcja zapisywana w logu zdarzeń przy odmowie.
+	 * Akcja zapisywana w logu zdarzeń przy przekroczeniu progu.
 	 */
 	public const LOG_ACTION = 'registration_blocked';
 
@@ -53,6 +55,12 @@ final class SpamGuard {
 	/**
 	 * Sprawdza zgłoszenie.
 	 *
+	 * Każde żądanie zużywa licznik per adres IP, także to z wypełnionym honeypotem albo za szybkie: to
+	 * dowód bota i po przekroczeniu progu dostaje on blokadę czasową zamiast generować ruch bez końca.
+	 * Licznik per adres e-mail zużywają tylko żądania, które przeszły reguły (adres bota bywa zmyślony).
+	 * Do logu zdarzeń trafia wyłącznie PRZEKROCZENIE progu, raz w oknie na próg; odmowa poniżej progu
+	 * i odmowa rozszerzenia nie piszą nic, żeby bot nie zapchał tabeli audytowej.
+	 *
 	 * @param array<string, mixed> $server  Tablica serwera ($_SERVER).
 	 * @param array<string, mixed> $request Dane żądania bez ukośników (pola z RegistrationForm::HONEYPOT i TIMESTAMP).
 	 * @param string               $email   Adres e-mail ze zgłoszenia.
@@ -61,10 +69,21 @@ final class SpamGuard {
 		$settings = SettingsRepository::get();
 		$ip       = IpAddress::from( $server, $settings->trustedProxyHeader );
 
-		$verdict = self::own_verdict( $settings->timeTrapSeconds, $settings->rateLimitPerHour, $settings->registrationLimitPerEmailPerHour, $ip, $request, $email );
+		$ipCount = RateLimiter::hit( 'registration_ip:' . $ip );
+		if ( $ipCount > $settings->rateLimitPerHour ) {
+			$verdict = SpamVerdict::reject( SpamVerdict::IP_LIMIT );
+			if ( $settings->rateLimitPerHour + 1 === $ipCount ) {
+				self::log_limit( $verdict, $ip );
+			}
+		} else {
+			$verdict = self::own_verdict( $settings->timeTrapSeconds, $settings->registrationLimitPerEmailPerHour, $ip, $request, $email );
+		}
 
 		/**
-		 * Punkt rozszerzenia antyspamu rejestracji.
+		 * Punkt rozszerzenia antyspamu rejestracji. Wołany także wtedy, gdy werdykt już jest odmową
+		 * (filtr musi widzieć odmowę, żeby móc ją zaostrzyć), więc filtr z zewnętrzną usługą (captcha)
+		 * powinien wyjść od razu, gdy `$verdict->passed()` jest fałszem, inaczej odpyta usługę za każdego bota.
+		 * Filtr może zamienić przepustkę na odmowę; odmowy na przepustkę nie zmieni.
 		 *
 		 * @param SpamVerdict          $verdict Werdykt własnych reguł wtyczki.
 		 * @param array<string, mixed> $request Dane żądania.
@@ -77,32 +96,19 @@ final class SpamGuard {
 			$verdict = $filtered;
 		}
 
-		if ( ! $verdict->passed() ) {
-			EventLog::write(
-				self::LOG_ACTION,
-				0,
-				0,
-				array(
-					'reason' => $verdict->reason(),
-					'ip'     => $ip,
-				)
-			);
-		}
-
 		return $verdict;
 	}
 
 	/**
-	 * Werdykt własnych reguł wtyczki, przed punktem rozszerzenia.
+	 * Werdykt reguł (honeypot, pułapka czasowa, próg e-mail) dla żądania, które mieści się w progu IP.
 	 *
 	 * @param int                  $timeTrapSeconds Minimalny czas wypełniania formularza.
-	 * @param int                  $ipLimit         Próg prób na godzinę per adres IP.
 	 * @param int                  $emailLimit      Próg prób na godzinę per adres e-mail.
 	 * @param string               $ip              Adres klienta.
 	 * @param array<string, mixed> $request         Dane żądania.
 	 * @param string               $email           Adres e-mail ze zgłoszenia.
 	 */
-	private static function own_verdict( int $timeTrapSeconds, int $ipLimit, int $emailLimit, string $ip, array $request, string $email ): SpamVerdict {
+	private static function own_verdict( int $timeTrapSeconds, int $emailLimit, string $ip, array $request, string $email ): SpamVerdict {
 		$honeypot = $request[ RegistrationForm::HONEYPOT ] ?? '';
 		// Pole, które nie jest tekstem (np. tablica), też jest wypełnione: człowiek takiego nie wyśle.
 		$filled = is_string( $honeypot ) ? $honeypot : 'x';
@@ -112,17 +118,41 @@ final class SpamGuard {
 			return $verdict;
 		}
 
-		if ( RateLimiter::hit( 'registration_ip:' . $ip ) > $ipLimit ) {
-			return SpamVerdict::reject( SpamVerdict::IP_LIMIT );
+		$normalised = strtolower( trim( $email ) );
+		if ( '' === $normalised ) {
+			return SpamVerdict::pass();
 		}
 
-		$normalised = strtolower( trim( $email ) );
-		if ( '' !== $normalised && RateLimiter::hit( 'registration_email:' . $normalised ) > $emailLimit ) {
-			return SpamVerdict::reject( SpamVerdict::EMAIL_LIMIT );
+		$emailCount = RateLimiter::hit( 'registration_email:' . $normalised );
+		if ( $emailCount > $emailLimit ) {
+			$verdict = SpamVerdict::reject( SpamVerdict::EMAIL_LIMIT );
+			if ( $emailLimit + 1 === $emailCount ) {
+				self::log_limit( $verdict, $ip );
+			}
+			return $verdict;
 		}
 
 		return SpamVerdict::pass();
 	}
+
+	/**
+	 * Zapisuje w logu przekroczenie progu.
+	 *
+	 * @param SpamVerdict $verdict Odmowa z powodu progu.
+	 * @param string      $ip      Adres klienta.
+	 */
+	private static function log_limit( SpamVerdict $verdict, string $ip ): void {
+		EventLog::write(
+			self::LOG_ACTION,
+			0,
+			0,
+			array(
+				'reason' => $verdict->reason(),
+				'ip'     => $ip,
+			)
+		);
+	}
+
 
 	/**
 	 * Moment załadowania formularza z podpisanego znacznika; 0 dla znacznika nieobecnego, w złym kształcie
