@@ -104,8 +104,10 @@ niepotwierdzony_mail → oczekujący → zatwierdzony
                                   ↘ odrzucony
 ```
 
-1. **Rejestracja.** Jedna strona. Użytkownik wybiera profesję, co odsłania pola właściwe dla niej, i ustawia własne hasło. Konto powstaje w stanie `niepotwierdzony_mail`. Redakcja nie jest jeszcze powiadamiana.
-2. **Potwierdzenie adresu.** Użytkownik dostaje maila z linkiem. Token ma termin ważności (propozycja: 48 godzin) i da się wysłać ponownie. Po kliknięciu konto przechodzi w `oczekujący`.
+1. **Rejestracja.** Jedna strona. Użytkownik wybiera profesję, co odsłania pola właściwe dla niej. **Formularz nie pyta o hasło** — konto powstaje z hasłem losowym, w stanie `niepotwierdzony_mail`. Redakcja nie jest jeszcze powiadamiana.
+2. **Potwierdzenie adresu.** Użytkownik dostaje maila z linkiem. Token ma termin ważności (propozycja: 48 godzin) i da się wysłać ponownie. Po kliknięciu konto przechodzi w `oczekujący` i użytkownik **ustawia hasło** — z osobnego, krótkotrwałego biletu wystawionego przy udanym potwierdzeniu. Bilet jedzie ciasteczkiem, nie adresem, i jest ważny godzinę; zgubiony albo przeterminowany kieruje do standardowego odzyskiwania hasła.
+
+> **Zmiana wobec pierwotnego zapisu, decyzja właściciela z 2026-10-27.** Krok 1 mówił wcześniej, że użytkownik „ustawia własne hasło" przy rejestracji. Recenzja Planu 3 wykazała, że to pozwala **osobie trzeciej** wysłać zgłoszenie z cudzym adresem i **własnym** hasłem: po kliknięciu linku przez ofiarę i zatwierdzeniu wniosku przez redakcję atakujący ma działające dane logowania do zatwierdzonego konta. Brama logowania tego nie zamyka, bo atakujący nie sonduje — wchodzi legalnie, z poprawnym hasłem. Hasła nie ustawia więc nikt, kto nie dowiódł władzy nad adresem. Koszt: jedno kliknięcie więcej w przebiegu, przyjęte świadomie. Ryzyko resztkowe: osoba trzecia dalej może **zająć** cudzy adres zgłoszeniem, nie uzyskując dostępu do konta, a adres zwalnia cron czyszczący konta z niepotwierdzonym adresem.
 3. **Powiadomienie redakcji.** Mail do skonfigurowanych odbiorców: podsumowanie pól, numer uprawnień z wynikiem walidacji, link prosto do wniosku.
 4. **Weryfikacja.** Administrator sprawdza dane — w praktyce porównuje numer z publiczną wyszukiwarką właściwej izby. Zatwierdza albo odrzuca, podając powód.
 5. **Rozstrzygnięcie.** Zatwierdzenie: konto w stanie `zatwierdzony`, mail do użytkownika z linkiem do logowania. Odrzucenie: stan `odrzucony`, mail z powodem.
