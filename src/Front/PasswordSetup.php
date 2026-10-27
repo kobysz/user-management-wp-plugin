@@ -112,15 +112,9 @@ final class PasswordSetup {
 	 */
 	public static function start( int $userId ): string {
 		$token = self::issue( $userId );
-		$url   = Confirmation::base_url();
-		$path  = wp_parse_url( $url, PHP_URL_PATH );
-		self::send_cookie(
-			$userId . '.' . $token,
-			time() + self::TICKET_HOURS * HOUR_IN_SECONDS,
-			is_string( $path ) && '' !== $path ? $path : '/'
-		);
+		self::send_cookie( $userId . '.' . $token, time() + self::TICKET_HOURS * HOUR_IN_SECONDS );
 
-		return add_query_arg( self::PAGE_ARG, self::RESULT_FORM, $url );
+		return add_query_arg( self::PAGE_ARG, self::RESULT_FORM, Confirmation::base_url() );
 	}
 
 	/**
@@ -372,24 +366,31 @@ final class PasswordSetup {
 	}
 
 	/**
-	 * Kasuje ciasteczko z biletem: bilet jest zużyty, a martwa wartość żyłaby jeszcze godzinę.
+	 * Kasuje ciasteczko z biletem: bilet jest zużyty albo nieważny, a martwa wartość żyłaby
+	 * jeszcze godzinę i przy każdym wejściu na stronę kazałaby sprawdzać nieistniejący bilet.
 	 */
 	private static function forget_cookie(): void {
-		$path = wp_parse_url( Confirmation::base_url(), PHP_URL_PATH );
-		self::send_cookie( '', time() - YEAR_IN_SECONDS, is_string( $path ) && '' !== $path ? $path : '/' );
+		self::send_cookie( '', time() - YEAR_IN_SECONDS );
 	}
 
 	/**
 	 * Wysyła (albo, przy pustej wartości i dacie z przeszłości, kasuje) ciasteczko z biletem.
 	 *
+	 * Ścieżka to `COOKIEPATH`, czyli ścieżka całej witryny, a NIE ścieżka strony ustawienia
+	 * hasła. Przeglądarka musi wysłać bilet pod DWA adresy: na stronę (czyta go `render()`)
+	 * i pod `wp-admin/admin-post.php` (czyta go `handle()`). Ścieżka strony nie pokrywa tego
+	 * drugiego (RFC 6265 §5.1.4), więc zacieśniona ścieżka sprawiała, że hasła nie ustawił
+	 * nikt — a nie chroniła przed niczym: bilet jest jednorazowy, krótkotrwały, `HttpOnly`,
+	 * `SameSite=Lax` i zweryfikowany skrótem na konkretnym koncie. `COOKIEPATH` obsługuje też
+	 * instalację w podkatalogu (`/podkatalog/` pokrywa `/podkatalog/wp-admin/admin-post.php`).
+	 *
 	 * @param string $value   Wartość.
 	 * @param int    $expires Moment wygaśnięcia.
-	 * @param string $path    Ścieżka ciasteczka.
 	 */
-	private static function send_cookie( string $value, int $expires, string $path ): void {
+	private static function send_cookie( string $value, int $expires ): void {
 		$options = array(
 			'expires'  => $expires,
-			'path'     => $path,
+			'path'     => COOKIEPATH,
 			'secure'   => is_ssl(),
 			'httponly' => true,
 			'samesite' => 'Lax',

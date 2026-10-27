@@ -301,14 +301,58 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->assertSame( $id . '.' . substr( $ticket, strpos( $ticket, '.' ) + 1 ), $ticket );
 	}
 
-	public function test_the_ticket_cookie_is_httponly_and_lax_and_limited_to_the_page(): void {
+	public function test_the_ticket_cookie_is_httponly_and_lax(): void {
 		$this->confirmed();
 
 		$options = $this->cookies[0]['options'];
-		$this->assertTrue( (bool) $options['httponly'] );
-		$this->assertSame( 'Lax', $options['samesite'] );
+		$this->assertTrue( (bool) $options['httponly'], 'Bilet nie może być widoczny dla JavaScriptu.' );
+		$this->assertSame( 'Lax', $options['samesite'], 'To, a nie nonce, blokuje wymuszenie ustawienia hasła z cudzej witryny.' );
 		$this->assertSame( is_ssl(), (bool) $options['secure'], 'Secure wyłącznie po HTTPS.' );
-		$this->assertSame( (string) wp_parse_url( (string) get_permalink( $this->registerPage ), PHP_URL_PATH ), $options['path'] );
+	}
+
+	/**
+	 * Dopasowanie ścieżki ciasteczka do ścieżki żądania według RFC 6265 §5.1.4.
+	 *
+	 * @param string $cookiePath  Ścieżka z ciasteczka.
+	 * @param string $requestPath Ścieżka żądania.
+	 */
+	private function pathMatches( string $cookiePath, string $requestPath ): bool {
+		if ( $cookiePath === $requestPath ) {
+			return true;
+		}
+		if ( ! str_starts_with( $requestPath, $cookiePath ) ) {
+			return false;
+		}
+
+		return str_ends_with( $cookiePath, '/' ) || '/' === substr( $requestPath, strlen( $cookiePath ), 1 );
+	}
+
+	public function test_the_ticket_cookie_reaches_both_the_page_and_the_address_the_form_posts_to(): void {
+		// Test sprawdza RELACJĘ, nie wartość: ścieżka ciasteczka musi pokrywać oba adresy, pod
+		// które przeglądarka ma bilet wysłać — stronę (czyta ją `render()`) i cel formularza
+		// (`admin-post.php`, czyta go `handle()`). Zacieśnienie ścieżki do strony rejestracji
+		// nie chroniło przed niczym, a sprawiało, że hasła nie ustawił nikt.
+		//
+		// Struktura odnośników jest tu konieczna: bez niej `get_permalink()` oddaje
+		// `?page_id=N`, ścieżka wychodzi `/`, a `/` pokrywa wszystko — i właśnie dlatego ten
+		// błąd był dla całej suity niewidoczny.
+		$this->set_permalink_structure( '/%postname%/' );
+		$this->configure( true );
+		$this->confirmed();
+
+		$cookiePath = (string) $this->cookies[0]['options']['path'];
+		$pagePath   = (string) wp_parse_url( (string) get_permalink( $this->registerPage ), PHP_URL_PATH );
+		$formPath   = (string) wp_parse_url( admin_url( 'admin-post.php' ), PHP_URL_PATH );
+
+		$this->assertNotSame( '/', $pagePath, 'Fixtura nie zadziałała: ścieżka strony musi być węższa niż /.' );
+		$this->assertTrue(
+			$this->pathMatches( $cookiePath, $formPath ),
+			'Przeglądarka nie wyśle biletu pod adres formularza: cookie path=' . $cookiePath . ', action path=' . $formPath
+		);
+		$this->assertTrue(
+			$this->pathMatches( $cookiePath, $pagePath ),
+			'Przeglądarka nie wyśle biletu na stronę ustawienia hasła: cookie path=' . $cookiePath . ', page path=' . $pagePath
+		);
 	}
 
 	public function test_a_second_click_on_the_confirmation_link_issues_no_new_ticket(): void {
