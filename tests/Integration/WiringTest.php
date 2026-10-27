@@ -14,6 +14,7 @@ use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Domain\Profession\ProfessionCollection;
@@ -46,6 +47,7 @@ final class WiringTest extends WP_UnitTestCase {
 			MatrixScreen::ACTION_SAVE,
 			MatrixScreen::ACTION_DELETE_FIELD,
 			RegistrationHandler::ACTION,
+			Confirmation::ACTION_RESEND,
 		);
 	}
 
@@ -60,6 +62,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'matrix'      => array( MatrixScreen::class ),
 			'registration' => array( RegistrationForm::class ),
 			'registration handler' => array( RegistrationHandler::class ),
+			'confirmation' => array( Confirmation::class ),
 		);
 	}
 
@@ -140,5 +143,20 @@ final class WiringTest extends WP_UnitTestCase {
 		foreach ( array( SettingsScreen::ACTION, ProfessionsScreen::ACTION, ProfessionsScreen::ACTION_DELETE, MatrixScreen::ACTION_SAVE ) as $expected ) {
 			$this->assertContains( $expected, $seen );
 		}
+	}
+
+	public function test_confirmation_register_hooks_the_registered_action_the_link_and_the_resend_handler(): void {
+		Confirmation::register();
+		$this->assertNotFalse( has_action( RegistrationHandler::REGISTERED_HOOK, array( Confirmation::class, 'on_registered' ) ) );
+		$this->assertNotFalse( has_action( 'template_redirect', array( Confirmation::class, 'handle' ) ) );
+		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . Confirmation::ACTION_RESEND, array( Confirmation::class, 'handle_resend' ) ) );
+		$this->assertNotFalse( has_action( 'admin_post_' . Confirmation::ACTION_RESEND, array( Confirmation::class, 'handle_resend' ) ) );
+	}
+
+	public function test_the_resend_form_posts_to_the_registered_action(): void {
+		Confirmation::register();
+		preg_match( '/<input type="hidden" name="action" value="([^"]+)"/', Confirmation::resend_form(), $m );
+		$this->assertSame( Confirmation::ACTION_RESEND, $m[1] ?? '' );
+		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . ( $m[1] ?? '' ) ) );
 	}
 }

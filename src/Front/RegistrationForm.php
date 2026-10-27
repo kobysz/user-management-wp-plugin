@@ -122,12 +122,19 @@ final class RegistrationForm {
 	 * Zwraca formularz albo komunikat o niedostępności rejestracji.
 	 */
 	public static function render(): string {
+		return Confirmation::notice_html() . self::render_form();
+	}
+
+	/**
+	 * Formularz albo komunikat po zgłoszeniu (bez komunikatów potwierdzenia adresu).
+	 */
+	private static function render_form(): string {
 		$state = self::state();
 		if ( null === $state ) {
 			return '<p class="pusers-notice">' . esc_html__( 'Rejestracja jest chwilowo niedostępna. Spróbuj ponownie później.', 'portal-users' ) . '</p>';
 		}
 		if ( RegistrationHandler::completed() ) {
-			return '<p class="pusers-notice">' . esc_html__( 'Dziękujemy za rejestrację. Konto zostało utworzone.', 'portal-users' ) . '</p>';
+			return '<p class="pusers-notice">' . esc_html__( 'Dziękujemy za zgłoszenie. Jeżeli wszystko się zgadza, wysłaliśmy na podany adres e-mail wiadomość z dalszymi instrukcjami.', 'portal-users' ) . '</p>' . Confirmation::resend_form();
 		}
 
 		$source      = $state['source'];

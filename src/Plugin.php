@@ -13,6 +13,7 @@ use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
+use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
 
@@ -61,6 +62,7 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( MatrixScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationHandler::class, 'register' ) );
+		add_action( 'pusers_register_features', array( Confirmation::class, 'register' ) );
 	}
 
 	/**

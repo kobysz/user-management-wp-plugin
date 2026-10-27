@@ -30,8 +30,9 @@ use PortalUsers\Persistence\UserMeta;
  * utworzenie konta, `SpamGuard::record_registration()`, przekierowanie (PRG).
  *
  * Antyspam stoi PRZED walidacją, żeby bot nie dostawał z odpowiedzi informacji o polach. Konto
- * powstaje w stanie `email_unconfirmed` z domyślną rolą witryny; mail potwierdzający i wersja
- * regulaminu należą do kolejnych kroków, które podpinają się pod akcję `pusers_account_registered`.
+ * powstaje w stanie `email_unconfirmed` z domyślną rolą witryny; mail potwierdzający (`Confirmation`)
+ * i wersja regulaminu podpinają się pod akcję `pusers_account_registered`. Zgłoszenie na adres, który
+ * ma już konto, dostaje TĘ SAMĄ odpowiedź co zgłoszenie przyjęte, żeby formularz nie wyliczał kont.
  */
 final class RegistrationHandler {
 
@@ -49,6 +50,11 @@ final class RegistrationHandler {
 	 * Wpis w logu zdarzeń o utworzeniu konta.
 	 */
 	public const LOG_ACTION = 'registration_created';
+
+	/**
+	 * Wpis w logu zdarzeń o wysłanym mailu z powodu zgłoszenia na istniejący adres.
+	 */
+	public const EXISTING_LOG_ACTION = 'registration_existing_email';
 
 	/**
 	 * Neutralny znacznik w adresie: „zgłoszenie nie przeszło, jest co pokazać”. Nie niesie żadnego
@@ -295,9 +301,10 @@ final class RegistrationHandler {
 		$errors   = array();
 		if ( '' === $email || $clean !== $email || ! is_email( $clean ) ) {
 			$errors[ RegistrationForm::EMAIL ] = 'email_invalid';
-		} elseif ( false !== email_exists( $clean ) ) {
-			$errors[ RegistrationForm::EMAIL ] = 'email_exists';
 		}
+		// Adres, który ma już konto, NIE jest błędem walidacji: odpowiedź ma być identyczna jak dla adresu nowego
+		// (inaczej formularz wyliczałby, kto ma konto w portalu medycznym). Rozstrzyga o tym dopiero krok 6.
+		$existingId = isset( $errors[ RegistrationForm::EMAIL ] ) ? false : email_exists( $clean );
 		if ( '' === $password ) {
 			$errors[ RegistrationForm::PASSWORD ] = 'password_missing';
 		} elseif ( mb_strlen( $password ) < self::MIN_PASSWORD_LENGTH ) {
@@ -342,6 +349,16 @@ final class RegistrationHandler {
 			return;
 		}
 
+		// 6a. Adres ma już konto: odpowiedź jest TA SAMA co dla zgłoszenia przyjętego (przekierowanie z DONE_ARG),
+		// konto nie powstaje i nic się w istniejącym nie zmienia. Właściciel dostaje mail o próbie, pod tym samym
+		// progiem godzinnym co ponowna wysyłka. Licznika rejestracji adresu (record_registration) tu nie ruszamy:
+		// o odmowie decyduje próg maili, a odpowiedź formularza nie zmienia się nigdy.
+		if ( false !== $existingId ) {
+			self::acknowledge_existing( (int) $existingId, $clean );
+			self::redirect( add_query_arg( self::DONE_ARG, '1', self::return_url() ) );
+			return;
+		}
+
 		// 6. Utworzenie konta. Hasło idzie wyłącznie do wp_insert_user(): ani do flash, ani do metadanych.
 		// Login jest losowy i nieodgadywalny, a display_name (widoczny publicznie) to ten sam login: imię i nazwisko redakcja czyta z pól ACF.
 		$login  = self::random_login();
@@ -354,13 +371,22 @@ final class RegistrationHandler {
 				'display_name' => $login,
 			)
 		);
+		if ( is_wp_error( $userId ) && 'existing_user_email' === $userId->get_error_code() ) {
+			// Wyścig: adres zajęto między sprawdzeniem a zapisem. Odpowiedź jak dla adresu istniejącego.
+			$raceId = email_exists( $clean );
+			if ( false !== $raceId ) {
+				self::acknowledge_existing( (int) $raceId, $clean );
+			}
+			self::redirect( add_query_arg( self::DONE_ARG, '1', self::return_url() ) );
+			return;
+		}
 		if ( is_wp_error( $userId ) ) {
 			self::back(
 				array(
 					'profession' => $key,
 					'email'      => $email,
 					'fields'     => self::flash_values( $raw ),
-					'errors'     => array( RegistrationForm::EMAIL => 'existing_user_email' === $userId->get_error_code() ? 'email_exists' : 'account_failed' ),
+					'errors'     => array( RegistrationForm::EMAIL => 'account_failed' ),
 				)
 			);
 			return;
@@ -399,6 +425,19 @@ final class RegistrationHandler {
 
 		// 8. PRG.
 		self::redirect( add_query_arg( self::DONE_ARG, '1', self::return_url() ) );
+	}
+
+	/**
+	 * Obsługa zgłoszenia na adres, który ma już konto: mail do właściciela o próbie, pod progiem godzinnym
+	 * wspólnym z ponowną wysyłką. Nic w koncie się nie zmienia. Do logu trafia tylko wysłana wiadomość.
+	 *
+	 * @param int    $existingId Identyfikator istniejącego użytkownika.
+	 * @param string $email      Adres ze zgłoszenia.
+	 */
+	private static function acknowledge_existing( int $existingId, string $email ): void {
+		if ( Mailer::may_send_to( $email ) && Mailer::existing_account( $existingId ) ) {
+			EventLog::write( self::EXISTING_LOG_ACTION, $existingId, 0, array() );
+		}
 	}
 
 	/**
@@ -504,8 +543,6 @@ final class RegistrationHandler {
 				return __( 'Wybierz profesję z listy.', 'portal-users' );
 			case 'email_invalid':
 				return __( 'Podaj poprawny adres e-mail.', 'portal-users' );
-			case 'email_exists':
-				return __( 'Konto z tym adresem e-mail już istnieje.', 'portal-users' );
 			case 'password_missing':
 				return __( 'Podaj hasło.', 'portal-users' );
 			case 'password_short':

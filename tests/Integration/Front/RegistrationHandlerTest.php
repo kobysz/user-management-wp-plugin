@@ -51,6 +51,13 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	private int $sequence          = 0;
 
 	/**
+	 * Wiadomości przechwycone zamiast wysłania.
+	 *
+	 * @var list<array<string, mixed>>
+	 */
+	private array $mails = array();
+
+	/**
 	 * Ciasteczka przechwycone przez szew wysyłania.
 	 *
 	 * @var list<array{value: string, options: array<string, mixed>}>
@@ -62,6 +69,17 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		require_once ABSPATH . 'wp-admin/includes/user.php';
 		RateLimiter::reset_failure_report();
 		AcfRenderRecorder::$fields = array();
+		$this->mails = array();
+		remove_all_actions( RegistrationHandler::REGISTERED_HOOK );
+		add_filter(
+			'pre_wp_mail',
+			function ( $short, $atts ) {
+				$this->mails[] = (array) $atts;
+				return true;
+			},
+			10,
+			2
+		);
 		$this->redirected          = '';
 		$this->originalMethod      = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
 		$this->originalAddr        = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : '';
@@ -643,13 +661,104 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( $before, $this->user_ids() );
 	}
 
-	public function test_an_email_already_registered_creates_no_second_account_and_says_so(): void {
-		$email = $this->email();
-		$first = $this->register_ok( array( RegistrationForm::EMAIL => $email ) );
-		$flash = $this->follow( $this->post_and_submit( array( RegistrationForm::EMAIL => strtoupper( $email ) ) ) );
+	public function test_an_email_already_registered_creates_no_second_account_and_gets_exactly_the_accepted_response(): void {
+		// Odpowiedź nie może zdradzać, kto ma konto w portalu medycznym: identyczna z przyjętym zgłoszeniem.
+		$accepted = $this->email();
+		$this->post_and_submit( array( RegistrationForm::EMAIL => $accepted ) );
+		$acceptedLocation = $this->redirected;
+		$acceptedCookies  = $this->cookies;
 
-		$this->assertSame( 'email_exists', $flash['errors'][ RegistrationForm::EMAIL ] ?? '' );
+		$email  = $this->email();
+		$first  = $this->register_ok( array( RegistrationForm::EMAIL => $email ) );
+		$before = $this->user_ids();
+		$again  = $this->post_and_submit( array( RegistrationForm::EMAIL => strtoupper( $email ) ) );
+
+		$this->assertSame( $acceptedLocation, $again, 'Ta sama odpowiedź co dla zgłoszenia przyjętego.' );
+		$this->assertSame( $acceptedCookies, $this->cookies, 'Brak ciasteczka z błędem, tak jak przy przyjętym.' );
+		$this->assertSame( array(), $this->follow( $again )['errors'] );
+		$this->assertSame( $before, $this->user_ids(), 'Konto nie powstaje.' );
 		$this->assertSame( array( $first ), array_values( array_filter( $this->user_ids(), static fn ( int $id ): bool => get_userdata( $id )->user_email === $email ) ) );
+	}
+
+	public function test_a_submission_for_an_existing_address_changes_nothing_in_the_existing_account(): void {
+		$email = $this->email();
+		$id    = $this->register_ok( array( RegistrationForm::EMAIL => $email ) );
+		AccountStatusRepository::set( $id, AccountStatus::Approved );
+		$passwordHash = get_userdata( $id )->user_pass;
+		$meta         = get_user_meta( $id );
+		$fired        = 0;
+		add_action(
+			RegistrationHandler::REGISTERED_HOOK,
+			static function () use ( &$fired ): void {
+				++$fired;
+			}
+		);
+
+		$this->post_and_submit( array( RegistrationForm::EMAIL => $email, RegistrationForm::PASSWORD => 'Zupelnie!Inne1', RegistrationForm::PASSWORD_REPEAT => 'Zupelnie!Inne1' ), array( 'pwz' => '1234567' ) );
+
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $id ) );
+		$this->assertSame( $passwordHash, get_userdata( $id )->user_pass );
+		$this->assertSame( $meta, get_user_meta( $id ) );
+		$this->assertSame( 0, $fired, 'Akcja utworzenia konta nie odpala się dla istniejącego adresu.' );
+	}
+
+	public function test_the_owner_of_an_existing_address_gets_a_mail_about_the_attempt(): void {
+		$email = $this->email();
+		$this->register_ok( array( RegistrationForm::EMAIL => $email ) );
+		$this->mails = array();
+
+		$this->post_and_submit( array( RegistrationForm::EMAIL => $email ) );
+
+		$this->assertCount( 1, $this->mails );
+		$this->assertSame( array( $email ), (array) $this->mails[0]['to'] );
+		$this->assertStringContainsString( 'już istnieje', (string) $this->mails[0]['message'] );
+		$this->assertStringContainsString( 'zignoruj', (string) $this->mails[0]['message'] );
+	}
+
+	public function test_an_address_taken_between_the_check_and_the_insert_gets_the_accepted_response_too(): void {
+		// Wyścig: sprawdzenie email_exists() widzi adres wolnym, a wp_insert_user() zgłasza już zajęty.
+		$email    = $this->email();
+		$existing = $this->register_ok( array( RegistrationForm::EMAIL => $email ) );
+		$this->mails = array();
+		$calls       = 0;
+		add_filter(
+			'email_exists',
+			static function ( $id ) use ( &$calls ) {
+				return 1 === ++$calls ? false : $id;
+			}
+		);
+		$before = $this->user_ids();
+
+		$location = $this->post_and_submit( array( RegistrationForm::EMAIL => $email ) );
+
+		$this->assertGreaterThan( 1, $calls, 'Wyścig musiał zajść między sprawdzeniem a zapisem.' );
+		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $location );
+		$this->assertSame( $before, $this->user_ids() );
+		$this->assertCount( 1, $this->mails );
+		$this->assertSame( $existing, (int) email_exists( $email ) );
+	}
+
+	public function test_mail_about_attempts_on_an_existing_address_is_rate_limited(): void {
+		$email = $this->email();
+		$this->register_ok( array( RegistrationForm::EMAIL => $email ) );
+		$this->mails = array();
+
+		$locations = array();
+		for ( $i = 0; $i < 6; $i++ ) {
+			$locations[] = $this->post_and_submit( array( RegistrationForm::EMAIL => $email ) );
+		}
+
+		$this->assertCount( 3, $this->mails, 'Próg wiadomości na adres na godzinę (registration_limit_per_email_per_hour).' );
+		$this->assertCount( 1, array_unique( $locations ), 'Po przekroczeniu progu odpowiedź się nie zmienia.' );
+	}
+
+	public function test_other_field_errors_are_reported_the_same_for_an_existing_address_without_an_email_error(): void {
+		$email = $this->email();
+		$this->register_ok( array( RegistrationForm::EMAIL => $email ) );
+
+		$flash = $this->follow( $this->post_and_submit( array( RegistrationForm::EMAIL => $email ), array( 'zgoda' => null ) ) );
+
+		$this->assertSame( array( 'zgoda' => 'required' ), $flash['errors'], 'Błąd pola jest, błędu adresu nie ma.' );
 	}
 
 	public function test_an_array_in_the_credential_field_creates_no_account(): void {
