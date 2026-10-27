@@ -32,8 +32,18 @@ final class RegistrationForm {
 	public const SHORTCODE    = 'portal_users_registration';
 	public const NONCE_ACTION = 'pusers_register';
 	public const FIELD_PREFIX = 'pusers_';
-	public const HONEYPOT     = 'pusers_website';
-	public const TIMESTAMP    = 'pusers_t';
+
+	/**
+	 * Nazwa pułapki na boty. Celowo NIE zawiera żadnego słowa, które rozpoznają heurystyki
+	 * autouzupełniania (`website`, `url`, `email`, `name`, `phone`, `address`): poprzednia nazwa
+	 * `pusers_website` z etykietą „Strona WWW” była magnesem dla menedżerów haseł, a `autocomplete="off"`
+	 * część z nich ignoruje. Wypełniona pułapka to dowód bota i zgłoszenie dostaje odmowę bez
+	 * zachowania wpisanych pól, więc człowiek, któremu menedżer haseł wypełnił to pole, wpadał
+	 * w pętlę bez wskazówki. Odmagnesowanie pułapki jest jedyną naprawą, która nie otwiera botowi
+	 * z ważnym nonce'em drogi zapisu do magazynu.
+	 */
+	public const HONEYPOT  = 'pusers_pole_kontrolne';
+	public const TIMESTAMP = 'pusers_t';
 
 	public const PROFESSION      = 'pusers_profession';
 	public const PASSWORD        = 'pusers_password';
@@ -195,8 +205,10 @@ final class RegistrationForm {
 		$html .= '<input type="password" id="' . esc_attr( self::PASSWORD_REPEAT ) . '" name="' . esc_attr( self::PASSWORD_REPEAT ) . '" autocomplete="new-password" required="required" /></p>';
 
 		// Honeypot: zwykłe pole tekstowe (bot wypełnia widoczne pola), ukryte dla człowieka stylem.
+		// Nazwa i etykieta są odmagnesowane: nie nazywają żadnej znanej danej, a etykieta wprost mówi
+		// pola nie wypełniać — człowiek, któremu czytnik ekranu albo awaria CSS to pole pokaże, wie, co zrobić.
 		$html .= '<div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">';
-		$html .= '<label for="' . esc_attr( self::HONEYPOT ) . '">' . esc_html__( 'Strona WWW', 'portal-users' ) . '</label>';
+		$html .= '<label for="' . esc_attr( self::HONEYPOT ) . '">' . esc_html__( 'Nie wypełniaj tego pola.', 'portal-users' ) . '</label>';
 		$html .= '<input type="text" id="' . esc_attr( self::HONEYPOT ) . '" name="' . esc_attr( self::HONEYPOT ) . '" value="" tabindex="-1" autocomplete="off" /></div>';
 
 		$html .= '<input type="hidden" name="' . esc_attr( self::TIMESTAMP ) . '" value="' . esc_attr( SpamGuard::stamp( time() ) ) . '" />';

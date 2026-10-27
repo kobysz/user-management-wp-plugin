@@ -112,9 +112,27 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 	public function test_honeypot_is_not_visible_to_a_human(): void {
 		$html = RegistrationForm::render();
 
-		$this->assertSame( 1, preg_match( '/<input type="([a-z]+)" id="pusers_website"/', $html, $m ) );
+		$this->assertSame( 1, preg_match( '/<input type="([a-z]+)" id="' . RegistrationForm::HONEYPOT . '"/', $html, $m ) );
 		$this->assertSame( 'text', $m[1], 'Honeypot ma być zwykłym polem tekstowym, nie type="hidden".' );
-		$this->assertMatchesRegularExpression( '/<div style="[^"]*left:-9999px[^"]*"[^>]*>\s*<label for="pusers_website">/', $html );
+		$this->assertMatchesRegularExpression( '/<div style="[^"]*left:-9999px[^"]*"[^>]*>\s*<label for="' . RegistrationForm::HONEYPOT . '">/', $html );
+	}
+
+	public function test_the_honeypot_does_not_look_like_a_field_autofill_knows(): void {
+		// `autocomplete="off"` ignoruje część menedżerów haseł, a nazwa `pusers_website` z etykietą
+		// „Strona WWW” była dla nich magnesem: wypełniona pułapka odcinała człowieka bez wskazówki,
+		// a przy kolejnej próbie to samo autouzupełnianie wypełniało ją znowu.
+		$html = RegistrationForm::render();
+
+		foreach ( array( 'website', 'url', 'email', 'name', 'phone', 'address' ) as $magnet ) {
+			$this->assertStringNotContainsString( $magnet, RegistrationForm::HONEYPOT, 'Nazwa pułapki nie może nazywać znanej danej.' );
+		}
+		$this->assertSame( 1, preg_match( '#<label for="' . RegistrationForm::HONEYPOT . '">([^<]*)</label>#', $html, $label ) );
+		$this->assertStringContainsString( 'Nie wypełniaj', $label[1], 'Etykieta ma wprost mówić, żeby pola nie wypełniać.' );
+
+		$this->assertSame( 1, preg_match( '#<input type="text" id="' . RegistrationForm::HONEYPOT . '"[^>]*>#', $html, $input ) );
+		$this->assertStringContainsString( 'tabindex="-1"', $input[0], 'Pułapka nie może się łapać tabulatorem.' );
+		$this->assertStringContainsString( 'autocomplete="off"', $input[0] );
+		$this->assertMatchesRegularExpression( '/aria-hidden="true"/', $html );
 	}
 
 	public function test_profession_labels_are_escaped(): void {
