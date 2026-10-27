@@ -452,4 +452,32 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'inne' => 'visible' ) ) ) );
 		$this->assertStringNotContainsString( 'pusers-consistency-notice', $this->renderScreenAsAdmin() );
 	}
+
+	public function test_the_terms_text_is_saved_with_its_line_breaks_and_the_consent_field_with_it(): void {
+		$this->asAdminPosting( 'pusers_save_settings', array( 'terms_text' => "Punkt 1\r\n\r\nPunkt 2", 'terms_consent_field' => 'zgoda' ) );
+		SettingsScreen::handle_save();
+
+		$saved = SettingsRepository::get();
+		$this->assertSame( "Punkt 1\n\nPunkt 2", $saved->termsText );
+		$this->assertSame( 'zgoda', $saved->termsConsentField );
+	}
+
+	public function test_a_save_without_the_terms_fields_keeps_the_saved_terms(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'terms_text' => 'Regulamin v1', 'terms_consent_field' => 'zgoda' ) ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'time_trap_seconds' => '9' ) );
+		SettingsScreen::handle_save();
+
+		$saved = SettingsRepository::get();
+		$this->assertSame( 'Regulamin v1', $saved->termsText );
+		$this->assertSame( 'zgoda', $saved->termsConsentField );
+		$this->assertSame( 9, $saved->timeTrapSeconds );
+	}
+
+	public function test_the_screen_shows_the_saved_terms_text(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'terms_text' => 'Regulamin <b>v1</b>' ) ) );
+		$html = $this->renderScreenAsAdmin();
+
+		$this->assertStringContainsString( 'name="pusers_terms_text"', $html );
+		$this->assertStringContainsString( 'Regulamin &lt;b&gt;v1&lt;/b&gt;', $html );
+	}
 }

@@ -17,6 +17,7 @@ use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
+use PortalUsers\Front\TermsBinding;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
@@ -63,6 +64,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'registration' => array( RegistrationForm::class ),
 			'registration handler' => array( RegistrationHandler::class ),
 			'confirmation' => array( Confirmation::class ),
+			'terms binding' => array( TermsBinding::class ),
 		);
 	}
 

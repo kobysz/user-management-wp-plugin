@@ -49,6 +49,8 @@ final class Settings {
 	 * @param array<int, string> $rejectionReasons       Gotowe powody odrzucenia zgłoszenia.
 	 * @param bool               $deleteDataOnUninstall  Czy odinstalowanie kasuje dane.
 	 * @param string             $acfGroupKey            Klucz grupy pól ACF.
+	 * @param string             $termsText              Treść regulaminu (pusta = regulamin nieskonfigurowany).
+	 * @param string             $termsConsentField      Klucz pola ACF ze zgodą na regulamin (puste = nie wskazano).
 	 */
 	public function __construct(
 		public readonly bool $approvalEnabled,
@@ -64,7 +66,9 @@ final class Settings {
 		public readonly string $trustedProxyHeader,
 		public readonly array $rejectionReasons,
 		public readonly bool $deleteDataOnUninstall,
-		public readonly string $acfGroupKey
+		public readonly string $acfGroupKey,
+		public readonly string $termsText,
+		public readonly string $termsConsentField
 	) {}
 
 	/**
@@ -87,6 +91,8 @@ final class Settings {
 			'',
 			array(),
 			false,
+			'',
+			'',
 			''
 		);
 	}
@@ -115,7 +121,9 @@ final class Settings {
 			self::headerName( self::text( $raw, 'trusted_proxy_header' ) ),
 			self::texts( $raw['rejection_reasons'] ?? array() ),
 			self::flag( $raw, 'delete_data_on_uninstall', $d->deleteDataOnUninstall ),
-			self::text( $raw, 'acf_group_key' )
+			self::text( $raw, 'acf_group_key' ),
+			self::text( $raw, 'terms_text' ),
+			self::text( $raw, 'terms_consent_field' )
 		);
 	}
 
@@ -140,6 +148,8 @@ final class Settings {
 			'rejection_reasons'                     => $this->rejectionReasons,
 			'delete_data_on_uninstall'              => $this->deleteDataOnUninstall,
 			'acf_group_key'                         => $this->acfGroupKey,
+			'terms_text'                            => $this->termsText,
+			'terms_consent_field'                   => $this->termsConsentField,
 		);
 	}
 

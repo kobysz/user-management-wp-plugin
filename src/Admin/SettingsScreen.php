@@ -52,6 +52,7 @@ final class SettingsScreen {
 		'time_trap_seconds',
 		'trusted_proxy_header',
 		'acf_group_key',
+		'terms_consent_field',
 	);
 
 	/**
@@ -101,6 +102,14 @@ final class SettingsScreen {
 		if ( null !== $group && '' !== sanitize_text_field( $group ) && ! array_key_exists( sanitize_text_field( $group ), AcfGroupList::groups() ) ) {
 			Request::redirect( Menu::SLUG_SETTINGS, self::NOTICE_INVALID_GROUP );
 			return;
+		}
+
+		// Treść regulaminu to jeden tekst wielowierszowy: sanitize_textarea_field() zachowuje podziały linii.
+		// Pole nieobecne w żądaniu zachowuje zapisaną treść (jak pozostałe).
+		$terms = self::posted( 'terms_text' );
+		if ( null !== $terms ) {
+			// Przeglądarka wysyła CRLF; zapisujemy LF, żeby ten sam tekst z innego klienta nie dawał innego skrótu wersji.
+			$raw['terms_text'] = sanitize_textarea_field( str_replace( array( "\r\n", "\r" ), "\n", $terms ) );
 		}
 
 		// Domena oczekuje tablicy: surowy tekst po cichu dałby pustą listę.
@@ -178,6 +187,7 @@ final class SettingsScreen {
 		self::render_notifications_section( $settings );
 		self::render_antispam_section( $settings );
 		self::render_fields_section( $settings );
+		self::render_terms_section( $settings );
 		self::render_uninstall_section( $settings );
 		echo '</tbody></table>';
 
@@ -313,6 +323,31 @@ final class SettingsScreen {
 		}
 		echo '</select>';
 		self::description( __( 'Pola z tej grupy tworzą formularz rejestracji.', 'portal-users' ) );
+		self::row_end();
+	}
+
+	/**
+	 * Sekcja regulaminu: treść oraz pole zgody, które wiąże konto z wersją regulaminu.
+	 *
+	 * @param Settings $settings Bieżące ustawienia.
+	 */
+	private static function render_terms_section( Settings $settings ): void {
+		self::row_start( __( 'Treść regulaminu', 'portal-users' ), 'terms_text' );
+		printf(
+			'<textarea class="large-text" rows="12" id="%1$s" name="%1$s">%2$s</textarea>',
+			esc_attr( self::name( 'terms_text' ) ),
+			esc_textarea( $settings->termsText )
+		);
+		self::description( __( 'Zmiana treści tworzy nową wersję regulaminu; wersje, które użytkownicy już zaakceptowali, zostają w archiwum. Puste pole oznacza brak regulaminu: rejestracja działa, ale konta nie są wiązane z żadną wersją.', 'portal-users' ) );
+		self::row_end();
+
+		self::row_start( __( 'Pole zgody na regulamin', 'portal-users' ), 'terms_consent_field' );
+		printf(
+			'<input type="text" class="regular-text" id="%1$s" name="%1$s" value="%2$s" />',
+			esc_attr( self::name( 'terms_consent_field' ) ),
+			esc_attr( $settings->termsConsentField )
+		);
+		self::description( __( 'Klucz pola ACF (typu „prawda/fałsz”) ze zgodą na regulamin. Konto jest wiązane z wersją regulaminu tylko wtedy, gdy to pole zostało zaznaczone. Bez wskazania pola żadne konto nie jest wiązane.', 'portal-users' ) );
 		self::row_end();
 	}
 

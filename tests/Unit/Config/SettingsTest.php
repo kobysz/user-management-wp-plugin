@@ -127,7 +127,9 @@ final class SettingsTest extends TestCase {
 			'HTTP_X_REAL_IP',
 			array( 'numer nieprawidłowy' ),
 			true,
-			'group_abc'
+			'group_abc',
+			'Regulamin',
+			'zgoda'
 		);
 
 		$this->assertSame(
@@ -146,6 +148,8 @@ final class SettingsTest extends TestCase {
 				'rejection_reasons',
 				'delete_data_on_uninstall',
 				'acf_group_key',
+				'terms_text',
+				'terms_consent_field',
 			),
 			array_keys( $s->toArray() )
 		);

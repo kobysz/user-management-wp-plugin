@@ -17,11 +17,13 @@ use PortalUsers\Front\RateLimiter;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\SpamGuard;
+use PortalUsers\Front\TermsBinding;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
+use PortalUsers\Persistence\TermsRepository;
 use PortalUsers\Persistence\UserMeta;
 use PortalUsers\Tests\Integration\Support\AcfRenderRecorder;
 use WP_UnitTestCase;
@@ -1215,5 +1217,178 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( RegistrationHandler::ACTION, $m[1] );
 		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . $m[1], array( RegistrationHandler::class, 'handle' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_' . $m[1], array( RegistrationHandler::class, 'handle' ) ) );
+	}
+
+	/**
+	 * Regulamin i pole zgody w ustawieniach; zgoda lekarza jest wymagana albo tylko widoczna (opcjonalna).
+	 *
+	 * @param string $text            Treść regulaminu.
+	 * @param string $consentField    Pole zgody.
+	 * @param bool   $consentRequired Czy zgoda jest wymagana dla lekarza.
+	 */
+	private function configure_terms( string $text, string $consentField = 'zgoda', bool $consentRequired = true ): void {
+		$raw                        = SettingsRepository::get()->toArray();
+		$raw['terms_text']          = $text;
+		$raw['terms_consent_field'] = $consentField;
+		SettingsRepository::save( Settings::fromArray( $raw ) );
+		FieldMatrixRepository::save(
+			FieldMatrix::fromArray(
+				array(
+					'lekarz' => array( 'pwz' => 'required', 'zgoda' => $consentRequired ? 'required' : 'visible', 'newsletter' => 'visible' ),
+				)
+			)
+		);
+		TermsBinding::register();
+	}
+
+	/**
+	 * @return int Liczba zapisanych wersji regulaminu.
+	 */
+	private function version_count(): int {
+		global $wpdb;
+		$table = Migrations::table( 'terms_versions' );
+		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tabela wtyczki, nazwa z Migrations::table().
+	}
+
+	/**
+	 * @return list<string> Nazwy zdarzeń z logu.
+	 */
+	private function log_actions(): array {
+		return array_map( static fn ( $row ): string => (string) $row->action, $this->log_rows() );
+	}
+
+	public function test_registration_binds_the_account_to_the_current_version_and_a_timestamp(): void {
+		$this->configure_terms( 'Regulamin v1' );
+		$before = time();
+		$id     = $this->register_ok();
+		$after  = time();
+
+		$hash = (string) get_user_meta( $id, UserMeta::TERMS_VERSION, true );
+		$this->assertSame( TermsRepository::currentHash(), $hash );
+		$this->assertSame( 'Regulamin v1', TermsRepository::contentFor( $hash ) );
+		$at = (string) get_user_meta( $id, UserMeta::CONSENT_AT, true );
+		$this->assertMatchesRegularExpression( '/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/', $at );
+		$this->assertGreaterThanOrEqual( $before, strtotime( $at . ' UTC' ) );
+		$this->assertLessThanOrEqual( $after, strtotime( $at . ' UTC' ) );
+	}
+
+	public function test_an_account_registered_earlier_keeps_pointing_at_the_text_it_accepted(): void {
+		$this->configure_terms( 'Regulamin v1' );
+		$first = $this->register_ok();
+		$this->configure_terms( 'Regulamin v2' );
+		$second = $this->register_ok();
+
+		$v1 = (string) get_user_meta( $first, UserMeta::TERMS_VERSION, true );
+		$v2 = (string) get_user_meta( $second, UserMeta::TERMS_VERSION, true );
+		$this->assertNotSame( $v1, $v2 );
+		$this->assertSame( 'Regulamin v1', TermsRepository::contentFor( $v1 ), 'Zmiana regulaminu nie rusza tekstu zaakceptowanego wcześniej.' );
+		$this->assertSame( 'Regulamin v2', TermsRepository::contentFor( $v2 ) );
+		$this->assertSame( 2, $this->version_count() );
+	}
+
+	public function test_two_registrations_under_the_same_text_share_one_version(): void {
+		$this->configure_terms( 'Regulamin v1' );
+		$first  = $this->register_ok();
+		$second = $this->register_ok();
+
+		$this->assertSame( get_user_meta( $first, UserMeta::TERMS_VERSION, true ), get_user_meta( $second, UserMeta::TERMS_VERSION, true ) );
+		$this->assertSame( 1, $this->version_count() );
+	}
+
+	public function test_registration_without_configured_terms_stores_no_version_and_still_succeeds(): void {
+		// Portal bez regulaminu nie może przestać przyjmować rejestracji.
+		TermsBinding::register();
+		$id = $this->register_ok();
+
+		$this->assertSame( '', get_user_meta( $id, UserMeta::TERMS_VERSION, true ) );
+		$this->assertSame( '', get_user_meta( $id, UserMeta::CONSENT_AT, true ) );
+		$this->assertSame( 0, $this->version_count() );
+		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $this->redirected );
+		$this->assertSame( AccountStatus::EmailUnconfirmed, AccountStatusRepository::get( $id ) );
+	}
+
+	/**
+	 * @return array<string, array{0: array<string, mixed>}>
+	 */
+	public static function consent_not_given(): array {
+		return array(
+			'odznaczona (ukryte 0)' => array( array( 'zgoda' => '0' ) ),
+			'pusta'                 => array( array( 'zgoda' => '' ) ),
+			'nie'                   => array( array( 'zgoda' => 'nie' ) ),
+			'true tekstem'          => array( array( 'zgoda' => 'true' ) ),
+			'pole nieobecne'        => array( array( 'zgoda' => null ) ),
+			'zaznaczone inne pole'  => array( array( 'zgoda' => '0', 'newsletter' => '1' ) ),
+		);
+	}
+
+	/**
+	 * @dataProvider consent_not_given
+	 *
+	 * @param array<string, mixed> $fields Pola ACF.
+	 */
+	public function test_consent_that_was_not_given_creates_no_binding_but_the_account_is_created( array $fields ): void {
+		$this->configure_terms( 'Regulamin v1', 'zgoda', false );
+		$id = $this->register_ok( array(), $fields );
+
+		$this->assertSame( '', get_user_meta( $id, UserMeta::TERMS_VERSION, true ) );
+		$this->assertSame( '', get_user_meta( $id, UserMeta::CONSENT_AT, true ) );
+		$this->assertSame( 0, $this->version_count(), 'Bez zgody nie powstaje też wersja.' );
+	}
+
+	public function test_a_consent_field_hidden_for_the_profession_creates_no_binding(): void {
+		$this->configure_terms( 'Regulamin v1' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required', 'zgoda' => 'hidden' ) ) ) );
+		$id = $this->register_ok( array(), array( 'zgoda' => '1' ) );
+
+		$this->assertSame( '', get_user_meta( $id, UserMeta::TERMS_VERSION, true ), 'Zgoda wysłana do pola ukrytego nie liczy się.' );
+		$this->assertSame( 0, $this->version_count() );
+	}
+
+	public function test_configured_terms_without_a_consent_field_bind_nothing_and_say_so_in_the_log(): void {
+		$this->configure_terms( 'Regulamin v1', '' );
+		$id = $this->register_ok();
+
+		$this->assertSame( '', get_user_meta( $id, UserMeta::TERMS_VERSION, true ) );
+		$this->assertContains( TermsBinding::LOG_SKIPPED, $this->log_actions() );
+		$this->assertSame( 0, $this->version_count() );
+	}
+
+	public function test_a_failed_version_write_does_not_break_the_registration_and_is_logged(): void {
+		$this->configure_terms( 'Regulamin v1' );
+		add_filter( 'query', static fn ( $query ) => str_contains( (string) $query, 'INSERT IGNORE INTO' ) ? 'NOT SQL' : $query );
+		$id = $this->register_ok();
+
+		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $this->redirected, 'Użytkownik dostaje odpowiedź o przyjętym zgłoszeniu.' );
+		$this->assertSame( '', get_user_meta( $id, UserMeta::TERMS_VERSION, true ), 'Powiązanie ze skrótem, którego nie ma w archiwum, byłoby fałszywym dowodem.' );
+		$this->assertSame( '', get_user_meta( $id, UserMeta::CONSENT_AT, true ) );
+		$this->assertContains( TermsBinding::LOG_FAILED, $this->log_actions() );
+	}
+
+	public function test_an_exception_while_binding_does_not_break_the_registration_and_is_logged(): void {
+		$this->configure_terms( 'Regulamin v1' );
+		add_filter(
+			'query',
+			static function ( $query ) {
+				if ( str_contains( (string) $query, 'INSERT IGNORE INTO' ) ) {
+					throw new \RuntimeException( 'awaria zapisu' );
+				}
+				return $query;
+			}
+		);
+		$id = $this->register_ok();
+
+		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $this->redirected );
+		$this->assertSame( '', get_user_meta( $id, UserMeta::TERMS_VERSION, true ) );
+		$this->assertContains( TermsBinding::LOG_FAILED, $this->log_actions() );
+	}
+
+	public function test_a_successful_binding_is_logged_with_the_version(): void {
+		$this->configure_terms( 'Regulamin v1' );
+		$id   = $this->register_ok();
+		$rows = array_values( array_filter( $this->log_rows(), static fn ( $row ): bool => TermsBinding::LOG_BOUND === $row->action ) );
+
+		$this->assertCount( 1, $rows );
+		$this->assertSame( $id, (int) $rows[0]->subject_user_id );
+		$this->assertSame( TermsRepository::currentHash(), json_decode( (string) $rows[0]->context, true )['version'] ?? '' );
 	}
 }
