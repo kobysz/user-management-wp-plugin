@@ -404,6 +404,30 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'odzyskiwanie hasła', Confirmation::message_for( Confirmation::RESULT_OK ) );
 	}
 
+	public function test_reissuing_a_ticket_in_the_same_second_is_not_mistaken_for_a_failed_write(): void {
+		// `update_user_meta()` zwraca false także wtedy, gdy wartość jest identyczna z zapisaną,
+		// a termin ważności wyliczony w tej samej sekundzie jest identyczny. Wzięty za awarię
+		// zapisu kasowałby właśnie wystawiony, dobry bilet.
+		$id = $this->account();
+
+		$first  = PasswordSetup::issue( $id );
+		$second = PasswordSetup::issue( $id );
+
+		$this->assertNotSame( '', $second, 'Ten sam termin ważności to nie awaria zapisu.' );
+		$this->assertNotSame( $first, $second, 'Nowy bilet jest nowy.' );
+		$this->assertSame( self::hashOf( $second ), (string) get_user_meta( $id, UserMeta::PASSWORD_TICKET_HASH, true ) );
+		$this->assertNotSame( '', (string) get_user_meta( $id, UserMeta::PASSWORD_TICKET_EXPIRES, true ) );
+	}
+
+	/**
+	 * Skrót biletu tak, jak liczy go wtyczka.
+	 *
+	 * @param string $token Bilet jawny.
+	 */
+	private static function hashOf( string $token ): string {
+		return hash( 'sha256', $token );
+	}
+
 	public function test_a_ticket_without_an_expiry_is_not_issued_at_all(): void {
 		// Bilet bez terminu ważności byłby biletem bezterminowym, więc skrót nie może zostać.
 		$block = static fn ( $check, $object_id, $meta_key ) => UserMeta::PASSWORD_TICKET_EXPIRES === $meta_key ? false : $check;

@@ -149,15 +149,24 @@ final class PasswordSetup {
 	 * @param int $userId Identyfikator użytkownika.
 	 */
 	public static function issue( int $userId ): string {
-		$token = bin2hex( random_bytes( 32 ) );
+		$token   = bin2hex( random_bytes( 32 ) );
+		$expires = time() + self::TICKET_HOURS * HOUR_IN_SECONDS;
 
 		if ( false === update_user_meta( $userId, UserMeta::PASSWORD_TICKET_HASH, self::hash( $token ) ) ) {
 			return '';
 		}
-		if ( false === update_user_meta( $userId, UserMeta::PASSWORD_TICKET_EXPIRES, time() + self::TICKET_HOURS * HOUR_IN_SECONDS ) ) {
-			// Bilet bez terminu ważności byłby biletem bezterminowym, więc skrót sprzątamy.
-			delete_user_meta( $userId, UserMeta::PASSWORD_TICKET_HASH );
-			return '';
+		// `update_user_meta()` zwraca false TAKŻE wtedy, gdy zapisywana wartość jest identyczna
+		// z zapisaną — a termin ważności wyliczony w tej samej sekundzie jest identyczny. Wzięty
+		// za awarię kasowałby dobry bilet, więc przed zgłoszeniem porażki czytamy wartość
+		// z powrotem (ten sam wzór, co w `RateLimiter::hit()`). Przy skrócie ta pułapka nie
+		// istnieje: jest losowy, więc nigdy nie jest „wartością bez zmian”.
+		if ( false === update_user_meta( $userId, UserMeta::PASSWORD_TICKET_EXPIRES, $expires ) ) {
+			$stored = get_user_meta( $userId, UserMeta::PASSWORD_TICKET_EXPIRES, true );
+			if ( ! is_numeric( $stored ) || (int) $stored !== $expires ) {
+				// Bilet bez terminu ważności byłby biletem bezterminowym, więc skrót sprzątamy.
+				delete_user_meta( $userId, UserMeta::PASSWORD_TICKET_HASH );
+				return '';
+			}
 		}
 
 		return $token;
