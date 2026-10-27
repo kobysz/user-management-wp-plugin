@@ -21,7 +21,8 @@ use Throwable;
  * Podpina się pod `pusers_account_registered`, czyli po utworzeniu konta. Konto już istnieje, a użytkownik
  * dostaje odpowiedź, więc nic stąd nie może wywrócić żądania ani zablokować rejestracji:
  *
- * - brak skonfigurowanego regulaminu to niedokończona konfiguracja administratora: konto powstaje bez powiązania;
+ * - brak skonfigurowanego regulaminu albo pola zgody to niedokończona konfiguracja administratora: konto powstaje bez
+ *   powiązania, a stan ten pokazuje raport spójności (bez wpisu w logu przy każdej rejestracji);
  * - informacja „zgoda udzielona” pochodzi z metadanej pola zgody zapisanej przez RegistrationHandler z wartości
  *   ZNORMALIZOWANEJ (`'1'` albo pusto), nigdy z surowego żądania; zgoda nieudzielona (lub ukryta dla profesji,
  *   więc niezapisana) nie tworzy powiązania;
@@ -39,11 +40,6 @@ final class TermsBinding {
 	 * Wpis w logu: powiązania nie utworzono, bo nie udało się zapisać wersji regulaminu.
 	 */
 	public const LOG_FAILED = 'terms_binding_failed';
-
-	/**
-	 * Wpis w logu: regulamin jest skonfigurowany, ale nie wskazano pola zgody, więc nie ma czego wiązać.
-	 */
-	public const LOG_SKIPPED = 'terms_binding_skipped';
 
 	/**
 	 * Podpina powiązanie pod utworzenie konta.
@@ -81,8 +77,7 @@ final class TermsBinding {
 			return; // Regulamin nieskonfigurowany: rejestracja działa, konto bez powiązania.
 		}
 		if ( '' === $settings->termsConsentField ) {
-			self::log( self::LOG_SKIPPED, $userId, array( 'reason' => 'consent_field_not_configured' ) );
-			return;
+			return; // Stan konfiguracji, nie zdarzenie: widzi go raport spójności (MatrixScreen::issues()), log nie puchnie.
 		}
 
 		// Wartość zapisał handler po normalizacji; prawdą jest wyłącznie '1'.

@@ -60,6 +60,8 @@ final class IssueMessages {
 			case 'default_role_unknown':
 				/* translators: %s: nazwa roli z ustawień. */
 				return sprintf( __( 'Rejestracja jest wyłączona: domyślnej roli nowych kont („%s”) nie ma na tej witrynie. Wskaż istniejącą rolę w Ustawieniach → Ogólne.', 'portal-users' ), $role );
+			case 'terms_version_not_recorded':
+				return __( 'Portal wymaga od użytkowników zgody, ale wersja regulaminu nie jest zapisywana, więc nie będzie czym wykazać, na co się zgodzili. Wpisz treść regulaminu i wskaż pole zgody (pole logiczne z wybranej grupy) w Ustawieniach → Ogólne.', 'portal-users' );
 			case 'page_missing':
 				/* translators: %s: nazwa ustawienia strony. */
 				return sprintf( __( '%s: wskazana strona nie istnieje.', 'portal-users' ), $page );

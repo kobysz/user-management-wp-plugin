@@ -1344,12 +1344,12 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( 0, $this->version_count() );
 	}
 
-	public function test_configured_terms_without_a_consent_field_bind_nothing_and_say_so_in_the_log(): void {
+	public function test_configured_terms_without_a_consent_field_bind_nothing_and_do_not_flood_the_log(): void {
 		$this->configure_terms( 'Regulamin v1', '' );
 		$id = $this->register_ok();
 
 		$this->assertSame( '', get_user_meta( $id, UserMeta::TERMS_VERSION, true ) );
-		$this->assertContains( TermsBinding::LOG_SKIPPED, $this->log_actions() );
+		$this->assertSame( array( 'registration_created' ), $this->log_actions(), 'Stan konfiguracji pokazuje raport spójności, nie log przy każdej rejestracji.' );
 		$this->assertSame( 0, $this->version_count() );
 	}
 

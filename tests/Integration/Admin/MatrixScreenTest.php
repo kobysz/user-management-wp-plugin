@@ -766,4 +766,63 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$_GET = array( 'pusers_notice' => 'matrix_save_refused' );
 		$this->assertMatchesRegularExpression( '#<div class="notice notice-error"><p>Nie zapisano macierzy#u', $this->renderAsAdmin() );
 	}
+
+	/**
+	 * Grupa z polem tekstowym i dwoma logicznymi (zgoda, newsletter); lekarz ma zgodę wymaganą albo nie.
+	 *
+	 * @param bool   $required Czy zgoda jest wymagana dla lekarza.
+	 * @param string $text     Treść regulaminu.
+	 * @param string $field    Pole zgody w ustawieniach.
+	 */
+	private function withConsent( bool $required, string $text, string $field ): void {
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array(
+				array( 'name' => 'pwz', 'label' => 'PWZ', 'type' => 'text' ),
+				array( 'name' => 'zgoda', 'label' => 'Zgoda', 'type' => 'true_false' ),
+				array( 'name' => 'newsletter', 'label' => 'Newsletter', 'type' => 'true_false' ),
+			)
+		);
+		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_abc', 'terms_text' => $text, 'terms_consent_field' => $field ) ) );
+		$this->withProfessions( 'lekarz' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required', 'zgoda' => $required ? 'required' : 'visible', 'newsletter' => 'visible' ) ) ) );
+	}
+
+	/**
+	 * @return list<string> Kody problemów z raportu.
+	 */
+	private function issueCodes(): array {
+		return array_map( static fn ( $i ): string => $i->code, MatrixScreen::issues() );
+	}
+
+	public function test_the_report_flags_a_required_consent_with_no_terms_text(): void {
+		$this->withConsent( true, '', 'zgoda' );
+		$this->assertContains( 'terms_version_not_recorded', $this->issueCodes() );
+	}
+
+	public function test_the_report_flags_a_required_consent_whose_consent_field_points_at_nothing(): void {
+		$this->withConsent( true, 'Regulamin v1', 'nie_ma_takiego' );
+		$this->assertContains( 'terms_version_not_recorded', $this->issueCodes() );
+
+		$this->withConsent( true, 'Regulamin v1', 'pwz' );
+		$this->assertContains( 'terms_version_not_recorded', $this->issueCodes(), 'Pole tekstowe nie jest polem logicznym.' );
+	}
+
+	public function test_the_report_is_silent_when_consent_terms_and_field_are_set_correctly(): void {
+		$this->withConsent( true, 'Regulamin v1', 'zgoda' );
+		$this->assertNotContains( 'terms_version_not_recorded', $this->issueCodes() );
+	}
+
+	public function test_the_report_does_not_shout_at_a_portal_that_collects_no_consent_at_all(): void {
+		// Zgoda tylko widoczna (nigdzie niewymagana), regulamin pusty, pole zgody nieustawione.
+		$this->withConsent( false, '', '' );
+		$this->assertNotContains( 'terms_version_not_recorded', $this->issueCodes() );
+	}
+
+	public function test_the_terms_message_says_consent_is_required_but_the_version_is_not_recorded(): void {
+		$this->withConsent( true, '', '' );
+		$html = $this->renderAsAdmin();
+		$this->assertStringContainsString( 'wersja regulaminu nie jest zapisywana', $html );
+	}
 }

@@ -16,6 +16,7 @@ use PortalUsers\Domain\Config\ConsistencyChecker;
 use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Fields\FieldState;
+use PortalUsers\Front\AcfFields;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
@@ -82,7 +83,7 @@ final class MatrixScreen {
 	 * @return array<int, SettingsIssue>
 	 */
 	public static function issues(): array {
-		$issues = array_merge( self::default_role_issues(), self::checker()->issues() );
+		$issues = array_merge( self::default_role_issues(), self::terms_issues(), self::checker()->issues() );
 
 		return array_merge(
 			array_values( array_filter( $issues, static fn ( SettingsIssue $issue ): bool => SettingsIssue::ERROR === $issue->severity ) ),
@@ -116,6 +117,40 @@ final class MatrixScreen {
 				)
 			),
 		);
+	}
+
+	/**
+	 * Reguła o zgodach: portal WYMUSZA zgodę (pole logiczne wymagane dla którejś profesji), ale nie zapisuje
+	 * wersji regulaminu, bo regulamin jest pusty albo `terms_consent_field` nie wskazuje pola logicznego z grupy.
+	 * Przy sporze nie ma wtedy czym wykazać, na co użytkownik się zgodził. Gdy żadna zgoda nie jest wymagana,
+	 * reguła milczy: portal, który zgód nie zbiera, nie ma czego zapisywać.
+	 *
+	 * @return list<SettingsIssue>
+	 */
+	private static function terms_issues(): array {
+		$boolean = ( new AcfFields( self::source() ) )->booleanKeys();
+		if ( array() === $boolean ) {
+			return array();
+		}
+
+		$matrix   = FieldMatrixRepository::get();
+		$enforced = false;
+		foreach ( ProfessionRepository::get()->keys() as $professionKey ) {
+			if ( array() !== array_intersect( $matrix->requiredFields( $professionKey ), $boolean ) ) {
+				$enforced = true;
+				break;
+			}
+		}
+		if ( ! $enforced ) {
+			return array();
+		}
+
+		$settings = SettingsRepository::get();
+		if ( '' !== $settings->termsText && in_array( $settings->termsConsentField, $boolean, true ) ) {
+			return array();
+		}
+
+		return array( SettingsIssue::error( 'terms_version_not_recorded' ) );
 	}
 
 	/**
