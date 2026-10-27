@@ -89,8 +89,11 @@ final class RegistrationHandler {
 	/**
 	 * Przedrostek metadanych z wartościami pól ACF: kolizja z metadaną WordPressa jest wtedy niemożliwa z konstrukcji.
 	 * Ekran wniosków czyta wartości z tym przedrostkiem.
+	 *
+	 * Nazwa mieszka w `UserMeta` razem z pozostałymi nazwami metadanych wtyczki: jedno miejsce,
+	 * w którym czyta się o przedrostku.
 	 */
-	public const ACF_META_PREFIX = 'pusers_acf_';
+	public const ACF_META_PREFIX = UserMeta::ACF_PREFIX;
 
 	/**
 	 * Minimalna długość hasła (znaków).
