@@ -426,7 +426,7 @@ final class RegistrationHandler {
 			array(
 				'user_login'   => $login,
 				'user_email'   => $clean,
-				'user_pass'    => wp_generate_password( 64, true, true ),
+				'user_pass'    => self::random_password(),
 				'role'         => $role,
 				'display_name' => $login,
 			)
@@ -799,6 +799,20 @@ final class RegistrationHandler {
 				'reason'     => '' === $state['capability'] ? 'role_unknown' : 'dangerous_capability',
 			)
 		);
+	}
+
+	/**
+	 * Hasło losowe dla nowo utworzonego konta: nigdzie nie zapisywane i nikomu nie wysyłane,
+	 * więc nikt się nim nie zaloguje. Prawdziwe hasło ustawia dopiero ten, kto otworzył link
+	 * potwierdzający z własnej skrzynki (`PasswordSetup`).
+	 *
+	 * Publiczna i nazwana WYŁĄCZNIE dlatego, żeby dało się przypiąć losowość testem. Wyrażenie
+	 * wpisane wprost w `wp_insert_user()` nie było przypięte niczym: podmiana na jedną stałą
+	 * wartość przechodziła całą suitę, bo skróty bcrypt różnią się solą także dla identycznego
+	 * hasła — a jedno stałe hasło w kodzie otwiera KAŻDE konto na portalu.
+	 */
+	public static function random_password(): string {
+		return wp_generate_password( 64, true, true );
 	}
 
 	/**

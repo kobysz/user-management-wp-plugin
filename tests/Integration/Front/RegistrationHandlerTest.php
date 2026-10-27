@@ -377,6 +377,19 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		);
 	}
 
+	public function test_the_generated_account_password_is_random_and_long(): void {
+		// Asercja na skrótach w bazie tego nie dowodziła: skróty bcrypt różnią się solą także
+		// dla identycznego hasła, więc podmiana generatora na jedną stałą wartość przechodziła
+		// całą suitę — a jedno stałe hasło w kodzie otwiera KAŻDE konto na portalu. Dlatego
+		// dowód bierze generator wprost.
+		$first  = RegistrationHandler::random_password();
+		$second = RegistrationHandler::random_password();
+
+		$this->assertNotSame( $first, $second, 'Dwa konta nie mogą dostać tego samego hasła.' );
+		$this->assertGreaterThanOrEqual( 64, strlen( $first ) );
+		$this->assertGreaterThanOrEqual( 64, strlen( $second ) );
+	}
+
 	public function test_the_account_is_created_with_a_random_password_nobody_knows(): void {
 		// Konto powstaje JUŻ w kroku pierwszym (adres musi zostać zajęty w momencie zgłoszenia),
 		// ale z hasłem losowym: nigdzie nie zapisanym i nikomu nie wysłanym.
