@@ -75,6 +75,25 @@ final class RegistrationHandler {
 	private const FLASH_TTL    = 10 * MINUTE_IN_SECONDS;
 
 	/**
+	 * Wartość znacznika w adresie po odmowie nonce'a (bez danych w magazynie).
+	 */
+	public const STALE = 'stale';
+
+	/**
+	 * Przedrostek metadanych z wartościami pól ACF: kolizja z metadaną WordPressa jest wtedy niemożliwa z konstrukcji.
+	 * Ekran wniosków czyta wartości z tym przedrostkiem.
+	 */
+	public const ACF_META_PREFIX = 'pusers_acf_';
+
+	/**
+	 * Minimalna długość hasła (znaków).
+	 */
+	public const MIN_PASSWORD_LENGTH = 8;
+
+	private const MAX_ITEMS        = 50;
+	private const MAX_VALUE_LENGTH = 1000;
+
+	/**
 	 * Odczytane w tym żądaniu dane (klucz => dane): transient znika przy pierwszym odczycie, a formularz czyta go kilka razy.
 	 *
 	 * @var array<string, array{profession: string, email: string, fields: array<string, mixed>, errors: array<string, string>, warnings: array<string, string>, notice: string}>
@@ -87,20 +106,49 @@ final class RegistrationHandler {
 	public static function register(): void {
 		add_action( 'admin_post_nopriv_' . self::ACTION, array( self::class, 'handle' ) );
 		add_action( 'admin_post_' . self::ACTION, array( self::class, 'handle' ) );
+		add_action( 'template_redirect', array( self::class, 'on_template_redirect' ) );
 		// Nazwa filtra dosłownie (reguła prefiksów); to ta sama nazwa co RegistrationForm::OLD_INPUT_FILTER.
 		add_filter( 'pusers_registration_old_input', array( self::class, 'old_input' ) );
+	}
+
+	/**
+	 * Strona po zgłoszeniu (udanym albo nie) niesie dane osobowe z magazynu, więc nie może trafić do
+	 * żadnego cache'a stron; ciasteczko z kluczem kasujemy tu, zanim wyjdą nagłówki (z treści strony
+	 * `setcookie()` już nie poleci).
+	 */
+	public static function on_template_redirect(): void {
+		// Odczyt po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje.
+		if ( ! isset( $_GET[ self::FAILED_ARG ] ) && ! isset( $_GET[ self::DONE_ARG ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return;
+		}
+
+		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+			define( 'DONOTCACHEPAGE', true ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- stała uznawana przez wtyczki cache.
+		}
+		nocache_headers();
+		if ( ! headers_sent() ) {
+			header( 'X-LiteSpeed-Cache-Control: no-cache' );
+		}
+		do_action( 'litespeed_control_set_nocache', 'pusers registration' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- hook cudzej wtyczki (LiteSpeed Cache).
+
+		if ( isset( $_GET[ self::FAILED_ARG ] ) && isset( $_COOKIE[ self::COOKIE ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			$request_path = isset( $_SERVER['REQUEST_URI'] ) && is_string( $_SERVER['REQUEST_URI'] ) ? wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) : null;
+			self::send_cookie( '', time() - YEAR_IN_SECONDS, is_string( $request_path ) && '' !== $request_path ? $request_path : '/' );
+		}
 	}
 
 	/**
 	 * Obsługuje zgłoszenie.
 	 */
 	public static function handle(): void {
-		// 1. Nonce.
+		// 1. Nonce. Nonce i podpisany znacznik czasu starzeją się razem, więc człowiek z kartą otwartą od doby
+		// trafia właśnie tu: dostaje komunikat „odśwież stronę” przez PRG, nie 403. Nic z żądania nie jest zapisywane.
 		$nonce = isset( $_POST[ RegistrationForm::NONCE_FIELD ] ) && is_string( $_POST[ RegistrationForm::NONCE_FIELD ] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- to jest weryfikacja nonce'a.
 			? sanitize_text_field( wp_unslash( $_POST[ RegistrationForm::NONCE_FIELD ] ) ) // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			: '';
 		if ( '' === $nonce || false === wp_verify_nonce( $nonce, RegistrationForm::NONCE_ACTION ) ) {
-			wp_die( esc_html__( 'Formularz wygasł. Odśwież stronę i spróbuj ponownie.', 'portal-users' ), '', array( 'response' => 403 ) );
+			self::redirect( add_query_arg( self::FAILED_ARG, self::STALE, self::return_url() ) );
+			return;
 		}
 
 		// 2. Metoda POST (admin-post odpala się dla każdej metody).
@@ -115,34 +163,36 @@ final class RegistrationHandler {
 		$email     = self::text( $request, RegistrationForm::EMAIL );
 		$key       = self::text( $request, RegistrationForm::PROFESSION );
 
-		// 3. Antyspam, przed walidacją i przed jakimkolwiek odczytem pól.
+		// 3. Antyspam, przed walidacją i przed jakimkolwiek odczytem pól. Pól z żądania nie zapisujemy:
+		// kontekst (a z nim lista pól ze źródła) jeszcze nie istnieje, a dane bota nie mają trafiać do magazynu.
 		$verdict = SpamGuard::check( $_SERVER, $request, $email );
 		if ( ! $verdict->passed() ) {
-			$kept = array(
-				'profession' => $key,
-				'email'      => $email,
-				'notice'     => self::spam_notice( $verdict ),
+			self::back(
+				array(
+					'profession' => $key,
+					'email'      => $email,
+					'notice'     => self::spam_notice( $verdict ),
+				)
 			);
-			// Tylko przeterminowany formularz (uczciwy człowiek z kartą otwartą od doby) zachowuje wpisane pola;
-			// dane bota nie trafiają do magazynu. Wartości niezwalidowane, więc sanityzowane; limit liczby pól.
-			if ( SpamVerdict::STALE_FORM === $verdict->reason() && isset( $request[ AcfFields::INPUT ] ) && is_array( $request[ AcfFields::INPUT ] ) ) {
-				$kept['fields'] = self::clean_values( array_slice( $request[ AcfFields::INPUT ], 0, 50, true ) );
-			}
-			self::back( $kept );
 			return;
 		}
 
 		// 4. Kontekst: JEDYNE wejście. Null znaczy: odrzuć zgłoszenie i nie twórz konta.
 		$context = RegistrationForm::context_for( $key );
 		$role    = self::default_role();
-		if ( null === $context || null === $role ) {
+		if ( is_user_logged_in() || null === $context || null === $role ) {
+			if ( is_user_logged_in() ) {
+				$refusal = array( 'registration' => 'logged_in' );
+			} elseif ( null === $context ) {
+				$refusal = array( SubmissionResult::PROFESSION_KEY => 'unknown_profession' );
+			} else {
+				$refusal = array( 'registration' => 'registration_closed' );
+			}
 			self::back(
 				array(
 					'profession' => $key,
 					'email'      => $email,
-					'errors'     => null === $context
-						? array( SubmissionResult::PROFESSION_KEY => 'unknown_profession' )
-						: array( 'registration' => 'unavailable' ),
+					'errors'     => $refusal,
 				)
 			);
 			return;
@@ -167,15 +217,33 @@ final class RegistrationHandler {
 		}
 		if ( '' === $password ) {
 			$errors[ RegistrationForm::PASSWORD ] = 'password_missing';
+		} elseif ( mb_strlen( $password ) < self::MIN_PASSWORD_LENGTH ) {
+			$errors[ RegistrationForm::PASSWORD ] = 'password_short';
 		} elseif ( $password !== $repeat ) {
 			$errors[ RegistrationForm::PASSWORD_REPEAT ] = 'password_mismatch';
 		}
-		$errors += $result->errors();
+		// Błąd pola ACF o nazwie pola wtyczki nie ginie: dostaje klucz z przedrostkiem.
+		foreach ( $result->errors() as $field => $code ) {
+			$errors[ isset( $errors[ $field ] ) ? 'acf:' . $field : $field ] = $code;
+		}
+
+		// Profesja wymagająca numeru uprawnień nie dostaje konta bez numeru. Miękka walidacja dotyczy numerów
+		// prawdziwych, ale nietypowych (zła suma, separatory); wartość o złym typie (tablica) nie ma czego
+		// weryfikować redakcji, więc to błąd twardy.
+		$credentialField = $profession->credentialField;
+		if ( $profession->requiresCredential() && '' !== $credentialField && ! isset( $errors[ $credentialField ] ) ) {
+			$number = $result->values()[ $credentialField ] ?? null;
+			if ( ! is_string( $number ) ) {
+				$errors[ $credentialField ] = null === $number ? 'required' : 'invalid_type';
+			} elseif ( '' === trim( $number ) ) {
+				$errors[ $credentialField ] = 'required';
+			}
+		}
 
 		// Błąd twardy i ostrzeżenie o tym samym polu opisują jeden fakt: ostrzeżenie ustępuje błędowi.
 		$warnings = array();
-		if ( '' !== $result->credentialWarning() && ! isset( $errors[ $profession->credentialField ] ) ) {
-			$warnings[ $profession->credentialField ] = $result->credentialWarning();
+		if ( '' !== $result->credentialWarning() && ! isset( $errors[ $credentialField ] ) ) {
+			$warnings[ $credentialField ] = $result->credentialWarning();
 		}
 
 		if ( array() !== $errors ) {
@@ -183,7 +251,7 @@ final class RegistrationHandler {
 				array(
 					'profession' => $key,
 					'email'      => $email,
-					'fields'     => self::clean_values( $raw ),
+					'fields'     => self::clean_values( $raw, true ),
 					'errors'     => $errors,
 					'warnings'   => $warnings,
 				)
@@ -192,12 +260,14 @@ final class RegistrationHandler {
 		}
 
 		// 6. Utworzenie konta. Hasło idzie wyłącznie do wp_insert_user(): ani do flash, ani do metadanych.
+		// Login jest losowy i nieodgadywalny (adres da się wywnioskować z imienia i nazwiska); do pokazania służy display_name.
 		$userId = wp_insert_user(
 			array(
-				'user_login' => self::login_for( $clean ),
-				'user_email' => $clean,
-				'user_pass'  => $password,
-				'role'       => $role,
+				'user_login'   => self::random_login(),
+				'user_email'   => $clean,
+				'user_pass'    => $password,
+				'role'         => $role,
+				'display_name' => sanitize_user( (string) strstr( $clean, '@', true ), true ),
 			)
 		);
 		if ( is_wp_error( $userId ) ) {
@@ -205,7 +275,7 @@ final class RegistrationHandler {
 				array(
 					'profession' => $key,
 					'email'      => $email,
-					'fields'     => self::clean_values( $raw ),
+					'fields'     => self::clean_values( $raw, true ),
 					'errors'     => array( RegistrationForm::EMAIL => 'existing_user_email' === $userId->get_error_code() ? 'email_exists' : 'account_failed' ),
 				)
 			);
@@ -214,17 +284,15 @@ final class RegistrationHandler {
 
 		update_user_meta( $userId, UserMeta::PROFESSION, $profession->key );
 		AccountStatusRepository::set( $userId, AccountStatus::EmailUnconfirmed );
-		// Odsiew po macierzy z kontekstu, potem sanityzacja: values() może nieść tablicę.
+		// Odsiew po macierzy z kontekstu, potem sanityzacja: values() może nieść tablicę. Wartości pól ACF
+		// zapisujemy z przedrostkiem, więc kolizja z jakąkolwiek metadaną WordPressa jest niemożliwa z konstrukcji.
 		$stored = ( new SubmissionFilter( $matrix ) )->strip( $profession->key, $result->values() );
 		foreach ( self::clean_values( $stored ) as $name => $value ) {
-			if ( ! self::may_store( $name ) ) {
-				continue;
-			}
-			// Numer uprawnień jest tekstem; tablica w tym polu nie trafia do metadanych zserializowana.
+			// Numer uprawnień jest tekstem; (zabezpieczenie) tablica w tym polu nie trafia do metadanych zserializowana.
 			if ( $name === $profession->credentialField && ! is_string( $value ) ) {
 				continue;
 			}
-			update_user_meta( $userId, $name, $value );
+			update_user_meta( $userId, self::ACF_META_PREFIX . $name, $value );
 		}
 
 		// 7. Licznik adresu e-mail rośnie WYŁĄCZNIE tu: po udanej walidacji i po przepustce z check().
@@ -295,6 +363,10 @@ final class RegistrationHandler {
 		if ( ! isset( $_GET[ self::FAILED_ARG ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return $empty;
 		}
+		// Odmowa nonce'a: komunikat „odśwież stronę” bez żadnych danych w magazynie.
+		if ( self::STALE === $_GET[ self::FAILED_ARG ] ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return array_merge( $empty, array( 'notice' => 'stale_form' ) );
+		}
 		// Znacznik jest, a danych nie ma (ciasteczko zablokowane, wygasłe, cudze): formularz jest pusty, ale mówi, że zgłoszenie nie przeszło.
 		$lost  = array_merge( $empty, array( 'notice' => 'lost' ) );
 		$token = isset( $_COOKIE[ self::COOKIE ] ) && is_string( $_COOKIE[ self::COOKIE ] ) ? sanitize_text_field( wp_unslash( $_COOKIE[ self::COOKIE ] ) ) : '';
@@ -305,10 +377,8 @@ final class RegistrationHandler {
 			return self::$read[ $token ];
 		}
 		$raw = get_transient( self::FLASH_PREFIX . $token );
-		// Jednorazowość: dane i ciasteczko znikają przy pierwszym odczycie (wynik zostaje w pamięci tego żądania).
+		// Jednorazowość: dane znikają przy pierwszym odczycie (wynik zostaje w pamięci tego żądania); ciasteczko kasuje on_template_redirect().
 		delete_transient( self::FLASH_PREFIX . $token );
-		$request_path = isset( $_SERVER['REQUEST_URI'] ) && is_string( $_SERVER['REQUEST_URI'] ) ? wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) : null;
-		self::send_cookie( '', time() - YEAR_IN_SECONDS, is_string( $request_path ) && '' !== $request_path ? $request_path : '/' );
 		if ( ! is_array( $raw ) ) {
 			return $lost;
 		}
@@ -357,6 +427,18 @@ final class RegistrationHandler {
 				return __( 'Konto z tym adresem e-mail już istnieje.', 'portal-users' );
 			case 'password_missing':
 				return __( 'Podaj hasło.', 'portal-users' );
+			case 'password_short':
+				return sprintf(
+					/* translators: %d: minimalna liczba znaków hasła. */
+					__( 'Hasło musi mieć co najmniej %d znaków.', 'portal-users' ),
+					self::MIN_PASSWORD_LENGTH
+				);
+			case 'invalid_type':
+				return __( 'Podaj wartość jako tekst.', 'portal-users' );
+			case 'logged_in':
+				return __( 'Jesteś już zalogowany, więc nie możesz założyć kolejnego konta.', 'portal-users' );
+			case 'registration_closed':
+				return __( 'Rejestracja jest chwilowo niedostępna.', 'portal-users' );
 			case 'password_mismatch':
 				return __( 'Hasła nie są takie same.', 'portal-users' );
 			case 'unavailable':
@@ -475,51 +557,36 @@ final class RegistrationHandler {
 	}
 
 	/**
-	 * Domyślna rola witryny albo null, gdyby rejestracja miała nadawać rolę administracyjną
-	 * (zepsuta konfiguracja nie może zamienić publicznego formularza w kreator administratorów).
+	 * Domyślna rola witryny albo null, gdyby rejestracja miała nadać rolę silniejszą niż `subscriber`:
+	 * zbiór uprawnień roli musi być podzbiorem uprawnień subskrybenta (zepsuta konfiguracja nie może
+	 * zamienić publicznego formularza w kreator redaktorów, a tym bardziej administratorów).
 	 */
 	private static function default_role(): ?string {
-		$name = get_option( 'default_role' );
-		$role = is_string( $name ) ? get_role( $name ) : null;
-		if ( ! is_string( $name ) || null === $role || $role->has_cap( 'manage_options' ) || $role->has_cap( 'promote_users' ) || $role->has_cap( 'edit_users' ) ) {
+		$name       = get_option( 'default_role' );
+		$role       = is_string( $name ) ? get_role( $name ) : null;
+		$subscriber = get_role( 'subscriber' );
+		if ( ! is_string( $name ) || null === $role || null === $subscriber ) {
 			return null;
+		}
+		foreach ( $role->capabilities as $capability => $granted ) {
+			if ( $granted && empty( $subscriber->capabilities[ $capability ] ) ) {
+				return null;
+			}
 		}
 
 		return $name;
 	}
 
 	/**
-	 * Login z adresu e-mail: część lokalna, bez małpy (login jest publiczny, np. w adresie archiwum
-	 * autora, a adres e-mail nie), z numerem, gdy zajęty.
-	 *
-	 * @param string $email Adres e-mail.
+	 * Losowy, nieodgadywalny login. Login z adresu byłby przewidywalny z imienia i nazwiska, a
+	 * wp-login.php odróżnia „nie ma takiego loginu” od „złe hasło”.
 	 */
-	private static function login_for( string $email ): string {
-		$local = substr( sanitize_user( (string) strstr( $email, '@', true ), true ), 0, 40 );
-		$base  = '' === $local ? 'user' : $local;
-		$login = $base;
-		$n     = 2;
-		while ( false !== username_exists( $login ) ) {
-			$login = $base . '-' . $n;
-			++$n;
-		}
+	private static function random_login(): string {
+		do {
+			$login = 'u' . strtolower( wp_generate_password( 14, false, false ) );
+		} while ( false !== username_exists( $login ) );
 
 		return $login;
-	}
-
-	/**
-	 * Czy pole ACF wolno zapisać jako metadaną użytkownika: nazwa nie może trafić w metadane
-	 * wtyczki, chronione ani w uprawnienia konta (pole o nazwie `wp_capabilities` nadałoby rolę).
-	 *
-	 * @param string $name Nazwa pola.
-	 */
-	private static function may_store( string $name ): bool {
-		return '' !== $name
-			&& ! in_array( $name, UserMeta::all(), true )
-			&& ! is_protected_meta( $name, 'user' )
-			&& 'session_tokens' !== $name
-			&& ! str_ends_with( $name, 'capabilities' )
-			&& ! str_ends_with( $name, 'user_level' );
 	}
 
 	/**
@@ -527,12 +594,13 @@ final class RegistrationHandler {
 	 * wartości logiczne jako tekst. Nic innego nie przechodzi (obiekty, null).
 	 *
 	 * @param array<string, mixed> $values Wartości.
+	 * @param bool                 $limit  Czy ograniczyć rozmiar (dane na czas przekierowania trafiają do wp_options).
 	 * @return array<string, mixed>
 	 */
-	private static function clean_values( array $values ): array {
+	private static function clean_values( array $values, bool $limit = false ): array {
 		$out = array();
-		foreach ( $values as $name => $value ) {
-			$out[ (string) $name ] = self::clean( $value );
+		foreach ( array_slice( $values, 0, $limit ? self::MAX_ITEMS : null, true ) as $name => $value ) {
+			$out[ (string) $name ] = self::clean( $value, $limit ? 0 : -1 );
 		}
 
 		return $out;
@@ -542,17 +610,22 @@ final class RegistrationHandler {
 	 * Sanityzuje jedną wartość.
 	 *
 	 * @param mixed $value Wartość.
+	 * @param int   $depth Głębokość zagnieżdżenia przy ograniczeniu rozmiaru; -1 oznacza brak ograniczenia.
 	 */
-	private static function clean( mixed $value ): mixed {
+	private static function clean( mixed $value, int $depth = -1 ): mixed {
 		if ( is_array( $value ) ) {
+			if ( $depth >= 2 ) {
+				return array();
+			}
 			$out = array();
-			foreach ( $value as $key => $item ) {
-				$out[ is_int( $key ) ? $key : sanitize_text_field( $key ) ] = self::clean( $item );
+			foreach ( array_slice( $value, 0, $depth >= 0 ? self::MAX_ITEMS : null, true ) as $key => $item ) {
+				$out[ is_int( $key ) ? $key : sanitize_text_field( $key ) ] = self::clean( $item, $depth >= 0 ? $depth + 1 : -1 );
 			}
 			return $out;
 		}
 		if ( is_string( $value ) ) {
-			return sanitize_text_field( $value );
+			$text = sanitize_text_field( $value );
+			return $depth >= 0 ? mb_substr( $text, 0, self::MAX_VALUE_LENGTH ) : $text;
 		}
 		if ( is_bool( $value ) ) {
 			return $value ? '1' : '';

@@ -25,8 +25,10 @@ final class BooleanNormalizer {
 	public function __construct( private array $booleanFieldKeys ) {}
 
 	/**
-	 * Zamienia fałszywą wartość pola logicznego (`'0'`, `0`, `0.0`, `false`) na brak (`''`).
-	 * Wartości pozostałych pól oraz inne wartości pól logicznych zostają nietknięte.
+	 * Sprowadza pole logiczne do `'1'` albo `''`. Prawdą jest wyłącznie `'1'`, `1` i `true` (to wysyła
+	 * przeglądarka zaznaczonym polem ACF `true_false`); cokolwiek innego (`'0'`, `'nie'`, `'2'`, `'true'`,
+	 * tablica) jest brakiem. Serwer nie ufa przeglądarce: wymagana zgoda ma być zaznaczona, a nie niepusta.
+	 * Wartości pozostałych pól zostają nietknięte.
 	 *
 	 * @param array<string, mixed> $values Wartości z żądania: pole => wartość.
 	 * @return array<string, mixed>
@@ -36,10 +38,8 @@ final class BooleanNormalizer {
 			if ( ! array_key_exists( $key, $values ) ) {
 				continue;
 			}
-			$value = $values[ $key ];
-			if ( '0' === $value || 0 === $value || 0.0 === $value || false === $value ) {
-				$values[ $key ] = '';
-			}
+			$value          = $values[ $key ];
+			$values[ $key ] = ( '1' === $value || 1 === $value || true === $value ) ? '1' : '';
 		}
 
 		return $values;

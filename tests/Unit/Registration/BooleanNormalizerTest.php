@@ -52,10 +52,14 @@ final class BooleanNormalizerTest extends TestCase {
 		$this->assertSame( array( 'lata' => '3' ), $n->normalize( array( 'lata' => '3' ) ) );
 	}
 
-	public function test_other_values_of_a_boolean_field_are_not_touched(): void {
+	public function test_only_truth_survives_in_a_boolean_field(): void {
 		$n = new BooleanNormalizer( array( 'zgoda' ) );
-		$this->assertSame( array( 'zgoda' => 'tak' ), $n->normalize( array( 'zgoda' => 'tak' ) ) );
-		$this->assertSame( array( 'zgoda' => true ), $n->normalize( array( 'zgoda' => true ) ) );
+		foreach ( array( 'tak', 'nie', '2', 'true', 'on', array( '1' ), array() ) as $notTruth ) {
+			$this->assertSame( array( 'zgoda' => '' ), $n->normalize( array( 'zgoda' => $notTruth ) ), var_export( $notTruth, true ) );
+		}
+		foreach ( array( '1', 1, true ) as $truth ) {
+			$this->assertSame( array( 'zgoda' => '1' ), $n->normalize( array( 'zgoda' => $truth ) ), var_export( $truth, true ) );
+		}
 	}
 
 	/**

@@ -286,27 +286,89 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	}
 
 	public function test_the_account_gets_the_site_default_role(): void {
-		update_option( 'default_role', 'contributor' );
+		add_role( 'pusers_reader', 'Czytelnik', array( 'read' => true, 'level_0' => true ) );
+		update_option( 'default_role', 'pusers_reader' );
 		$id = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
 
-		$this->assertSame( array( 'contributor' ), get_userdata( $id )->roles );
+		$this->assertSame( array( 'pusers_reader' ), get_userdata( $id )->roles );
+		remove_role( 'pusers_reader' );
 	}
 
-	public function test_a_default_role_with_administrative_capabilities_creates_no_account(): void {
-		update_option( 'default_role', 'administrator' );
+	/**
+	 * @return array<string, array{0: array<string, bool>}>
+	 */
+	public static function stronger_roles(): array {
+		return array(
+			'administrator'            => array( array( 'read' => true, 'manage_options' => true ) ),
+			'edit_plugins (wykonanie kodu)' => array( array( 'read' => true, 'edit_plugins' => true ) ),
+			'create_users'             => array( array( 'read' => true, 'create_users' => true ) ),
+			'unfiltered_html'          => array( array( 'read' => true, 'unfiltered_html' => true ) ),
+			'edit_posts (contributor)' => array( array( 'read' => true, 'edit_posts' => true ) ),
+		);
+	}
+
+	/**
+	 * @dataProvider stronger_roles
+	 *
+	 * @param array<string, bool> $capabilities Uprawnienia roli domyślnej.
+	 */
+	public function test_a_default_role_stronger_than_subscriber_creates_no_account( array $capabilities ): void {
+		add_role( 'pusers_strong', 'Mocna', $capabilities );
+		update_option( 'default_role', 'pusers_strong' );
 		$before = $this->user_ids();
-		$this->post( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
-		$this->submit();
+		$flash  = $this->follow( $this->post_and_submit( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) ) );
+		remove_role( 'pusers_strong' );
 
 		$this->assertSame( $before, $this->user_ids() );
+		$this->assertSame( 'registration_closed', $flash['errors']['registration'] ?? '' );
+		$this->assertStringNotContainsString( 'profesji', RegistrationHandler::message_for( 'registration_closed' ), 'Przyczyną jest rola witryny, nie profesja.' );
 	}
 
-	public function test_the_login_is_derived_from_the_address_and_does_not_expose_it(): void {
+	public function test_the_login_is_random_and_does_not_contain_the_address_part(): void {
 		$first  = $this->register_ok( array( RegistrationForm::EMAIL => 'anna.nowak@a.example.test' ) );
 		$second = $this->register_ok( array( RegistrationForm::EMAIL => 'anna.nowak@b.example.test' ) );
 
-		$this->assertSame( 'anna.nowak', get_userdata( $first )->user_login );
-		$this->assertSame( 'anna.nowak-2', get_userdata( $second )->user_login );
+		$logins = array( get_userdata( $first )->user_login, get_userdata( $second )->user_login );
+		$this->assertNotSame( $logins[0], $logins[1] );
+		foreach ( $logins as $login ) {
+			$this->assertStringNotContainsString( 'anna', $login );
+			$this->assertStringNotContainsString( 'nowak', $login );
+			$this->assertDoesNotMatchRegularExpression( '/-\d+$/', $login );
+		}
+		$this->assertSame( 'anna.nowak', get_userdata( $first )->display_name, 'Nazwa do pokazania idzie w display_name.' );
+	}
+
+	public function test_a_logged_in_user_cannot_register_another_account(): void {
+		wp_set_current_user( self::factory()->user->create() );
+		$before = $this->user_ids();
+		$flash  = $this->follow( $this->post_and_submit() );
+
+		$this->assertSame( $before, $this->user_ids() );
+		$this->assertSame( 'logged_in', $flash['errors']['registration'] ?? '' );
+	}
+
+	public function test_a_password_shorter_than_the_minimum_creates_no_account(): void {
+		$before = $this->user_ids();
+		$flash  = $this->follow( $this->post_and_submit( array( RegistrationForm::PASSWORD => 'a', RegistrationForm::PASSWORD_REPEAT => 'a' ) ) );
+
+		$this->assertSame( $before, $this->user_ids() );
+		$this->assertSame( 'password_short', $flash['errors'][ RegistrationForm::PASSWORD ] ?? '' );
+	}
+
+	public function test_an_acf_error_on_a_field_named_like_a_plugin_field_is_not_lost(): void {
+		remove_all_filters( 'pusers_acf_fields' );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array(
+				array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text' ),
+				array( 'name' => RegistrationForm::EMAIL, 'label' => 'Kolizja', 'type' => 'text' ),
+			)
+		);
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required', RegistrationForm::EMAIL => 'required' ) ) ) );
+
+		$flash = $this->follow( $this->post_and_submit( array( RegistrationForm::EMAIL => 'to-nie-adres' ), array( 'zgoda' => null ) ) );
+		$this->assertSame( 'email_invalid', $flash['errors'][ RegistrationForm::EMAIL ] ?? '' );
+		$this->assertSame( 'required', $flash['errors'][ 'acf:' . RegistrationForm::EMAIL ] ?? '' );
 	}
 
 	public function test_registration_fires_the_registered_action_with_the_new_user_id(): void {
@@ -344,32 +406,39 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	public function test_a_field_hidden_for_the_chosen_profession_is_not_saved_even_when_present_in_the_request(): void {
 		$id = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => '5425740', 'notatka' => 'widoczna' ) );
 
-		$this->assertFalse( metadata_exists( 'user', $id, 'pwz' ) );
-		$this->assertSame( 'widoczna', get_user_meta( $id, 'notatka', true ) );
+		$this->assertFalse( metadata_exists( 'user', $id, RegistrationHandler::ACF_META_PREFIX . 'pwz' ) );
+		$this->assertSame( 'widoczna', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'notatka', true ) );
 	}
 
-	public function test_missing_nonce_creates_no_account(): void {
-		$before = $this->user_ids();
-		$this->post( array( RegistrationForm::NONCE_FIELD => null ) );
-
-		try {
-			$this->submit();
-			$this->fail( 'Brak nonce\'a powinien zakończyć żądanie.' );
-		} catch ( WPDieException $e ) {
-			$this->assertSame( $before, $this->user_ids() );
-		}
+	/**
+	 * @return array<string, array{0: string|null}>
+	 */
+	public static function bad_nonces(): array {
+		return array(
+			'brak'      => array( null ),
+			'zly'       => array( 'zlynonce' ),
+		);
 	}
 
-	public function test_a_wrong_nonce_creates_no_account(): void {
+	/**
+	 * @dataProvider bad_nonces
+	 *
+	 * @param string|null $nonce Nonce w żądaniu.
+	 */
+	public function test_a_missing_or_expired_nonce_creates_no_account_and_asks_to_refresh_instead_of_a_403( ?string $nonce ): void {
+		// Nonce i znacznik czasu starzeją się razem, więc człowiek z kartą otwartą od doby trafia właśnie tu.
 		$before = $this->user_ids();
-		$this->post( array( RegistrationForm::NONCE_FIELD => 'zlynonce' ) );
+		$this->post( array( RegistrationForm::NONCE_FIELD => $nonce ) );
+		$location = $this->submit();
 
-		try {
-			$this->submit();
-			$this->fail( 'Zły nonce powinien zakończyć żądanie.' );
-		} catch ( WPDieException $e ) {
-			$this->assertSame( $before, $this->user_ids() );
-		}
+		$this->assertNotSame( '', $location, 'Przekierowanie, nie wp_die.' );
+		$this->assertSame( $before, $this->user_ids() );
+		$this->assertSame( array(), $this->cookies, 'Nic z niezweryfikowanego żądania nie trafia do magazynu.' );
+		$flash = $this->follow( $location );
+		$this->assertSame( 'stale_form', $flash['notice'] );
+		$this->assertStringContainsString( 'Odśwież stronę', RegistrationHandler::message_for( $flash['notice'] ) );
+		$this->assertSame( array(), $flash['fields'] );
+		$this->assertStringContainsString( 'Odśwież stronę', RegistrationForm::render() );
 	}
 
 	public function test_a_get_request_creates_no_account(): void {
@@ -460,20 +529,43 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( array( $first ), array_values( array_filter( $this->user_ids(), static fn ( int $id ): bool => get_userdata( $id )->user_email === $email ) ) );
 	}
 
-	public function test_values_are_sanitised_before_they_reach_user_meta(): void {
-		global $wpdb;
-		// Tablica w polu numeru nie wchodzi do metadanych zserializowana (konsument deklarujący string
-		// wywaliłby TypeError), a znaczniki w polu tekstowym nie przechodzą.
-		$id = $this->register_ok( array(), array( 'pwz' => array( '5425740' ) ) );
-		$this->assertFalse( metadata_exists( 'user', $id, 'pwz' ) );
-		$serialized = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE user_id = %d AND meta_key NOT LIKE %s AND meta_value LIKE %s", $id, '%capabilities', 'a:%' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
-		$this->assertSame( '0', (string) $serialized );
+	public function test_an_array_in_the_credential_field_creates_no_account(): void {
+		// Tablica w polu numeru spełniała `required`, a miękka walidacja dawała tylko ostrzeżenie: konto lekarza
+		// powstawało bez numeru. Wartość o złym typie to błąd twardy.
+		$before = $this->user_ids();
+		$flash  = $this->follow( $this->post_and_submit( array(), array( 'pwz' => array( '5425740' ) ) ) );
 
-		$other = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null, 'notatka' => '<script>alert(1)</script><b>Tekst</b>' ) );
-		$this->assertSame( 'Tekst', get_user_meta( $other, 'notatka', true ) );
+		$this->assertSame( $before, $this->user_ids() );
+		$this->assertSame( 'invalid_type', $flash['errors']['pwz'] ?? '' );
+		$this->assertArrayNotHasKey( 'pwz', $flash['warnings'] );
 	}
 
-	public function test_a_field_named_like_account_capabilities_cannot_change_the_role(): void {
+	public function test_a_profession_requiring_a_credential_never_gets_an_account_without_one(): void {
+		$before = $this->user_ids();
+		foreach ( array( null, '', '   ', '---', array(), array( '' ), array( '5425740' ), array( 'a' => array( 'b' ) ) ) as $bad ) {
+			$this->post_and_submit( array(), array( 'pwz' => $bad ) );
+			$this->assertSame( $before, $this->user_ids(), var_export( $bad, true ) );
+		}
+
+		$id = $this->register_ok();
+		$this->assertSame( '5425740', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'pwz', true ) );
+	}
+
+	public function test_values_are_stored_as_sanitised_text_with_the_acf_prefix(): void {
+		global $wpdb;
+		$id = $this->register_ok();
+		$serialized = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE user_id = %d AND meta_key NOT LIKE %s AND meta_value LIKE %s", $id, '%capabilities', 'a:%' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$this->assertSame( '0', (string) $serialized );
+	}
+
+	public function test_markup_in_a_text_field_is_stripped_when_saved(): void {
+		// Sanityzacja przy zapisie; eskejpowania przy renderze ten test nie dowodzi (atrapa ACF nie renderuje wartości).
+		$id = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null, 'notatka' => '<script>alert(1)</script><b>Tekst</b>' ) );
+
+		$this->assertSame( 'Tekst', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'notatka', true ) );
+	}
+
+	public function test_a_field_named_like_account_capabilities_is_stored_under_the_prefix_and_cannot_change_the_role(): void {
 		$id = $this->register_ok(
 			array( RegistrationForm::PROFESSION => 'pielegniarka' ),
 			array( 'pwz' => null, $this->capabilitiesKey() => 'a:1:{s:13:"administrator";b:1;}' )
@@ -481,6 +573,7 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 		$this->assertSame( array( 'subscriber' ), get_userdata( $id )->roles );
 		$this->assertFalse( user_can( $id, 'manage_options' ) );
+		$this->assertSame( 'a:1:{s:13:"administrator";b:1;}', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . $this->capabilitiesKey(), true ) );
 	}
 
 	public function test_credential_warning_does_not_block_the_submission(): void {
@@ -528,7 +621,34 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( $before, $this->user_ids() );
 
 		$id = $this->register_ok( array(), array( 'zgoda' => '1' ) );
-		$this->assertSame( '1', get_user_meta( $id, 'zgoda', true ) );
+		$this->assertSame( '1', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'zgoda', true ) );
+	}
+
+	/**
+	 * @return array<string, array{0: mixed}>
+	 */
+	public static function not_a_consent(): array {
+		return array(
+			'nie'      => array( 'nie' ),
+			'tablica'  => array( array( '1' ) ),
+			'dwa'      => array( '2' ),
+			'true'     => array( 'true' ),
+			'zero'     => array( '0' ),
+			'pusty'    => array( '' ),
+		);
+	}
+
+	/**
+	 * @dataProvider not_a_consent
+	 *
+	 * @param mixed $value Wartość pola zgody w żądaniu.
+	 */
+	public function test_only_a_checked_box_satisfies_a_required_consent( mixed $value ): void {
+		$before = $this->user_ids();
+		$flash  = $this->follow( $this->post_and_submit( array(), array( 'zgoda' => $value ) ) );
+
+		$this->assertSame( 'required', $flash['errors']['zgoda'] ?? '' );
+		$this->assertSame( $before, $this->user_ids() );
 	}
 
 	public function test_boolean_keys_come_from_the_field_types_not_from_a_name(): void {
@@ -652,11 +772,59 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->follow( $location );
 
 		$this->assertFalse( get_transient( 'pusers_flash_' . $token ), 'Dane znikają po odczycie.' );
+	}
+
+	public function test_the_key_cookie_is_cleared_before_output_not_from_the_page_content(): void {
+		$location = $this->post_and_submit( array(), array( 'zgoda' => null ) );
+		$this->follow( $location );
+		$sentWhileRendering = count( $this->cookies );
+		RegistrationForm::render();
+		$this->assertCount( $sentWhileRendering, $this->cookies, 'Render formularza (treść strony) niczego nie wysyła: nagłówki już poszły.' );
+
+		// template_redirect: jeszcze przed treścią.
+		RegistrationHandler::on_template_redirect();
 		$cleared = end( $this->cookies );
 		$this->assertIsArray( $cleared );
 		$this->assertSame( '', $cleared['value'] );
-		$this->assertLessThan( time(), $cleared['options']['expires'], 'Ciasteczko jest kasowane po odczycie.' );
+		$this->assertLessThan( time(), $cleared['options']['expires'] );
 		$this->assertTrue( $cleared['options']['httponly'] );
+		$this->assertSame( 'Lax', $cleared['options']['samesite'] );
+	}
+
+	public function test_the_page_after_a_submission_is_marked_uncacheable(): void {
+		$fired = 0;
+		add_action(
+			'litespeed_control_set_nocache',
+			static function () use ( &$fired ): void {
+				++$fired;
+			}
+		);
+		RegistrationHandler::register();
+		$this->assertNotFalse( has_action( 'template_redirect', array( RegistrationHandler::class, 'on_template_redirect' ) ) );
+
+		$_GET = array();
+		RegistrationHandler::on_template_redirect();
+		$this->assertSame( 0, $fired, 'Zwykła strona formularza może być w cache.' );
+
+		foreach ( array( RegistrationHandler::FAILED_ARG => '1', RegistrationHandler::DONE_ARG => '1' ) as $arg => $value ) {
+			$_GET  = array( $arg => $value );
+			$fired = 0;
+			RegistrationHandler::on_template_redirect();
+			$this->assertSame( 1, $fired, $arg );
+		}
+		$this->assertTrue( defined( 'DONOTCACHEPAGE' ) );
+		remove_all_actions( 'litespeed_control_set_nocache' );
+	}
+
+	public function test_stored_redirect_data_is_size_limited(): void {
+		$location = $this->post_and_submit( array(), array( 'zgoda' => null, 'notatka' => str_repeat( 'x', 100000 ), 'pwz' => array_fill( 0, 500, 'y' ) ) );
+		$stored   = get_transient( 'pusers_flash_' . $this->sentToken() );
+
+		$this->assertIsArray( $stored );
+		$this->assertLessThanOrEqual( 1000, strlen( (string) ( $stored['fields']['notatka'] ?? '' ) ) );
+		$this->assertLessThanOrEqual( 50, count( (array) ( $stored['fields']['pwz'] ?? array() ) ) );
+		$this->assertLessThan( 20000, strlen( serialize( $stored ) ) );
+		$this->assertNotSame( '', $location );
 	}
 
 	public function test_without_the_cookie_the_form_is_empty_and_says_the_submission_failed(): void {
@@ -687,33 +855,14 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( '', RegistrationHandler::flash()['notice'], 'Bez znacznika w adresie nic się nie czyta.' );
 	}
 
-	public function test_a_stale_form_keeps_the_typed_fields_and_escapes_them(): void {
-		$location = $this->post_and_submit(
-			array( RegistrationForm::TIMESTAMP => SpamGuard::stamp( time() - 3 * DAY_IN_SECONDS ) ),
-			array( 'notatka' => '<script>alert(1)</script>Moja notatka' )
-		);
-		$flash = $this->follow( $location );
-
-		$this->assertSame( 'stale_form', $flash['notice'] );
-		$this->assertSame( '5425740', $flash['fields']['pwz'] ?? '' );
-		$this->assertStringNotContainsString( '<script', (string) wp_json_encode( $flash['fields'] ) );
-		$this->assertStringContainsString( 'Moja notatka', (string) ( $flash['fields']['notatka'] ?? '' ) );
-
-		RegistrationHandler::register();
-		RegistrationForm::render();
-		foreach ( AcfRenderRecorder::$fields as $field ) {
-			$this->assertStringNotContainsString( '<script', (string) wp_json_encode( $field['value'] ?? '' ) );
-		}
-	}
-
-	public function test_other_spam_refusals_do_not_keep_the_fields(): void {
+	public function test_spam_refusals_do_not_keep_the_fields(): void {
 		foreach ( array(
 			array( RegistrationForm::HONEYPOT => 'http://spam.example' ),
 			array( RegistrationForm::TIMESTAMP => SpamGuard::stamp( time() ) ),
+			array( RegistrationForm::TIMESTAMP => SpamGuard::stamp( time() - 3 * DAY_IN_SECONDS ) ),
 		) as $over ) {
 			$flash = $this->follow( $this->post_and_submit( $over ) );
 			$this->assertNotSame( '', $flash['notice'] );
-			$this->assertNotSame( 'stale_form', $flash['notice'] );
 			$this->assertSame( array(), $flash['fields'] );
 		}
 	}
