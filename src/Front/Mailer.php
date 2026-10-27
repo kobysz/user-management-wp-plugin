@@ -52,6 +52,13 @@ final class Mailer {
 	 */
 	public const NO_RECIPIENTS_LOG_ACTION = 'mail_no_recipients';
 
+	/**
+	 * Cel maila w kubełku limitu: ponowna wysyłka i mail o próbie rejestracji mają NIEZALEŻNE liczniki,
+	 * żeby osoba trzecia zgłaszająca cudzy adres nie wyczerpała właścicielowi ponownej wysyłki.
+	 */
+	public const PURPOSE_RESEND  = 'resend';
+	public const PURPOSE_ATTEMPT = 'attempt';
+
 	private const BUCKET_MAIL_TO = 'mail_to:';
 
 	/**
@@ -184,19 +191,21 @@ final class Mailer {
 	/**
 	 * Zlicza próbę wysłania maila na adres z formularza publicznego i mówi, czy wolno wysłać.
 	 *
-	 * Jeden kubełek na adres obsługuje ponowną wysyłkę i powiadomienie o próbie rejestracji, więc łącznie na
-	 * adres idzie najwyżej tyle wiadomości na godzinę, ile wynosi próg rejestracji per adres e-mail. Licznik
-	 * rośnie niezależnie od tego, czy adres ma konto: odpowiedź nie zdradza, czy ma.
+	 * Każdy cel (ponowna wysyłka, mail o próbie rejestracji) ma własny kubełek na adres i próg równy progowi
+	 * rejestracji per adres e-mail. Liczniki są rozdzielone, bo wspólny pozwalałby osobie trzeciej zgłaszającej
+	 * cudzy adres odebrać jego właścicielowi ponowną wysyłkę. Licznik rośnie niezależnie od tego, czy adres
+	 * ma konto: odpowiedź nie zdradza, czy ma.
 	 *
-	 * @param string $email Adres odbiorcy.
+	 * @param string $email   Adres odbiorcy.
+	 * @param string $purpose Cel (PURPOSE_*): każdy cel ma własny licznik.
 	 */
-	public static function may_send_to( string $email ): bool {
+	public static function may_send_to( string $email, string $purpose ): bool {
 		$normalised = strtolower( trim( $email ) );
 		if ( '' === $normalised ) {
 			return false;
 		}
 
-		return RateLimiter::hit( self::BUCKET_MAIL_TO . $normalised ) <= SettingsRepository::get()->registrationLimitPerEmailPerHour;
+		return RateLimiter::hit( self::BUCKET_MAIL_TO . $purpose . ':' . $normalised ) <= SettingsRepository::get()->registrationLimitPerEmailPerHour;
 	}
 
 	/**

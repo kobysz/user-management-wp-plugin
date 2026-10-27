@@ -523,7 +523,30 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$this->resend( 'nikt-taki@example.test' );
 		$this->resend( 'nikt-taki@example.test' );
 		$this->resend( 'nikt-taki@example.test' );
-		$this->assertFalse( Mailer::may_send_to( 'nikt-taki@example.test' ), 'Czwarta próba przekracza próg także dla nieistniejącego adresu.' );
+		$this->assertFalse( Mailer::may_send_to( 'nikt-taki@example.test', Mailer::PURPOSE_RESEND ), 'Czwarta próba przekracza próg także dla nieistniejącego adresu.' );
+	}
+
+	public function test_exhausting_the_attempt_mail_limit_does_not_block_the_resend_for_the_same_address(): void {
+		$id    = $this->account();
+		$email = get_userdata( $id )->user_email;
+		for ( $i = 0; $i < 5; $i++ ) {
+			Mailer::may_send_to( $email, Mailer::PURPOSE_ATTEMPT );
+		}
+		$this->assertFalse( Mailer::may_send_to( $email, Mailer::PURPOSE_ATTEMPT ) );
+
+		$this->resend( $email );
+
+		$this->assertCount( 1, $this->mails, 'Ponowna wysyłka działa mimo wyczerpanego progu maili o próbie.' );
+	}
+
+	public function test_exhausting_the_resend_limit_does_not_block_the_attempt_mail_for_the_same_address(): void {
+		$id    = $this->account();
+		$email = get_userdata( $id )->user_email;
+		for ( $i = 0; $i < 5; $i++ ) {
+			$this->resend( $email );
+		}
+
+		$this->assertTrue( Mailer::may_send_to( $email, Mailer::PURPOSE_ATTEMPT ) );
 	}
 
 	/**

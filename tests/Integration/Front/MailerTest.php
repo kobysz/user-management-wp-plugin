@@ -135,10 +135,10 @@ final class MailerTest extends WP_UnitTestCase {
 	public function test_the_per_address_mail_limit_allows_the_configured_number_and_then_refuses(): void {
 		SettingsRepository::save( Settings::fromArray( array( 'registration_limit_per_email_per_hour' => 2 ) ) );
 
-		$this->assertTrue( Mailer::may_send_to( 'ktos@example.test' ) );
-		$this->assertTrue( Mailer::may_send_to( 'KTOS@example.test ' ), 'Adres jest normalizowany.' );
-		$this->assertFalse( Mailer::may_send_to( 'ktos@example.test' ) );
-		$this->assertTrue( Mailer::may_send_to( 'ktos-inny@example.test' ), 'Kubełek jest per adres.' );
-		$this->assertFalse( Mailer::may_send_to( '' ) );
+		$this->assertTrue( Mailer::may_send_to( 'ktos@example.test', Mailer::PURPOSE_RESEND ) );
+		$this->assertTrue( Mailer::may_send_to( 'KTOS@example.test ', Mailer::PURPOSE_RESEND ), 'Adres jest normalizowany.' );
+		$this->assertFalse( Mailer::may_send_to( 'ktos@example.test', Mailer::PURPOSE_RESEND ) );
+		$this->assertTrue( Mailer::may_send_to( 'ktos-inny@example.test', Mailer::PURPOSE_RESEND ), 'Kubełek jest per adres.' );
+		$this->assertFalse( Mailer::may_send_to( '', Mailer::PURPOSE_RESEND ) );
 	}
 }

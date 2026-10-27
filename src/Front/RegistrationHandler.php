@@ -435,7 +435,7 @@ final class RegistrationHandler {
 	 * @param string $email      Adres ze zgłoszenia.
 	 */
 	private static function acknowledge_existing( int $existingId, string $email ): void {
-		if ( Mailer::may_send_to( $email ) && Mailer::existing_account( $existingId ) ) {
+		if ( Mailer::may_send_to( $email, Mailer::PURPOSE_ATTEMPT ) && Mailer::existing_account( $existingId ) ) {
 			EventLog::write( self::EXISTING_LOG_ACTION, $existingId, 0, array() );
 		}
 	}

@@ -12,6 +12,7 @@ use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Front\AcfFields;
+use PortalUsers\Front\Mailer;
 use PortalUsers\Front\RateLimiter;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
@@ -750,6 +751,7 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 		$this->assertCount( 3, $this->mails, 'Próg wiadomości na adres na godzinę (registration_limit_per_email_per_hour).' );
 		$this->assertCount( 1, array_unique( $locations ), 'Po przekroczeniu progu odpowiedź się nie zmienia.' );
+		$this->assertTrue( Mailer::may_send_to( $email, Mailer::PURPOSE_RESEND ), 'Cudze zgłoszenia nie odbierają właścicielowi ponownej wysyłki.' );
 	}
 
 	public function test_other_field_errors_are_reported_the_same_for_an_existing_address_without_an_email_error(): void {

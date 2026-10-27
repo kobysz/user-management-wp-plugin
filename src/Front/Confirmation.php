@@ -187,7 +187,7 @@ final class Confirmation {
 		$raw   = isset( $_POST[ self::EMAIL_FIELD ] ) && is_string( $_POST[ self::EMAIL_FIELD ] ) ? sanitize_email( trim( wp_unslash( $_POST[ self::EMAIL_FIELD ] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
 		$email = is_email( $raw ) ? $raw : '';
 
-		if ( '' !== $email && self::within_ip_limit() && Mailer::may_send_to( $email ) ) {
+		if ( '' !== $email && self::within_ip_limit() && Mailer::may_send_to( $email, Mailer::PURPOSE_RESEND ) ) {
 			$user = get_user_by( 'email', $email );
 			if ( false !== $user && AccountStatus::EmailUnconfirmed === AccountStatusRepository::get( $user->ID ) ) {
 				self::send_link( $user->ID );
