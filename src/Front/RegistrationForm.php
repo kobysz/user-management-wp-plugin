@@ -39,13 +39,21 @@ final class RegistrationForm {
 	public const NONCE_FIELD     = 'pusers_nonce';
 
 	/**
+	 * Adres e-mail należy do wtyczki, nie do ACF (jak profesja i hasło): konto WordPressa go wymaga,
+	 * a potwierdzenie adresu opiera się na tym, że wtyczka wie, gdzie on jest. Pole jest ZAWSZE
+	 * wymagane i NIE podlega macierzy (macierz rządzi polami profilu z ACF, nie polami konta);
+	 * nie umacierzać. HTML-owe `required` to wygoda, serwer sprawdza adres niezależnie.
+	 */
+	public const EMAIL = 'pusers_email';
+
+	/**
 	 * Uchwyt skryptu ukrywającego pola.
 	 */
 	public const SCRIPT_HANDLE = 'pusers-registration';
 
 	/**
 	 * Filtr dostarczający wartości do powtórnego wypełnienia formularza po nieudanym zgłoszeniu.
-	 * Oczekiwany kształt: `array{profession?: string, fields?: array<string, mixed>}`. Haseł tu
+	 * Oczekiwany kształt: `array{profession?: string, email?: string, fields?: array<string, mixed>}`. Haseł tu
 	 * się nie czyta nigdy, nawet jeśli ktoś je podeśle.
 	 */
 	public const OLD_INPUT_FILTER = 'pusers_registration_old_input';
@@ -112,6 +120,10 @@ final class RegistrationForm {
 		}
 		$html .= '</select></p>';
 
+		// Adres e-mail: pole konta, zawsze wymagane, poza macierzą (patrz EMAIL).
+		$html .= '<p class="pusers-field-email"><label for="' . esc_attr( self::EMAIL ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
+		$html .= '<input type="email" id="' . esc_attr( self::EMAIL ) . '" name="' . esc_attr( self::EMAIL ) . '" value="' . esc_attr( $old['email'] ) . '" autocomplete="email" required="required" /></p>';
+
 		foreach ( array_keys( $source->fields() ) as $fieldKey ) {
 			$fieldKey = (string) $fieldKey;
 			if ( ! self::appears_anywhere( $map, $fieldKey ) ) {
@@ -170,13 +182,14 @@ final class RegistrationForm {
 	/**
 	 * Wartości do powtórnego wypełnienia; hasła nie są czytane w ogóle.
 	 *
-	 * @return array{profession: string, fields: array<string, mixed>}
+	 * @return array{profession: string, email: string, fields: array<string, mixed>}
 	 */
 	private static function old_input(): array {
 		// Nazwa filtra wpisana dosłownie (reguła prefiksów); stała OLD_INPUT_FILTER służy testom i dokumentacji.
 		$raw    = apply_filters( 'pusers_registration_old_input', array() );
 		$result = array(
 			'profession' => '',
+			'email'      => '',
 			'fields'     => array(),
 		);
 		if ( ! is_array( $raw ) ) {
@@ -184,6 +197,9 @@ final class RegistrationForm {
 		}
 		if ( isset( $raw['profession'] ) && is_string( $raw['profession'] ) ) {
 			$result['profession'] = $raw['profession'];
+		}
+		if ( isset( $raw['email'] ) && is_string( $raw['email'] ) ) {
+			$result['email'] = $raw['email'];
 		}
 		if ( isset( $raw['fields'] ) && is_array( $raw['fields'] ) ) {
 			foreach ( $raw['fields'] as $key => $value ) {

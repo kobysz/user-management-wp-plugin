@@ -248,6 +248,75 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		$this->assertTrue( wp_script_is( RegistrationForm::SCRIPT_HANDLE, 'enqueued' ) );
 	}
 
+	public function test_email_field_follows_the_profession_and_precedes_every_acf_field(): void {
+		$html = RegistrationForm::render();
+
+		$select = strpos( $html, 'name="pusers_profession"' );
+		$email  = strpos( $html, 'name="' . RegistrationForm::EMAIL . '"' );
+		$field  = strpos( $html, 'class="acf-stub"' );
+		$this->assertNotFalse( $email );
+		$this->assertLessThan( $email, $select );
+		$this->assertLessThan( $field, $email );
+	}
+
+	public function test_email_field_is_marked_required(): void {
+		$html = RegistrationForm::render();
+
+		$this->assertSame( 1, preg_match( '/<input type="email"[^>]*name="pusers_email"[^>]*>/', $html, $m ) );
+		$this->assertStringContainsString( 'required="required"', $m[0] );
+	}
+
+	public function test_email_field_is_not_governed_by_the_matrix(): void {
+		// Kolizja nazw jest możliwa: pole ACF może nazywać się tak jak stała adresu. Pola ACF idą do
+		// kontenera pusers_fields[...], więc w żądaniu się nie zderzają, ale macierz nie może
+		// ukryć ani zdjąć wymagalności pola konta.
+		add_filter(
+			'pusers_acf_fields',
+			static function ( array $raw ): array {
+				$raw[] = array( 'name' => RegistrationForm::EMAIL, 'label' => 'Email', 'type' => 'text' );
+				return $raw;
+			},
+			20
+		);
+		FieldMatrixRepository::save(
+			FieldMatrix::fromArray(
+				array(
+					'lekarz'       => array( RegistrationForm::EMAIL => 'hidden', 'pwz' => 'required' ),
+					'pielegniarka' => array( RegistrationForm::EMAIL => 'visible', 'zgoda' => 'required' ),
+				)
+			)
+		);
+
+		$html = RegistrationForm::render();
+
+		$this->assertSame( 1, preg_match( '/<input type="email"[^>]*name="pusers_email"[^>]*>/', $html, $m ) );
+		$this->assertStringContainsString( 'required="required"', $m[0] );
+	}
+
+	public function test_email_is_repopulated_but_the_password_is_not(): void {
+		add_filter(
+			RegistrationForm::OLD_INPUT_FILTER,
+			static fn (): array => array(
+				'email'    => 'jan@example.com',
+				'password' => 'Sekret-123!',
+			)
+		);
+
+		$html = RegistrationForm::render();
+
+		$this->assertSame( 1, preg_match( '/<input type="email"[^>]*>/', $html, $m ) );
+		$this->assertStringContainsString( 'value="jan@example.com"', $m[0] );
+		$this->assertStringNotContainsString( 'Sekret-123!', $html );
+		$this->assertSame( 1, preg_match( '/<input type="password" id="pusers_password"[^>]*>/', $html, $p ) );
+		$this->assertStringNotContainsString( 'value=', $p[0] );
+	}
+
+	public function test_email_is_escaped_when_repopulated(): void {
+		add_filter( RegistrationForm::OLD_INPUT_FILTER, static fn (): array => array( 'email' => '"><script>x</script>' ) );
+
+		$this->assertStringNotContainsString( '<script>x</script>', RegistrationForm::render() );
+	}
+
 	public function test_register_exposes_the_shortcode(): void {
 		RegistrationForm::register();
 
