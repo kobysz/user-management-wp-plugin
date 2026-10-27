@@ -374,6 +374,17 @@ final class PasswordSetup {
 	}
 
 	/**
+	 * Ścieżka ciasteczka z biletem. `constant()` zamiast odwołania wprost, bo stałych ciasteczek
+	 * witryny nie ma w stubach analizy statycznej; `defined()` daje przy okazji sensowne
+	 * zachowanie, gdyby ciasteczko wysyłał kod pracujący przed `wp-settings.php`.
+	 */
+	private static function cookie_path(): string {
+		$path = defined( 'COOKIEPATH' ) ? constant( 'COOKIEPATH' ) : '/';
+
+		return is_string( $path ) && '' !== $path ? $path : '/';
+	}
+
+	/**
 	 * Wysyła (albo, przy pustej wartości i dacie z przeszłości, kasuje) ciasteczko z biletem.
 	 *
 	 * Ścieżka to `COOKIEPATH`, czyli ścieżka całej witryny, a NIE ścieżka strony ustawienia
@@ -390,7 +401,7 @@ final class PasswordSetup {
 	private static function send_cookie( string $value, int $expires ): void {
 		$options = array(
 			'expires'  => $expires,
-			'path'     => COOKIEPATH,
+			'path'     => self::cookie_path(),
 			'secure'   => is_ssl(),
 			'httponly' => true,
 			'samesite' => 'Lax',
