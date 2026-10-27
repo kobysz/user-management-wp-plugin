@@ -10,6 +10,7 @@ namespace PortalUsers\Tests\Integration\Admin;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Fields\FieldState;
 use PortalUsers\Domain\Profession\ProfessionCollection;
@@ -863,5 +864,65 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->withConsent( true, '', '' );
 		$html = $this->renderAsAdmin();
 		$this->assertStringContainsString( 'wersja regulaminu nie jest zapisywana', $html );
+	}
+
+	/**
+	 * Lekarz z numerem PWZ w polu `pwz` o podanym typie ACF; pole jest dla niego wymagane.
+	 *
+	 * @param string $type Typ ACF pola `pwz`.
+	 */
+	private function withCredentialFieldType( string $type ): void {
+		remove_all_filters( 'pusers_acf_groups' );
+		remove_all_filters( 'pusers_acf_fields' );
+		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array( array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => $type ) )
+		);
+		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_abc' ) ) );
+		ProfessionRepository::save(
+			ProfessionCollection::fromArray(
+				array( array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ) )
+			)
+		);
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+	}
+
+	public function test_the_report_flags_a_credential_field_that_is_not_single_value_text(): void {
+		// `credential_field` to wolny tekst na ekranie profesji. Pole wielowartościowe niesie
+		// tablicę, czyli twardy invalid_type w bramce: nikt z tej profesji nie zarejestruje się
+		// nigdy, a raport spójności dotąd milczał.
+		foreach ( array( 'checkbox', 'select', 'true_false', 'email' ) as $type ) {
+			$this->withCredentialFieldType( $type );
+			$this->assertContains( 'credential_field_wrong_type', $this->issueCodes(), $type );
+		}
+	}
+
+	public function test_the_wrong_credential_field_type_is_an_error_and_names_the_field_and_its_type(): void {
+		// Bez nazwy pola i jego typu administrator nie wie, co poprawić.
+		$this->withCredentialFieldType( 'checkbox' );
+
+		$issues = array_values( array_filter( MatrixScreen::issues(), static fn ( $i ): bool => 'credential_field_wrong_type' === $i->code ) );
+		$this->assertCount( 1, $issues );
+		$this->assertSame( SettingsIssue::ERROR, $issues[0]->severity, 'Ostrzeżenie zostawiłoby profesję nierejestrowalną na zawsze.' );
+
+		$html = $this->renderAsAdmin();
+		$this->assertStringContainsString( 'pole „pwz” jest w ACF typu „checkbox”', $html );
+	}
+
+	public function test_the_report_is_silent_when_the_credential_field_is_single_value_text(): void {
+		// Standard tego projektu: reguła musi milczeć przy poprawnej konfiguracji.
+		foreach ( array( 'text', 'number' ) as $type ) {
+			$this->withCredentialFieldType( $type );
+			$this->assertSame( array(), MatrixScreen::issues(), $type );
+		}
+	}
+
+	public function test_a_profession_without_a_credential_requirement_is_not_judged_by_the_field_type(): void {
+		$this->withCredentialFieldType( 'checkbox' );
+		$this->withProfessions( 'student' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'student' => array( 'pwz' => 'visible' ) ) ) );
+
+		$this->assertNotContains( 'credential_field_wrong_type', $this->issueCodes() );
 	}
 }

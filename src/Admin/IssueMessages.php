@@ -34,6 +34,7 @@ final class IssueMessages {
 		$page       = $issue->context['page'] ?? '';
 		$role       = $issue->context['role'] ?? '';
 		$capability = $issue->context['capability'] ?? '';
+		$type       = $issue->context['type'] ?? '';
 
 		switch ( $issue->code ) {
 			case 'profession_without_matrix_row':
@@ -42,6 +43,9 @@ final class IssueMessages {
 			case 'credential_field_not_required':
 				/* translators: 1: klucz profesji, 2: powód. */
 				return sprintf( __( 'Profesja „%1$s” wymaga numeru uprawnień, ale %2$s', 'portal-users' ), $profession, self::reason_text( $issue ) );
+			case 'credential_field_wrong_type':
+				/* translators: 1: klucz profesji, 2: klucz pola, 3: typ pola w ACF. */
+				return sprintf( __( 'Profesja „%1$s” wymaga numeru uprawnień, a wskazane pole „%2$s” jest w ACF typu „%3$s”. Numer uprawnień musi być polem jednowartościowym tekstowym (typ „text” albo „number”): pole wielowartościowe sprawia, że nikt z tej profesji nie zarejestruje się nigdy, a pole logiczne daje numer o wartości „1”. Zmień typ pola w ACF albo wskaż inne pole przy profesji.', 'portal-users' ), $profession, $field, $type );
 			case 'field_not_configured':
 				/* translators: 1: klucz profesji, 2: klucz pola. */
 				return sprintf( __( 'Pole „%2$s” nie ma ustawionego stanu dla profesji „%1$s”.', 'portal-users' ), $profession, $field );

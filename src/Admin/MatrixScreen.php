@@ -40,6 +40,12 @@ final class MatrixScreen {
 	private const FIELD_PREFIX = 'pusers_';
 
 	/**
+	 * Typy ACF, którymi może być pole numeru uprawnień: jednowartościowe i tekstowe. Numer jest
+	 * ciągiem znaków, który czyta walidator numeru i człowiek z redakcji.
+	 */
+	private const CREDENTIAL_FIELD_TYPES = array( 'text', 'number' );
+
+	/**
 	 * Podpina podstronę oraz obsługę zapisu i usuwania martwego pola.
 	 */
 	public static function register(): void {
@@ -84,7 +90,7 @@ final class MatrixScreen {
 	 * @return array<int, SettingsIssue>
 	 */
 	public static function issues(): array {
-		$issues = array_merge( self::default_role_issues(), self::terms_issues(), self::purge_window_issues(), self::checker()->issues() );
+		$issues = array_merge( self::default_role_issues(), self::terms_issues(), self::credential_field_type_issues(), self::purge_window_issues(), self::checker()->issues() );
 
 		return array_merge(
 			array_values( array_filter( $issues, static fn ( SettingsIssue $issue ): bool => SettingsIssue::ERROR === $issue->severity ) ),
@@ -118,6 +124,46 @@ final class MatrixScreen {
 				)
 			),
 		);
+	}
+
+	/**
+	 * Reguła o typie pola numeru uprawnień: `credential_field` to wolny tekst na ekranie profesji,
+	 * więc administrator może wskazać pole dowolnego typu, a nic tego nie sprawdzało.
+	 *
+	 * Pole wielowartościowe (`checkbox`, `select` z wielokrotnym wyborem) niesie w żądaniu tablicę,
+	 * czyli twardy `invalid_type` w bramce: NIKT z tej profesji nie zarejestruje się nigdy, a
+	 * użytkownik widzi „Podaj wartość jako tekst.” przy polu, które wypełnił poprawnie. Pole
+	 * logiczne daje numer uprawnień o wartości `'1'`. Dlatego BŁĄD, nie ostrzeżenie.
+	 *
+	 * Pole, którego typu w źródle nie ma (definicja z filtra `pusers_acf_fields` bez typu), jest
+	 * pomijane: nieznany typ to nie jest typ zły, a reguła, która nie umie rozstrzygnąć, nie może
+	 * oskarżać. Pola nieobecnego w źródle pilnują reguły `credential_field_not_required`
+	 * i `matrix_required_field_not_in_source`.
+	 *
+	 * @return list<SettingsIssue>
+	 */
+	private static function credential_field_type_issues(): array {
+		$types  = self::source()->fieldTypes();
+		$issues = array();
+		foreach ( ProfessionRepository::get()->all() as $profession ) {
+			if ( ! $profession->requiresCredential() || '' === $profession->credentialField ) {
+				continue;
+			}
+			$type = $types[ $profession->credentialField ] ?? null;
+			if ( null === $type || in_array( $type, self::CREDENTIAL_FIELD_TYPES, true ) ) {
+				continue;
+			}
+			$issues[] = SettingsIssue::error(
+				'credential_field_wrong_type',
+				array(
+					'profession' => $profession->key,
+					'field'      => $profession->credentialField,
+					'type'       => $type,
+				)
+			);
+		}
+
+		return $issues;
 	}
 
 	/**

@@ -17,6 +17,7 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 		$codes    = array(
 			'profession_without_matrix_row',
 			'credential_field_not_required',
+			'credential_field_wrong_type',
 			'field_not_configured',
 			'matrix_field_not_in_source',
 			'matrix_profession_unknown',
@@ -29,7 +30,7 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 		);
 		$messages = array();
 		foreach ( $codes as $code ) {
-			$text = IssueMessages::text( SettingsIssue::error( $code, array( 'profession' => 'student', 'field' => 'uczelnia', 'page' => 'Strona logowania', 'role' => 'editor', 'capability' => 'unfiltered_html' ) ) );
+			$text = IssueMessages::text( SettingsIssue::error( $code, array( 'profession' => 'student', 'field' => 'uczelnia', 'page' => 'Strona logowania', 'role' => 'editor', 'capability' => 'unfiltered_html', 'type' => 'checkbox' ) ) );
 			$this->assertStringNotContainsString( $code, $text, $code . ': komunikat nie może wyciekać kodem.' );
 			$messages[ $text ] = true;
 		}
@@ -45,6 +46,15 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 		$unknown = IssueMessages::text( SettingsIssue::error( 'default_role_unknown', array( 'role' => 'czytelnik' ) ) );
 		$this->assertStringContainsString( 'czytelnik', $unknown );
 		$this->assertStringNotContainsString( 'uprawnienie', $unknown, 'Brak roli to inna przyczyna niż uprawnienie niebezpieczne.' );
+	}
+
+	public function test_the_credential_field_type_message_names_the_field_and_its_type(): void {
+		// Bez nazwy pola i jego typu administrator nie wie, co poprawić.
+		$text = IssueMessages::text( SettingsIssue::error( 'credential_field_wrong_type', array( 'profession' => 'lekarz', 'field' => 'pwz', 'type' => 'checkbox' ) ) );
+
+		$this->assertStringContainsString( 'lekarz', $text );
+		$this->assertStringContainsString( 'pwz', $text );
+		$this->assertStringContainsString( 'checkbox', $text );
 	}
 
 	public function test_message_names_the_profession_and_field(): void {
