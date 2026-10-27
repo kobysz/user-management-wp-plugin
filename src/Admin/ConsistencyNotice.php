@@ -26,7 +26,7 @@ final class ConsistencyNotice {
 	 */
 	public static function error_count(): int {
 		$errors = array_filter(
-			MatrixScreen::checker()->issues(),
+			MatrixScreen::issues(),
 			static fn ( SettingsIssue $issue ): bool => SettingsIssue::ERROR === $issue->severity
 		);
 		return count( $errors );

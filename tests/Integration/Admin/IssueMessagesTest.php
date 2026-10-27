@@ -22,14 +22,27 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 			'matrix_profession_unknown',
 			'page_missing',
 			'page_not_published',
+			'default_role_dangerous_capability',
+			'default_role_unknown',
 		);
 		$messages = array();
 		foreach ( $codes as $code ) {
-			$text = IssueMessages::text( SettingsIssue::error( $code, array( 'profession' => 'student', 'field' => 'uczelnia', 'page' => 'Strona logowania' ) ) );
+			$text = IssueMessages::text( SettingsIssue::error( $code, array( 'profession' => 'student', 'field' => 'uczelnia', 'page' => 'Strona logowania', 'role' => 'editor', 'capability' => 'unfiltered_html' ) ) );
 			$this->assertStringNotContainsString( $code, $text, $code . ': komunikat nie może wyciekać kodem.' );
 			$messages[ $text ] = true;
 		}
 		$this->assertCount( count( $codes ), $messages, 'Każdy kod musi mieć inny komunikat.' );
+	}
+
+	public function test_the_default_role_message_names_the_role_and_the_capability(): void {
+		// Bez nazwy uprawnienia administrator nie wie, co odebrać ani dlaczego rejestracja nie działa.
+		$text = IssueMessages::text( SettingsIssue::error( 'default_role_dangerous_capability', array( 'role' => 'editor', 'capability' => 'unfiltered_html' ) ) );
+		$this->assertStringContainsString( 'editor', $text );
+		$this->assertStringContainsString( 'unfiltered_html', $text );
+
+		$unknown = IssueMessages::text( SettingsIssue::error( 'default_role_unknown', array( 'role' => 'czytelnik' ) ) );
+		$this->assertStringContainsString( 'czytelnik', $unknown );
+		$this->assertStringNotContainsString( 'uprawnienie', $unknown, 'Brak roli to inna przyczyna niż uprawnienie niebezpieczne.' );
 	}
 
 	public function test_message_names_the_profession_and_field(): void {

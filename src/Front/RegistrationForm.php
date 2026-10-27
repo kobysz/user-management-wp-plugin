@@ -200,6 +200,7 @@ final class RegistrationForm {
 	 */
 	private static function render_feedback( array $labels ): string {
 		$flash  = RegistrationHandler::flash();
+		$fields = $labels;
 		$labels = array_merge(
 			$labels,
 			array(
@@ -217,7 +218,7 @@ final class RegistrationForm {
 
 		$items = '';
 		foreach ( $flash['errors'] as $field => $code ) {
-			$label  = $labels[ $field ] ?? '';
+			$label  = self::error_label( (string) $field, $labels, $fields );
 			$items .= '<li>' . ( '' === $label ? '' : esc_html( $label ) . ': ' ) . esc_html( RegistrationHandler::message_for( $code ) ) . '</li>';
 		}
 		foreach ( array_keys( $flash['warnings'] ) as $field ) {
@@ -225,6 +226,26 @@ final class RegistrationForm {
 		}
 
 		return '' === $items ? $html : $html . '<ul class="pusers-errors" role="alert">' . $items . '</ul>';
+	}
+
+	/**
+	 * Nazwa pola przy komunikacie błędu. Błąd pola ACF nazwanego jak pole konta ma klucz
+	 * z przedrostkiem (`acf:`) i bez jego zdjęcia człowiek czytałby „To pole jest wymagane.”
+	 * bez nazwy pola. Etykieta takiego błędu pochodzi ze ŹRÓDŁA pól, nie z etykiet pól konta:
+	 * pod tym samym kluczem siedzą dwa różne pola, a chodzi o to z ACF.
+	 *
+	 * @param string                $field  Klucz błędu.
+	 * @param array<string, string> $labels Etykiety pól źródła i pól konta.
+	 * @param array<string, string> $fields Etykiety samych pól źródła.
+	 */
+	private static function error_label( string $field, array $labels, array $fields ): string {
+		$prefix = RegistrationHandler::ACF_ERROR_PREFIX;
+		if ( 0 !== strpos( $field, $prefix ) ) {
+			return $labels[ $field ] ?? '';
+		}
+		$name = substr( $field, strlen( $prefix ) );
+
+		return $fields[ $name ] ?? $name;
 	}
 
 	/**

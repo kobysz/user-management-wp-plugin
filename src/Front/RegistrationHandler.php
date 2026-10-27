@@ -91,29 +91,82 @@ final class RegistrationHandler {
 	public const MIN_PASSWORD_LENGTH = 8;
 
 	/**
-	 * Uprawnienia, z którymi rola domyślna nie może być nadawana przez publiczny formularz: zarządzanie kontami,
-	 * wykonanie kodu i podmiana plików, nieprzefiltrowany HTML oraz wyprowadzenie danych.
+	 * Uprawnienia, z którymi rola domyślna nie może być nadawana przez publiczny formularz.
+	 *
+	 * Guard istnieje WYŁĄCZNIE dla roli nietypowej albo podmienionej, więc argument „domyślne role
+	 * WordPressa tego nie mają” nie ma tu wartości: w jedynym przypadku, w którym lista pracuje,
+	 * rola jest własna. Lista zakazów obejmuje zarządzanie kontami, wykonanie i aktualizację kodu,
+	 * nieprzefiltrowany HTML, wyprowadzenie danych oraz uprawnienia sieciowe.
+	 *
+	 * Uprawnienia do treści (`edit_posts`, `publish_posts`, `upload_files`) NIE są tu wymienione:
+	 * rejestracja musi działać na portalu z rolą domyślną `subscriber`, `contributor` albo `author`.
 	 */
 	private const DANGEROUS_CAPABILITIES = array(
+		// Zarządzanie kontami: samorejestrujące się konto nie może awansować siebie ani zakładać kont.
 		'manage_options',
 		'promote_users',
 		'edit_users',
 		'create_users',
 		'delete_users',
+		'add_users',
+		'remove_users',
+		// Lista kont to w portalu medycznym lista adresów e-mail wszystkich lekarzy: wyciek sam w sobie.
+		'list_users',
+		// Wykonanie kodu: instalacja, aktualizacja, podmiana i usuwanie wtyczek, motywów oraz rdzenia.
 		'install_plugins',
 		'activate_plugins',
 		'edit_plugins',
+		'delete_plugins',
+		'update_plugins',
 		'install_themes',
 		'edit_themes',
 		'switch_themes',
+		'delete_themes',
+		'update_themes',
+		'update_core',
 		'edit_files',
+		// Wgranie pliku dowolnego typu (także PHP) to wykonanie kodu równie dobre jak edycja wtyczki.
+		'unfiltered_upload',
+		// Skrypt na całej witrynie: nieprzefiltrowany HTML w treści oraz widżet HTML w personalizacji.
 		'unfiltered_html',
+		'edit_theme_options',
+		// Wyprowadzenie i zniszczenie danych osobowych: eksport dotyczy danych WSZYSTKICH użytkowników.
 		'import',
 		'export',
+		'export_others_personal_data',
+		'erase_others_personal_data',
+		'delete_site',
+		// Sieć (multisite): wszystko powyżej, tylko na wszystkich witrynach naraz.
+		'manage_network',
+		'manage_network_options',
+		'manage_network_plugins',
+		'manage_network_themes',
+		'manage_network_users',
+		'manage_sites',
 	);
 
-	private const MAX_ITEMS        = 50;
-	private const MAX_VALUE_LENGTH = 1000;
+	/**
+	 * Zdarzenie w logu: zgłoszenie odrzucone, bo domyślna rola witryny nie może być nadana.
+	 */
+	public const ROLE_REFUSAL_LOG_ACTION = 'registration_refused_default_role';
+
+	/**
+	 * Opcja z momentem ostatniego wpisu o odmowie guarda roli. Opcja, nie transient: przy niedostępnym
+	 * magazynie transientów flaga nie działałaby, a wiersz na każde żądanie zapchałby tabelę audytu,
+	 * która jest śladem decyzji redakcji o zatwierdzaniu kont.
+	 */
+	public const ROLE_REFUSAL_OPTION = 'pusers_role_refusal_logged_at';
+
+	/**
+	 * Przedrostek klucza błędu pola ACF, które nazywa się jak pole konta (kolizja kluczy).
+	 */
+	public const ACF_ERROR_PREFIX = 'acf:';
+
+	private const MAX_ITEMS       = 50;
+	private const MAX_VALUE_BYTES = 1000;
+	private const MAX_KEY_BYTES   = 100;
+	private const MAX_TOTAL_BYTES = 10000;
+	private const MAX_DEPTH       = 2;
 
 	/**
 	 * Odczytane w tym żądaniu dane (klucz => dane): transient znika przy pierwszym odczycie, a formularz czyta go kilka razy.
@@ -153,7 +206,12 @@ final class RegistrationHandler {
 		}
 		do_action( 'litespeed_control_set_nocache', 'pusers registration' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- hook cudzej wtyczki (LiteSpeed Cache).
 
-		if ( isset( $_GET[ self::FAILED_ARG ] ) && isset( $_COOKIE[ self::COOKIE ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		// Kasujemy przy OBU znacznikach: po nieudanym zgłoszeniu dane właśnie zostały odczytane (transient
+		// zniknął), a po udanej rejestracji nikt ich już nie przeczyta i martwe ciasteczko żyłoby 10 minut.
+		// Znacznik `stale` NIE kasuje: przy nim nie zapisaliśmy żadnych danych, a podrzucony komuś odnośnik
+		// z `?pusers_failed=stale` wyrzucałby mu wpisane wartości, których jeszcze nie zobaczył.
+		$failed = isset( $_GET[ self::FAILED_ARG ] ) && self::STALE !== $_GET[ self::FAILED_ARG ]; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( isset( $_COOKIE[ self::COOKIE ] ) && ( $failed || isset( $_GET[ self::DONE_ARG ] ) ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			$request_path = isset( $_SERVER['REQUEST_URI'] ) && is_string( $_SERVER['REQUEST_URI'] ) ? wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) : null;
 			self::send_cookie( '', time() - YEAR_IN_SECONDS, is_string( $request_path ) && '' !== $request_path ? $request_path : '/' );
 		}
@@ -209,6 +267,9 @@ final class RegistrationHandler {
 				$refusal = array( SubmissionResult::PROFESSION_KEY => 'unknown_profession' );
 			} else {
 				$refusal = array( 'registration' => 'registration_closed' );
+				// Odwiedzający widzi „rejestracja chwilowo niedostępna”; administrator musi mieć skąd
+				// się dowiedzieć, dlaczego. Drugim kanałem jest raport spójności w panelu.
+				self::report_role_refusal();
 			}
 			self::back(
 				array(
@@ -246,7 +307,7 @@ final class RegistrationHandler {
 		}
 		// Błąd pola ACF o nazwie pola wtyczki nie ginie: dostaje klucz z przedrostkiem.
 		foreach ( $result->errors() as $field => $code ) {
-			$errors[ isset( $errors[ $field ] ) ? 'acf:' . $field : $field ] = $code;
+			$errors[ isset( $errors[ $field ] ) ? self::ACF_ERROR_PREFIX . $field : $field ] = $code;
 		}
 
 		// Profesja wymagająca numeru uprawnień nie dostaje konta bez numeru. Miękka walidacja dotyczy numerów
@@ -273,7 +334,7 @@ final class RegistrationHandler {
 				array(
 					'profession' => $key,
 					'email'      => $email,
-					'fields'     => self::clean_values( $raw, true ),
+					'fields'     => self::flash_values( $raw ),
 					'errors'     => $errors,
 					'warnings'   => $warnings,
 				)
@@ -298,7 +359,7 @@ final class RegistrationHandler {
 				array(
 					'profession' => $key,
 					'email'      => $email,
-					'fields'     => self::clean_values( $raw, true ),
+					'fields'     => self::flash_values( $raw ),
 					'errors'     => array( RegistrationForm::EMAIL => 'existing_user_email' === $userId->get_error_code() ? 'email_exists' : 'account_failed' ),
 				)
 			);
@@ -307,14 +368,11 @@ final class RegistrationHandler {
 
 		update_user_meta( $userId, UserMeta::PROFESSION, $profession->key );
 		AccountStatusRepository::set( $userId, AccountStatus::EmailUnconfirmed );
-		// Odsiew po macierzy z kontekstu, potem sanityzacja: values() może nieść tablicę. Wartości pól ACF
-		// zapisujemy z przedrostkiem, więc kolizja z jakąkolwiek metadaną WordPressa jest niemożliwa z konstrukcji.
+		// Odsiew po macierzy z kontekstu, potem sanityzacja: values() może nieść tablicę, a do metadanych
+		// wchodzi wyłącznie tekst (patrz stored_values()). Wartości pól ACF zapisujemy z przedrostkiem,
+		// więc kolizja z jakąkolwiek metadaną WordPressa jest niemożliwa z konstrukcji.
 		$stored = ( new SubmissionFilter( $matrix ) )->strip( $profession->key, $result->values() );
-		foreach ( self::clean_values( $stored ) as $name => $value ) {
-			// Numer uprawnień jest tekstem; (zabezpieczenie) tablica w tym polu nie trafia do metadanych zserializowana.
-			if ( $name === $profession->credentialField && ! is_string( $value ) ) {
-				continue;
-			}
+		foreach ( self::stored_values( $stored ) as $name => $value ) {
 			update_user_meta( $userId, self::ACF_META_PREFIX . $name, $value );
 		}
 
@@ -580,25 +638,77 @@ final class RegistrationHandler {
 	}
 
 	/**
-	 * Domyślna rola witryny albo null, gdyby rejestracja miała nadać rolę z uprawnieniem niebezpiecznym
-	 * (zepsuta konfiguracja nie może zamienić publicznego formularza w kreator administratorów).
-	 * To lista zakazów: zbiór uprawnień podnoszących uprawnienia jest domknięty i znany, a uprawnienia do
-	 * treści (`edit_posts`, `publish_posts`, `upload_files`) mają przechodzić, żeby nie zamykać rejestracji
-	 * na portalu z rolą `contributor` albo `author`.
+	 * Stan domyślnej roli witryny: nazwa z opcji, pierwsze uprawnienie niebezpieczne (albo `''`, gdy
+	 * żadnego nie ma ani nie ma samej roli) i czy rejestracja jest z tego powodu wyłączona.
+	 *
+	 * Publiczna, bo panel pokazuje przyczynę odmowy w raporcie spójności i musi ją czytać dokładnie
+	 * tam, gdzie bramka ją rozstrzyga; dwie kopie reguły rozjechałyby się przy pierwszej zmianie listy.
+	 * Rola domyślna jest pojęciem WordPressa, więc reguła nie może mieszkać w `src/Domain`.
+	 *
+	 * @return array{role: string, capability: string, blocked: bool}
 	 */
-	private static function default_role(): ?string {
-		$name = get_option( 'default_role' );
-		$role = is_string( $name ) ? get_role( $name ) : null;
-		if ( ! is_string( $name ) || null === $role ) {
-			return null;
+	public static function default_role_state(): array {
+		$option = get_option( 'default_role' );
+		$name   = is_string( $option ) ? $option : '';
+		$role   = '' === $name ? null : get_role( $name );
+		if ( null === $role ) {
+			return array(
+				'role'       => $name,
+				'capability' => '',
+				'blocked'    => true,
+			);
 		}
 		foreach ( self::DANGEROUS_CAPABILITIES as $capability ) {
 			if ( $role->has_cap( $capability ) ) {
-				return null;
+				return array(
+					'role'       => $name,
+					'capability' => $capability,
+					'blocked'    => true,
+				);
 			}
 		}
 
-		return $name;
+		return array(
+			'role'       => $name,
+			'capability' => '',
+			'blocked'    => false,
+		);
+	}
+
+	/**
+	 * Domyślna rola witryny albo null, gdyby rejestracja miała nadać rolę z uprawnieniem niebezpiecznym
+	 * albo rolę, której nie ma (zepsuta konfiguracja nie może zamienić publicznego formularza
+	 * w kreator administratorów).
+	 */
+	private static function default_role(): ?string {
+		$state = self::default_role_state();
+
+		return $state['blocked'] ? null : $state['role'];
+	}
+
+	/**
+	 * Zapisuje w logu zdarzeń odmowę guarda roli, z nazwą uprawnienia, NAJWYŻEJ RAZ NA GODZINĘ: usterka
+	 * konfiguracji trwa do interwencji administratora, a wiersz na każde żądanie zapchałby tabelę audytu
+	 * (ślad decyzji redakcji o zatwierdzaniu kont, który przeżywa nawet żądanie usunięcia danych osobowych).
+	 */
+	private static function report_role_refusal(): void {
+		$last = get_option( self::ROLE_REFUSAL_OPTION, 0 );
+		if ( is_numeric( $last ) && time() - (int) $last < HOUR_IN_SECONDS ) {
+			return;
+		}
+		update_option( self::ROLE_REFUSAL_OPTION, time(), false );
+
+		$state = self::default_role_state();
+		EventLog::write(
+			self::ROLE_REFUSAL_LOG_ACTION,
+			0,
+			0,
+			array(
+				'role'       => $state['role'],
+				'capability' => $state['capability'],
+				'reason'     => '' === $state['capability'] ? 'role_unknown' : 'dangerous_capability',
+			)
+		);
 	}
 
 	/**
@@ -614,42 +724,52 @@ final class RegistrationHandler {
 	}
 
 	/**
-	 * Sanityzuje wartości pól: teksty przez `sanitize_text_field()`, tablice rekurencyjnie, liczby i
-	 * wartości logiczne jako tekst. Nic innego nie przechodzi (obiekty, null).
+	 * Wartości do metadanych: sanityzowane i ZAWSZE tekstowe. Tablica (wielokrotny wybór, ale też
+	 * tablica podrzucona w polu tekstowym) jedzie jako lista rozdzielana przecinkami: zserializowana
+	 * tablica w `wp_usermeta` wywaliłaby na `TypeError` każdego późniejszego konsumenta deklarującego
+	 * `string` przy `strict_types`, a w zapytaniach po metadanych jest nieczytelna.
 	 *
-	 * @param array<string, mixed> $values Wartości.
-	 * @param bool                 $limit  Czy ograniczyć rozmiar (dane na czas przekierowania trafiają do wp_options).
-	 * @return array<string, mixed>
+	 * @param array<string, mixed> $values Wartości po odsiewie macierzą.
+	 * @return array<string, string>
 	 */
-	private static function clean_values( array $values, bool $limit = false ): array {
+	private static function stored_values( array $values ): array {
 		$out = array();
-		foreach ( array_slice( $values, 0, $limit ? self::MAX_ITEMS : null, true ) as $name => $value ) {
-			$out[ (string) $name ] = self::clean( $value, $limit ? 0 : -1 );
+		foreach ( $values as $name => $value ) {
+			$out[ (string) $name ] = self::text_value( $value );
 		}
 
 		return $out;
 	}
 
 	/**
-	 * Sanityzuje jedną wartość.
+	 * Jedna wartość jako sanityzowany tekst; tablica rekurencyjnie, z pominięciem pustych gałęzi.
 	 *
 	 * @param mixed $value Wartość.
-	 * @param int   $depth Głębokość zagnieżdżenia przy ograniczeniu rozmiaru; -1 oznacza brak ograniczenia.
 	 */
-	private static function clean( mixed $value, int $depth = -1 ): mixed {
-		if ( is_array( $value ) ) {
-			if ( $depth >= 2 ) {
-				return array();
-			}
-			$out = array();
-			foreach ( array_slice( $value, 0, $depth >= 0 ? self::MAX_ITEMS : null, true ) as $key => $item ) {
-				$out[ is_int( $key ) ? $key : sanitize_text_field( $key ) ] = self::clean( $item, $depth >= 0 ? $depth + 1 : -1 );
-			}
-			return $out;
+	private static function text_value( mixed $value ): string {
+		if ( ! is_array( $value ) ) {
+			return self::scalar_text( $value );
 		}
+		$parts = array();
+		foreach ( $value as $item ) {
+			$text = self::text_value( $item );
+			if ( '' !== $text ) {
+				$parts[] = $text;
+			}
+		}
+
+		return implode( ', ', $parts );
+	}
+
+	/**
+	 * Wartość nietablicowa jako tekst: teksty przez `sanitize_text_field()`, liczby i wartości logiczne
+	 * jako tekst. Nic innego nie przechodzi (obiekty, null).
+	 *
+	 * @param mixed $value Wartość.
+	 */
+	private static function scalar_text( mixed $value ): string {
 		if ( is_string( $value ) ) {
-			$text = sanitize_text_field( $value );
-			return $depth >= 0 ? mb_substr( $text, 0, self::MAX_VALUE_LENGTH ) : $text;
+			return sanitize_text_field( $value );
 		}
 		if ( is_bool( $value ) ) {
 			return $value ? '1' : '';
@@ -659,6 +779,75 @@ final class RegistrationHandler {
 		}
 
 		return '';
+	}
+
+	/**
+	 * Wartości na czas przekierowania: ta sama sanityzacja, ale pod twardym limitem rozmiaru, bo
+	 * struktura ląduje w `wp_options` (transient). Tablice ZOSTAJĄ tablicami: wracają do formularza
+	 * jako wartość początkowa pola wielokrotnego wyboru.
+	 *
+	 * Limit jest BAJTOWY, nie znakowy (polska litera to dwa bajty, emoji cztery), obejmuje też KLUCZE
+	 * tablic i CAŁKOWITY rozmiar struktury: bez tego jedno zgłoszenie z ważnym nonce'em zapisywało
+	 * transient rozmiaru całego żądania, do `post_max_size`.
+	 *
+	 * @param array<string, mixed> $values Wartości z żądania.
+	 * @return array<string, mixed>
+	 */
+	private static function flash_values( array $values ): array {
+		$budget = self::MAX_TOTAL_BYTES;
+		$out    = array();
+		foreach ( array_slice( $values, 0, self::MAX_ITEMS, true ) as $name => $value ) {
+			if ( $budget <= 0 ) {
+				break;
+			}
+			$key         = self::cut( sanitize_text_field( (string) $name ), self::MAX_KEY_BYTES );
+			$budget     -= strlen( $key );
+			$out[ $key ] = self::limited( $value, 0, $budget );
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Jedna wartość pod limitem rozmiaru.
+	 *
+	 * @param mixed $value  Wartość.
+	 * @param int   $depth  Głębokość zagnieżdżenia (0 to wartość pola).
+	 * @param int   $budget Pozostały budżet bajtów; każda zapisana wartość i każdy klucz go pomniejszają.
+	 */
+	private static function limited( mixed $value, int $depth, int &$budget ): mixed {
+		if ( ! is_array( $value ) ) {
+			$text    = self::cut( self::scalar_text( $value ), min( self::MAX_VALUE_BYTES, $budget ) );
+			$budget -= strlen( $text );
+
+			return $text;
+		}
+		if ( $depth >= self::MAX_DEPTH ) {
+			return array();
+		}
+
+		$out = array();
+		foreach ( array_slice( $value, 0, self::MAX_ITEMS, true ) as $key => $item ) {
+			if ( $budget <= 0 ) {
+				break;
+			}
+			// Klucz liczbowy też zajmuje miejsce w zapisanej strukturze, ale nie podlega sanityzacji.
+			$clean         = is_int( $key ) ? $key : self::cut( sanitize_text_field( (string) $key ), self::MAX_KEY_BYTES );
+			$budget       -= strlen( (string) $clean );
+			$out[ $clean ] = self::limited( $item, $depth + 1, $budget );
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Obcina tekst do zadanej liczby BAJTÓW (nie znaków), nie rozcinając znaku UTF-8 w połowie.
+	 *
+	 * @param string $text  Tekst.
+	 * @param int    $bytes Limit bajtów.
+	 */
+	private static function cut( string $text, int $bytes ): string {
+		return $bytes <= 0 ? '' : mb_strcut( $text, 0, $bytes );
 	}
 
 	/**

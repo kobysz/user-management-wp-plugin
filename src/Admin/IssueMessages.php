@@ -32,6 +32,8 @@ final class IssueMessages {
 		$profession = $issue->context['profession'] ?? '';
 		$field      = $issue->context['field'] ?? '';
 		$page       = $issue->context['page'] ?? '';
+		$role       = $issue->context['role'] ?? '';
+		$capability = $issue->context['capability'] ?? '';
 
 		switch ( $issue->code ) {
 			case 'profession_without_matrix_row':
@@ -52,6 +54,12 @@ final class IssueMessages {
 			case 'matrix_profession_unknown':
 				/* translators: %s: klucz profesji. */
 				return sprintf( __( 'Macierz zawiera wiersz dla nieistniejącej profesji „%s”.', 'portal-users' ), $profession );
+			case 'default_role_dangerous_capability':
+				/* translators: 1: nazwa roli, 2: nazwa uprawnienia. */
+				return sprintf( __( 'Rejestracja jest wyłączona: domyślna rola nowych kont („%1$s”) ma uprawnienie „%2$s”, którego publiczny formularz nie może nadać osobie zakładającej konto. Wskaż inną rolę domyślną w Ustawieniach → Ogólne albo odbierz tej roli to uprawnienie.', 'portal-users' ), $role, $capability );
+			case 'default_role_unknown':
+				/* translators: %s: nazwa roli z ustawień. */
+				return sprintf( __( 'Rejestracja jest wyłączona: domyślnej roli nowych kont („%s”) nie ma na tej witrynie. Wskaż istniejącą rolę w Ustawieniach → Ogólne.', 'portal-users' ), $role );
 			case 'page_missing':
 				/* translators: %s: nazwa ustawienia strony. */
 				return sprintf( __( '%s: wskazana strona nie istnieje.', 'portal-users' ), $page );

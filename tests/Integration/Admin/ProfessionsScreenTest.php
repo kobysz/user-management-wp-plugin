@@ -515,6 +515,21 @@ final class ProfessionsScreenTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'page=' . Menu::SLUG_MATRIX, $html );
 	}
 
+	public function test_screen_counts_a_default_role_that_blocks_registration(): void {
+		// Administrator, który nigdy nie otworzy macierzy, musi zobaczyć, że rejestracja jest wyłączona
+		// z powodu roli domyślnej; przy odmowie guarda odwiedzający widzi tylko „chwilowo niedostępna”.
+		$this->withConfiguredSourceAndProfessions( 'lekarz' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$this->assertStringNotContainsString( 'pusers-consistency-notice', $this->renderScreenAsAdmin() );
+
+		update_option( 'default_role', 'editor' );
+		$html = $this->renderScreenAsAdmin();
+		update_option( 'default_role', 'subscriber' );
+
+		$this->assertStringContainsString( 'notice-error pusers-consistency-notice', $html );
+		$this->assertStringContainsString( 'Liczba wykrytych błędów: 1.', $html );
+	}
+
 	public function test_screen_does_not_count_warnings(): void {
 		// Pole ze źródła bez wpisu w wierszu to tylko ostrzeżenie.
 		$this->withConfiguredSourceAndProfessions( 'lekarz' );

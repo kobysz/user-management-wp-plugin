@@ -295,16 +295,57 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Każde uprawnienie, którego publiczny formularz nie może nadać samorejestrującemu się kontu,
+	 * jako osobny przypadek: eskalacja (konta, kod, aktualizacje, sieć), wstrzyknięcie skryptu
+	 * i wyprowadzenie albo zniszczenie danych. Guard pracuje tylko dla roli własnej albo podmienionej,
+	 * więc „domyślne role WordPressa tego nie mają” niczego tu nie usprawiedliwia.
+	 *
 	 * @return array<string, array{0: array<string, bool>}>
 	 */
 	public static function dangerous_roles(): array {
-		return array(
-			'administrator'            => array( array( 'read' => true, 'manage_options' => true ) ),
-			'edit_plugins (wykonanie kodu)' => array( array( 'read' => true, 'edit_plugins' => true ) ),
-			'create_users'             => array( array( 'read' => true, 'create_users' => true ) ),
-			'unfiltered_html'          => array( array( 'read' => true, 'unfiltered_html' => true ) ),
-			'export'                   => array( array( 'read' => true, 'export' => true ) ),
+		$capabilities = array(
+			'manage_options',
+			'promote_users',
+			'edit_users',
+			'create_users',
+			'delete_users',
+			'add_users',
+			'remove_users',
+			'list_users',
+			'install_plugins',
+			'activate_plugins',
+			'edit_plugins',
+			'delete_plugins',
+			'update_plugins',
+			'install_themes',
+			'edit_themes',
+			'switch_themes',
+			'delete_themes',
+			'update_themes',
+			'update_core',
+			'edit_files',
+			'unfiltered_upload',
+			'unfiltered_html',
+			'edit_theme_options',
+			'import',
+			'export',
+			'export_others_personal_data',
+			'erase_others_personal_data',
+			'delete_site',
+			'manage_network',
+			'manage_network_options',
+			'manage_network_plugins',
+			'manage_network_themes',
+			'manage_network_users',
+			'manage_sites',
 		);
+
+		$cases = array();
+		foreach ( $capabilities as $capability ) {
+			$cases[ $capability ] = array( array( 'read' => true, $capability => true ) );
+		}
+
+		return $cases;
 	}
 
 	/**
@@ -322,6 +363,57 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( $before, $this->user_ids() );
 		$this->assertSame( 'registration_closed', $flash['errors']['registration'] ?? '' );
 		$this->assertStringNotContainsString( 'profesji', RegistrationHandler::message_for( 'registration_closed' ), 'Przyczyną jest rola witryny, nie profesja.' );
+	}
+
+	public function test_a_role_guard_refusal_names_the_capability_in_the_event_log_at_most_once_an_hour(): void {
+		// Odwiedzający widzi tylko „rejestracja chwilowo niedostępna”; administrator musi mieć skąd
+		// się dowiedzieć, dlaczego. Usterka trwa do jego interwencji, więc wiersz na każde żądanie
+		// zapchałby tabelę audytu, która jest śladem decyzji redakcji o zatwierdzaniu kont.
+		delete_option( RegistrationHandler::ROLE_REFUSAL_OPTION );
+		add_role( 'pusers_strong', 'Mocna', array( 'read' => true, 'list_users' => true ) );
+		update_option( 'default_role', 'pusers_strong' );
+
+		$this->post_and_submit( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+		$this->post_and_submit( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+		$rows = $this->log_rows();
+
+		$this->assertCount( 1, $rows, 'Trwająca usterka konfiguracji pisze najwyżej jeden wiersz na godzinę.' );
+		$this->assertSame( RegistrationHandler::ROLE_REFUSAL_LOG_ACTION, $rows[0]->action );
+		$context = json_decode( (string) $rows[0]->context, true );
+		$this->assertIsArray( $context );
+		$this->assertSame( 'list_users', $context['capability'] ?? null, 'Bez nazwy uprawnienia wpis nie mówi, co poprawić.' );
+		$this->assertSame( 'pusers_strong', $context['role'] ?? null );
+
+		// Po upływie okna kolejna odmowa znów trafia do logu: usterka nie przestaje być widoczna.
+		update_option( RegistrationHandler::ROLE_REFUSAL_OPTION, time() - HOUR_IN_SECONDS - 1 );
+		$this->post_and_submit( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+		$this->assertCount( 2, $this->log_rows() );
+
+		update_option( 'default_role', 'subscriber' );
+		remove_role( 'pusers_strong' );
+	}
+
+	public function test_a_default_role_that_does_not_exist_creates_no_account_and_is_logged_as_well(): void {
+		// WordPress pilnuje obu swoich dróg zapisu (`sanitize_option()` podmienia nieznaną rolę na
+		// subscribera, `remove_role()` resetuje opcję), więc taki stan bierze się z zapisu poza nimi:
+		// zapytania do bazy, przywróconej kopii albo wtyczki filtrującej listę ról. Guard jest
+		// fail-closed, a administrator ma się dowiedzieć, dlaczego rejestracja nie działa.
+		delete_option( RegistrationHandler::ROLE_REFUSAL_OPTION );
+		$missing = static fn (): string => 'pusers_nie_ma_takiej_roli';
+		add_filter( 'pre_option_default_role', $missing );
+		$this->assertNull( get_role( (string) get_option( 'default_role' ) ) );
+
+		$before = $this->user_ids();
+		$flash  = $this->follow( $this->post_and_submit( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) ) );
+		remove_filter( 'pre_option_default_role', $missing );
+
+		$this->assertSame( $before, $this->user_ids() );
+		$this->assertSame( 'registration_closed', $flash['errors']['registration'] ?? '' );
+		$rows = $this->log_rows();
+		$this->assertCount( 1, $rows );
+		$context = json_decode( (string) $rows[0]->context, true );
+		$this->assertIsArray( $context );
+		$this->assertSame( 'role_unknown', $context['reason'] ?? null );
 	}
 
 	/**
@@ -392,7 +484,14 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 		$flash = $this->follow( $this->post_and_submit( array( RegistrationForm::EMAIL => 'to-nie-adres' ), array( 'zgoda' => null ) ) );
 		$this->assertSame( 'email_invalid', $flash['errors'][ RegistrationForm::EMAIL ] ?? '' );
-		$this->assertSame( 'required', $flash['errors'][ 'acf:' . RegistrationForm::EMAIL ] ?? '' );
+		$this->assertSame( 'required', $flash['errors'][ RegistrationHandler::ACF_ERROR_PREFIX . RegistrationForm::EMAIL ] ?? '' );
+
+		// Klucz z przedrostkiem musi mieć w renderze etykietę pola ACF: inaczej człowiek czyta
+		// „To pole jest wymagane.” bez nazwy pola i nie wie, co poprawić.
+		$html = RegistrationForm::render();
+		$this->assertStringContainsString( 'Kolizja: To pole jest wymagane.', $html );
+		$this->assertStringContainsString( 'Adres e-mail: Podaj poprawny adres e-mail.', $html );
+		$this->assertStringNotContainsString( RegistrationHandler::ACF_ERROR_PREFIX, $html, 'Przedrostek jest wewnętrzny, nie pokazujemy go człowiekowi.' );
 	}
 
 	public function test_registration_fires_the_registered_action_with_the_new_user_id(): void {
@@ -576,8 +675,16 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	}
 
 	public function test_values_are_stored_as_sanitised_text_with_the_acf_prefix(): void {
+		// Tablica w polu INNYM niż pole numeru: w polu numeru jest dziś błędem twardym, więc konta nie ma
+		// i zapytanie o zserializowaną wartość nie miałoby czego sprawdzać. Metadane czyta później kod
+		// deklarujący `string`, a zserializowana tablica wywaliłaby go na TypeError.
 		global $wpdb;
-		$id = $this->register_ok();
+		$id = $this->register_ok(
+			array( RegistrationForm::PROFESSION => 'pielegniarka' ),
+			array( 'pwz' => null, 'notatka' => array( 'kardiologia', 'alergologia' ) )
+		);
+
+		$this->assertSame( 'kardiologia, alergologia', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'notatka', true ) );
 		$serialized = $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM {$wpdb->usermeta} WHERE user_id = %d AND meta_key NOT LIKE %s AND meta_value LIKE %s", $id, '%capabilities', 'a:%' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
 		$this->assertSame( '0', (string) $serialized );
 	}
@@ -800,10 +907,15 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 	public function test_the_key_cookie_is_cleared_before_output_not_from_the_page_content(): void {
 		$location = $this->post_and_submit( array(), array( 'zgoda' => null ) );
+		// Liczba ciasteczek PRZED odczytem: asercja po `follow()` liczyłaby kasowanie wysłane z `flash()`
+		// jako „wysłane w trakcie renderu” i mutacja „kasuj w flash()” nie zapaliłaby testu.
+		$sent = count( $this->cookies );
+
 		$this->follow( $location );
-		$sentWhileRendering = count( $this->cookies );
+		$this->assertCount( $sent, $this->cookies, 'Sam odczyt danych (flash()) nie wysyła nagłówka: wołają go szablony, już po wyjściu treści.' );
+
 		RegistrationForm::render();
-		$this->assertCount( $sentWhileRendering, $this->cookies, 'Render formularza (treść strony) niczego nie wysyła: nagłówki już poszły.' );
+		$this->assertCount( $sent, $this->cookies, 'Render formularza (treść strony) niczego nie wysyła: nagłówki już poszły.' );
 
 		// template_redirect: jeszcze przed treścią.
 		RegistrationHandler::on_template_redirect();
@@ -813,6 +925,25 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertLessThan( time(), $cleared['options']['expires'] );
 		$this->assertTrue( $cleared['options']['httponly'] );
 		$this->assertSame( 'Lax', $cleared['options']['samesite'] );
+	}
+
+	public function test_the_key_cookie_is_cleared_after_a_successful_registration_but_not_by_a_stale_marker(): void {
+		// Po udanej rejestracji nikt już danych nie przeczyta, a martwe ciasteczko żyłoby dziesięć minut.
+		$_COOKIE = array( RegistrationHandler::COOKIE => str_repeat( 'a', 32 ) );
+		$_GET    = array( RegistrationHandler::DONE_ARG => '1' );
+		$this->cookies = array();
+		RegistrationHandler::on_template_redirect();
+		$cleared = end( $this->cookies );
+		$this->assertIsArray( $cleared, 'Znacznik udanej rejestracji kasuje ciasteczko.' );
+		$this->assertSame( '', $cleared['value'] );
+		$this->assertLessThan( time(), $cleared['options']['expires'] );
+
+		// Przy znaczniku `stale` nic nie zapisaliśmy, a podrzucony komuś odnośnik z `stale`
+		// wyrzucałby mu wpisane wartości, których jeszcze nie zobaczył.
+		$_GET          = array( RegistrationHandler::FAILED_ARG => RegistrationHandler::STALE );
+		$this->cookies = array();
+		RegistrationHandler::on_template_redirect();
+		$this->assertSame( array(), $this->cookies );
 	}
 
 	public function test_the_page_after_a_submission_is_marked_uncacheable(): void {
@@ -849,6 +980,53 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertLessThanOrEqual( 50, count( (array) ( $stored['fields']['pwz'] ?? array() ) ) );
 		$this->assertLessThan( 20000, strlen( serialize( $stored ) ) );
 		$this->assertNotSame( '', $location );
+	}
+
+	public function test_the_size_limit_counts_bytes_not_characters(): void {
+		// Polska litera to dwa bajty, emoji cztery: limit znakowy przepuszczał dwu- i czterokrotność
+		// zadeklarowanego rozmiaru do wp_options (emoji w teście pomijam, bo o jego zapis spiera się
+		// jeszcze kodowanie tabeli).
+		$this->post_and_submit( array(), array( 'zgoda' => null, 'notatka' => str_repeat( 'ą', 900 ) ) );
+		$stored = get_transient( 'pusers_flash_' . $this->sentToken() );
+
+		$this->assertIsArray( $stored );
+		$value = (string) ( $stored['fields']['notatka'] ?? '' );
+		$this->assertNotSame( '', $value, 'Wartość ma zostać zachowana, tylko przycięta.' );
+		$this->assertLessThanOrEqual( 1000, strlen( $value ), '900 polskich znaków to 1800 bajtów: limit musi liczyć bajty.' );
+		$this->assertTrue( mb_check_encoding( $value, 'UTF-8' ), 'Przycięcie nie rozcina znaku w połowie.' );
+	}
+
+	public function test_stored_redirect_data_truncates_array_keys_too(): void {
+		// Klucz tablicy był tylko sanityzowany, nigdy obcinany: cały rozmiar żądania mógł wejść kluczami.
+		$this->post_and_submit( array(), array( 'zgoda' => null, 'notatka' => array( str_repeat( 'k', 5000 ) => 'x', str_repeat( 'ą', 400 ) => 'y' ) ) );
+		$stored = get_transient( 'pusers_flash_' . $this->sentToken() );
+
+		$this->assertIsArray( $stored );
+		$keys = array_keys( (array) ( $stored['fields']['notatka'] ?? array() ) );
+		$this->assertNotSame( array(), $keys );
+		foreach ( $keys as $key ) {
+			$this->assertLessThanOrEqual( 100, strlen( (string) $key ), 'Klucze też podlegają limitowi bajtów.' );
+		}
+	}
+
+	public function test_stored_redirect_data_has_a_total_size_limit(): void {
+		// Limit na pojedynczą wartość nie wystarczy: pięćdziesiąt wartości po kilobajcie to nadal
+		// transient rozmiaru żądania w tabeli opcji.
+		$this->post_and_submit( array(), array( 'zgoda' => null, 'notatka' => array_fill( 0, 50, str_repeat( 'x', 1000 ) ) ) );
+		$stored = get_transient( 'pusers_flash_' . $this->sentToken() );
+
+		$this->assertIsArray( $stored );
+		$this->assertLessThan( 12000, strlen( serialize( $stored ) ), 'Limit obowiązuje całą zapisywaną strukturę, nie pojedynczą wartość.' );
+		$this->assertNotSame( array(), (array) ( $stored['fields']['notatka'] ?? array() ), 'Część wartości ma przejść: limit przycina, nie wyrzuca wszystkiego.' );
+	}
+
+	public function test_stored_redirect_data_is_depth_limited(): void {
+		$this->post_and_submit( array(), array( 'zgoda' => null, 'notatka' => array( 'a' => array( 'b' => array( 'c' => 'glebokosc' ) ) ) ) );
+		$stored = get_transient( 'pusers_flash_' . $this->sentToken() );
+
+		$this->assertIsArray( $stored );
+		$this->assertSame( array(), $stored['fields']['notatka']['a']['b'] ?? null, 'Trzeci poziom zagnieżdżenia jest ucinany.' );
+		$this->assertStringNotContainsString( 'glebokosc', serialize( $stored ) );
 	}
 
 	public function test_without_the_cookie_the_form_is_empty_and_says_the_submission_failed(): void {

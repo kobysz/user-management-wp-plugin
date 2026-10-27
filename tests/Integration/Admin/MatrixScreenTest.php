@@ -241,6 +241,32 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 		$this->assertContains( 'field_not_configured', $codes, 'Dowodzi, że checker() dostaje źródło pól wybranej grupy.' );
 	}
 
+	public function test_the_report_says_registration_is_off_because_of_the_default_role_and_names_the_capability(): void {
+		// Guard roli domyślnej odmawia rejestracji po cichu: bez tej pozycji administrator widzi
+		// zamkniętą rejestrację bez przyczyny, także po wyborze legalnym (editor ma unfiltered_html).
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		$this->withProfessions( 'lekarz' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$this->assertSame( array(), MatrixScreen::issues(), 'Przy poprawnej konfiguracji raport jest pusty.' );
+
+		update_option( 'default_role', 'editor' );
+		$codes = array_map( static fn ( $i ): string => $i->code, MatrixScreen::issues() );
+		$this->assertContains( 'default_role_dangerous_capability', $codes );
+		$html = $this->renderAsAdmin();
+		$this->assertStringContainsString( '„editor”) ma uprawnienie „unfiltered_html”', $html, 'Raport nazywa rolę i uprawnienie, nie tylko mówi „zablokowana”.' );
+
+		// Opcja wskazująca rolę, której nie ma (zapis poza drogami WordPressa: baza, przywrócona
+		// kopia, wtyczka filtrująca role) też wyłącza rejestrację i też musi być widoczna.
+		$missing = static fn (): string => 'pusers_nie_ma_takiej_roli';
+		add_filter( 'pre_option_default_role', $missing );
+		$codes = array_map( static fn ( $i ): string => $i->code, MatrixScreen::issues() );
+		remove_filter( 'pre_option_default_role', $missing );
+		$this->assertContains( 'default_role_unknown', $codes );
+
+		update_option( 'default_role', 'subscriber' );
+		$this->assertSame( array(), MatrixScreen::issues(), 'Rola z uprawnieniami do treści nie jest problemem.' );
+	}
+
 	public function test_rendered_screen_shows_the_consistency_report_above_the_table(): void {
 		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
 		ProfessionRepository::save(

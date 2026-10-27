@@ -16,6 +16,7 @@ use PortalUsers\Domain\Config\ConsistencyChecker;
 use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Fields\FieldState;
+use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
@@ -67,6 +68,53 @@ final class MatrixScreen {
 			ProfessionRepository::get(),
 			FieldMatrixRepository::get(),
 			self::source()
+		);
+	}
+
+	/**
+	 * Raport spójności: reguły domeny plus reguły, które wymagają WordPressa. Błędy przed ostrzeżeniami.
+	 *
+	 * `ConsistencyChecker` leży w `src/Domain` i nie wolno mu wywołać ani jednej funkcji WordPressa,
+	 * a domyślna rola witryny jest pojęciem WordPressa: regułę o niej składa warstwa panelu i dopina
+	 * do wyniku domeny tutaj, w jedynym miejscu, z którego raport jest czytany (ekran macierzy
+	 * i komunikat na ekranach profesji oraz ustawień).
+	 *
+	 * @return array<int, SettingsIssue>
+	 */
+	public static function issues(): array {
+		$issues = array_merge( self::default_role_issues(), self::checker()->issues() );
+
+		return array_merge(
+			array_values( array_filter( $issues, static fn ( SettingsIssue $issue ): bool => SettingsIssue::ERROR === $issue->severity ) ),
+			array_values( array_filter( $issues, static fn ( SettingsIssue $issue ): bool => SettingsIssue::WARNING === $issue->severity ) )
+		);
+	}
+
+	/**
+	 * Reguła o domyślnej roli witryny: rejestracja jest wyłączona, gdy rola ma uprawnienie, którego
+	 * publiczny formularz nie może nadawać samorejestrującemu się kontu, albo gdy roli z opcji nie ma.
+	 * Bez tej pozycji administrator widzi zamkniętą rejestrację bez przyczyny, także po wyborze
+	 * całkowicie legalnym (rola `editor` ma `unfiltered_html`).
+	 *
+	 * @return list<SettingsIssue>
+	 */
+	private static function default_role_issues(): array {
+		$state = RegistrationHandler::default_role_state();
+		if ( ! $state['blocked'] ) {
+			return array();
+		}
+		if ( '' === $state['capability'] ) {
+			return array( SettingsIssue::error( 'default_role_unknown', array( 'role' => $state['role'] ) ) );
+		}
+
+		return array(
+			SettingsIssue::error(
+				'default_role_dangerous_capability',
+				array(
+					'role'       => $state['role'],
+					'capability' => $state['capability'],
+				)
+			),
 		);
 	}
 
@@ -197,7 +245,7 @@ final class MatrixScreen {
 	 * Raport spójności nad tabelą; Checker zwraca błędy przed ostrzeżeniami.
 	 */
 	private static function render_report(): void {
-		$issues = self::checker()->issues();
+		$issues = self::issues();
 		if ( array() === $issues ) {
 			return;
 		}
