@@ -1321,18 +1321,25 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertNotFalse( has_action( 'template_redirect', array( RegistrationHandler::class, 'on_template_redirect' ) ) );
 
 		$_GET = array();
+		RegistrationHandler::reset_no_cache();
 		RegistrationHandler::on_template_redirect();
 		// Bez znacznika po przekierowaniu ten hook nic nie robi; stronę samego formularza wyłącza
-		// z cache jej render (RegistrationForm::render()).
+		// z cache hook renderu (RegistrationForm::on_template_redirect()).
 		$this->assertSame( 0, $fired );
 
+		// Każda iteracja udaje OSOBNE żądanie, więc zaczyna od zapomnienia poprzedniego zestawu:
+		// zestaw jest idempotentny w obrębie żądania (jedno żądanie to w produkcji jeden proces PHP).
 		foreach ( array( RegistrationHandler::FAILED_ARG => '1', RegistrationHandler::DONE_ARG => '1' ) as $arg => $value ) {
 			$_GET  = array( $arg => $value );
 			$fired = 0;
+			RegistrationHandler::reset_no_cache();
 			RegistrationHandler::on_template_redirect();
 			$this->assertSame( 1, $fired, $arg );
+
+			// Drugie wywołanie w tym samym żądaniu nie daje drugiego zestawu.
+			RegistrationHandler::on_template_redirect();
+			$this->assertSame( 1, $fired, $arg . ': idempotencja' );
 		}
-		$this->assertTrue( defined( 'DONOTCACHEPAGE' ) );
 		remove_all_actions( 'litespeed_control_set_nocache' );
 	}
 

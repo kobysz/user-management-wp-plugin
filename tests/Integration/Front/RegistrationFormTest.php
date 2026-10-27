@@ -24,6 +24,13 @@ require_once dirname( __DIR__ ) . '/Support/acf-render-stub.php';
 
 final class RegistrationFormTest extends WP_UnitTestCase {
 
+	/**
+	 * Ile razy odpalił się hook zakazu cache (patrz `countNoCache()`).
+	 *
+	 * @var int
+	 */
+	private int $noCacheFired = 0;
+
 	public function set_up(): void {
 		parent::set_up();
 		AcfRenderRecorder::$fields = array();
@@ -484,28 +491,51 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 
 		$this->assertTrue( shortcode_exists( RegistrationForm::SHORTCODE ) );
 		$this->assertStringContainsString( 'name="pusers_profession"', do_shortcode( '[' . RegistrationForm::SHORTCODE . ']' ) );
+		$this->assertNotFalse(
+			has_action( 'template_redirect', array( RegistrationForm::class, 'on_template_redirect' ) ),
+			'Nagłówki zakazu cache muszą mieć skąd wyjść przed renderem.'
+		);
+	}
+
+	/**
+	 * Licznik odpaleń hooka zakazu cache cudzej wtyczki; zapomina poprzednie żądanie.
+	 *
+	 * Dowód niesie licznik, a nie `defined( 'DONOTCACHEPAGE' )`: stała raz zdefiniowana w procesie
+	 * PHPUnit zostaje do końca suity, więc asercja na nią przechodzi także wtedy, gdy zestaw
+	 * w ogóle nie poszedł.
+	 *
+	 * @param array<int, string> $order Rejestr kolejności wywołań (dopisywane „no_cache”).
+	 */
+	private function countNoCache( array &$order ): void {
+		RegistrationHandler::reset_no_cache();
+		$this->noCacheFired = 0;
+		add_action(
+			'litespeed_control_set_nocache',
+			function () use ( &$order ): void {
+				++$this->noCacheFired;
+				$order[] = 'no_cache';
+			}
+		);
 	}
 
 	public function test_the_form_page_is_excluded_from_page_caching(): void {
 		// Strona z nonce'em i podpisanym znacznikiem czasu zapisana w cache na dłużej niż dobę
 		// odpowiada każdemu tym samym martwym nonce'em, a komunikat „odśwież stronę” nie może pomóc,
 		// bo odświeżenie zwraca tę samą stronę z cache. Rejestracja jest wtedy trwale niemożliwa.
-		$fired = 0;
-		add_action(
-			'litespeed_control_set_nocache',
-			static function () use ( &$fired ): void {
-				++$fired;
-			}
-		);
+		$order = array();
+		$this->countNoCache( $order );
 
 		RegistrationForm::render();
-		$this->assertSame( 1, $fired, 'Render shortcode\'u musi wyłączyć stronę z cache.' );
-		$this->assertTrue( defined( 'DONOTCACHEPAGE' ) );
+		$this->assertSame( 1, $this->noCacheFired, 'Render shortcode\'u musi wyłączyć stronę z cache.' );
+
+		// Idempotencja: drugie wywołanie w tym samym żądaniu nie daje drugiego zestawu.
+		RegistrationHandler::no_cache();
+		$this->assertSame( 1, $this->noCacheFired, 'Dwa wywołania w jednym żądaniu to jeden zestaw.' );
 
 		// Ten sam zestaw co po zgłoszeniu: jedno miejsce, bez dwóch kopii.
-		$fired = 0;
+		RegistrationHandler::reset_no_cache();
 		RegistrationHandler::no_cache();
-		$this->assertSame( 1, $fired );
+		$this->assertSame( 2, $this->noCacheFired );
 
 		remove_all_actions( 'litespeed_control_set_nocache' );
 	}
@@ -515,18 +545,70 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		// w tej chwili pokazywałaby „rejestracja niedostępna” także po naprawieniu konfiguracji.
 		remove_all_filters( 'pusers_acf_groups' );
 		add_filter( 'pusers_acf_groups', static fn (): array => array() );
-		$fired = 0;
-		add_action(
-			'litespeed_control_set_nocache',
-			static function () use ( &$fired ): void {
-				++$fired;
-			}
-		);
+		$order = array();
+		$this->countNoCache( $order );
 
 		$html = RegistrationForm::render();
 
 		$this->assertStringContainsString( 'pusers-notice', $html );
-		$this->assertSame( 1, $fired );
+		$this->assertSame( 1, $this->noCacheFired );
+		remove_all_actions( 'litespeed_control_set_nocache' );
+	}
+
+	public function test_the_no_cache_set_goes_out_before_the_content_is_rendered(): void {
+		// Wywołanie z shortcode'u pracuje w `the_content`, czyli po rozpoczęciu wysyłki treści:
+		// `headers_sent()` jest wtedy prawdą, więc nagłówki nie wychodzą i cache PRZED PHP
+		// (CDN, reverse proxy) nie jest zablokowany wcale. Zestaw musi pójść przed renderem.
+		$order = array();
+		$this->countNoCache( $order );
+		add_filter(
+			'the_content',
+			static function ( $content ) use ( &$order ) {
+				$order[] = 'content';
+				return $content;
+			},
+			1
+		);
+		$page = self::factory()->post->create(
+			array(
+				'post_type'    => 'page',
+				'post_content' => '[' . RegistrationForm::SHORTCODE . ']',
+			)
+		);
+		RegistrationForm::register();
+
+		$this->go_to( (string) get_permalink( $page ) );
+		do_action( 'template_redirect' );
+
+		$this->assertSame( array( 'no_cache' ), $order, 'Zestaw jedzie z hooka, przed renderem treści.' );
+
+		// Render treści: shortcode woła zestaw jako drugą warstwę, ale zestaw już poszedł.
+		apply_filters( 'the_content', (string) get_post( $page )->post_content );
+
+		$this->assertSame( array( 'no_cache', 'content' ), $order, 'Zestaw przed treścią, bez drugiego zestawu w treści.' );
+		$this->assertSame( 1, $this->noCacheFired );
+		remove_all_actions( 'litespeed_control_set_nocache' );
+		remove_all_filters( 'the_content' );
+	}
+
+	public function test_a_page_without_the_shortcode_is_not_excluded_from_caching(): void {
+		// Zakaz cache dotyczy strony formularza, nie całej witryny: wyłączenie cache wszędzie
+		// byłoby zmianą, o którą nikt nie prosił.
+		$order = array();
+		$this->countNoCache( $order );
+		$page  = self::factory()->post->create(
+			array(
+				'post_type'    => 'page',
+				'post_content' => 'Zwykła strona bez formularza.',
+			)
+		);
+		RegistrationForm::register();
+
+		$this->go_to( (string) get_permalink( $page ) );
+		do_action( 'template_redirect' );
+
+		$this->assertSame( 0, $this->noCacheFired );
+		$this->assertSame( array(), $order );
 		remove_all_actions( 'litespeed_control_set_nocache' );
 	}
 }

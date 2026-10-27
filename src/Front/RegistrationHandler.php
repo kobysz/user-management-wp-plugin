@@ -201,6 +201,13 @@ final class RegistrationHandler {
 	private static array $read = array();
 
 	/**
+	 * Czy zestaw zakazu cache już poszedł w tym żądaniu (patrz `no_cache()`).
+	 *
+	 * @var bool
+	 */
+	private static bool $no_cache_sent = false;
+
+	/**
 	 * Podpina obsługę zgłoszenia (także dla niezalogowanych) i zasila powtórne wypełnienie formularza.
 	 */
 	public static function register(): void {
@@ -222,8 +229,17 @@ final class RegistrationHandler {
 	 * tym samym martwym nonce'em, a komunikat „odśwież stronę” każe wtedy człowiekowi zrobić rzecz,
 	 * która nie może pomóc: odświeżenie zwraca tę samą stronę z cache, więc rejestracja jest
 	 * trwale niemożliwa dla wszystkich i nie powstaje przy tym żaden wpis w logu.
+	 *
+	 * Idempotentne: wołane dwa razy w jednym żądaniu (hook przed renderem i render shortcode'u
+	 * jako druga warstwa) nie wysyła dwóch zestawów nagłówków ani nie odpala hooka cudzej wtyczki
+	 * dwa razy.
 	 */
 	public static function no_cache(): void {
+		if ( self::$no_cache_sent ) {
+			return;
+		}
+		self::$no_cache_sent = true;
+
 		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
 			define( 'DONOTCACHEPAGE', true ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- stała uznawana przez wtyczki cache.
 		}
@@ -232,6 +248,14 @@ final class RegistrationHandler {
 			header( 'X-LiteSpeed-Cache-Control: no-cache' );
 		}
 		do_action( 'litespeed_control_set_nocache', 'pusers registration' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- hook cudzej wtyczki (LiteSpeed Cache).
+	}
+
+	/**
+	 * Zapomina, że zestaw zakazu cache poszedł (jedno żądanie to jeden proces PHP, więc kod
+	 * produkcyjny tego nie woła; używają tego testy, które w jednym procesie udają wiele żądań).
+	 */
+	public static function reset_no_cache(): void {
+		self::$no_cache_sent = false;
 	}
 
 	/**

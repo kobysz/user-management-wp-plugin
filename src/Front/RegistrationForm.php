@@ -20,6 +20,7 @@ use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Plugin;
+use WP_Post;
 
 /**
  * Widok formularza; obsługa wysłanego żądania należy do osobnego kroku.
@@ -75,6 +76,31 @@ final class RegistrationForm {
 	 */
 	public static function register(): void {
 		add_shortcode( self::SHORTCODE, array( self::class, 'render' ) );
+		add_action( 'template_redirect', array( self::class, 'on_template_redirect' ) );
+	}
+
+	/**
+	 * Wyłącza z cache stronę, której treść niesie shortcode formularza — PRZED renderem.
+	 *
+	 * Wywołanie z samego shortcode'u (patrz `render()`) pracuje w `the_content`, czyli po
+	 * rozpoczęciu wysyłki treści: `headers_sent()` jest wtedy prawdą, więc `nocache_headers()`
+	 * wraca od razu i nagłówek LiteSpeed też nie wychodzi. Zostają `DONOTCACHEPAGE` i hook,
+	 * czytane przez wtyczki cache późno — a cache PRZED PHP (CDN, reverse proxy), który
+	 * obchodzi się wyłącznie nagłówkami, nie jest wtedy zablokowany wcale i może zapisać stronę
+	 * formularza z martwym nonce'em.
+	 *
+	 * `template_redirect` jest najpóźniejszym momentem, w którym zapytanie główne jest już znane,
+	 * a wyjście jeszcze nie ruszyło. Wywołanie w shortcode'ie ZOSTAJE jako druga warstwa: pokrywa
+	 * umieszczenie formularza poza treścią wpisu (widżet, szablon, blok), gdzie tej treści nie ma
+	 * czego sprawdzać — tam nagłówki i tak mogą nie zdążyć, ale `DONOTCACHEPAGE` zdąży.
+	 */
+	public static function on_template_redirect(): void {
+		$post = get_queried_object();
+		if ( ! $post instanceof WP_Post || ! has_shortcode( $post->post_content, self::SHORTCODE ) ) {
+			return;
+		}
+
+		RegistrationHandler::no_cache();
 	}
 
 	/**
@@ -134,6 +160,10 @@ final class RegistrationForm {
 	 * Strona z shortcode'em jest wyłączana z cache'owania: niesie nonce, podpisany znacznik czasu
 	 * i komunikaty potwierdzenia adresu, a zapisana w cache podaje każdemu odwiedzającemu ten sam
 	 * nonce — po dobie martwy (patrz `RegistrationHandler::no_cache()`).
+	 *
+	 * To DRUGA warstwa: pierwsza, z nagłówkami, jedzie przed renderem z `on_template_redirect()`.
+	 * Tutaj pokrywamy umieszczenie formularza poza treścią wpisu, gdzie tamta nie zadziała.
+	 * Wywołanie jest idempotentne, więc oba razem dają jeden zestaw.
 	 */
 	public static function render(): string {
 		RegistrationHandler::no_cache();
