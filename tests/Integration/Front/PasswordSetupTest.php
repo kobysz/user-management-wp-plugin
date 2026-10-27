@@ -441,6 +441,33 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->assertNotFalse( wp_check_password( self::GOOD_PASSWORD, get_userdata( $id )->user_pass, $id ) );
 	}
 
+	public function test_a_ticket_consumed_by_a_parallel_request_sets_no_password(): void {
+		// Test sekwencyjny dowodzi tylko „bilet jest zużywany”. Tu chodzi o ATOMOWOŚĆ: drugi
+		// konsument odtworzony w locie, dokładnie MIĘDZY odczytem biletu a jego usunięciem
+		// (technika szwu z crona czyszczącego). Zużycie z dopasowaniem wartości daje wtedy
+		// `false`; sprawdź-potem-usuń przepuszcza oba żądania i ustawia hasło.
+		global $wpdb;
+		list( $id, $ticket ) = $this->confirmed();
+		get_user_meta( $id ); // Zasilenie cache: odczyt w ticket() ma widzieć bilet, jak żądanie, które zdążyło pierwsze.
+		$raced = false;
+		$race  = function ( $check, $object_id, $meta_key ) use ( $id, &$raced, $wpdb ) {
+			if ( ! $raced && $id === (int) $object_id && UserMeta::PASSWORD_TICKET_HASH === $meta_key ) {
+				$raced = true;
+				// Żądanie równoległe zużywa bilet w bazie, poza cache tego procesu.
+				$wpdb->delete( $wpdb->usermeta, array( 'user_id' => $id, 'meta_key' => UserMeta::PASSWORD_TICKET_HASH ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Fixtura: zużycie biletu poza cache.
+			}
+			return $check;
+		};
+		add_filter( 'get_user_metadata', $race, 10, 3 );
+
+		$result = $this->submit( self::GOOD_PASSWORD, $ticket );
+
+		remove_filter( 'get_user_metadata', $race, 10 );
+		$this->assertTrue( $raced, 'Fixtura nie zadziałała: bilet nie został zużyty w trakcie żądania.' );
+		$this->assertSame( PasswordSetup::RESULT_EXPIRED, $result, 'Bilet zużyty przez żądanie równoległe nie ustawia hasła drugi raz.' );
+		$this->assertFalse( wp_check_password( self::GOOD_PASSWORD, get_userdata( $id )->user_pass, $id ) );
+	}
+
 	public function test_a_malformed_ticket_is_refused(): void {
 		list( $id, $ticket ) = $this->confirmed();
 		$hash                = (string) get_user_meta( $id, UserMeta::PASSWORD_TICKET_HASH, true );
