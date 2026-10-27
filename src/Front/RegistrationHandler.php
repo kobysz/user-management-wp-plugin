@@ -109,10 +109,11 @@ final class RegistrationHandler {
 	 * nieprzefiltrowany HTML, wyprowadzenie danych, uprawnienia do CUDZEJ treści oraz uprawnienia
 	 * sieciowe.
 	 *
-	 * Uprawnienia do WŁASNEJ treści (`edit_posts`, `publish_posts`, `upload_files`) NIE są tu
-	 * wymienione: rejestracja musi działać na portalu z rolą domyślną `subscriber`, `contributor`
-	 * albo `author`. To zapisana decyzja i granica tej listy przebiega dokładnie tu: swoje wolno,
-	 * cudze nie.
+	 * Uprawnienia do WŁASNEJ treści (`edit_posts`, `publish_posts`, `upload_files`, a tak samo ich
+	 * odpowiedniki dla stron: `edit_pages`, `publish_pages`) NIE są tu wymienione: rejestracja musi
+	 * działać na portalu z rolą domyślną `subscriber`, `contributor` albo `author`, a także z rolą
+	 * własną, która umie tyle samo wobec stron. To zapisana decyzja i granica tej listy przebiega
+	 * dokładnie tu: swoje wolno, cudze nie.
 	 */
 	private const DANGEROUS_CAPABILITIES = array(
 		// Zarządzanie kontami: samorejestrujące się konto nie może awansować siebie ani zakładać kont.
@@ -154,9 +155,8 @@ final class RegistrationHandler {
 		// wtyczki do edycji ról) przechodziła przez tę listę, bo brakowało w niej tych nazw.
 		'edit_others_posts',
 		'edit_others_pages',
-		'edit_pages',
-		'publish_pages',
 		'delete_others_posts',
+		'delete_others_pages',
 		'moderate_comments',
 		// Sieć (multisite): wszystko powyżej, tylko na wszystkich witrynach naraz.
 		'manage_network',

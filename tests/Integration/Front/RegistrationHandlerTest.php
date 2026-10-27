@@ -404,9 +404,8 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 			'delete_site',
 			'edit_others_posts',
 			'edit_others_pages',
-			'edit_pages',
-			'publish_pages',
 			'delete_others_posts',
+			'delete_others_pages',
 			'moderate_comments',
 			'manage_network',
 			'manage_network_options',
@@ -513,6 +512,40 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$id = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
 
 		$this->assertSame( array( $role ), get_userdata( $id )->roles );
+	}
+
+	public function test_a_default_role_with_rights_to_its_own_pages_can_still_register(): void {
+		// `edit_pages` i `publish_pages` to uprawnienia do WŁASNEJ treści, dokładnie symetryczne do
+		// dopuszczonych `edit_posts` i `publish_posts`. Zakaz zamykał rejestrację dla WSZYSTKICH na
+		// portalu z własną rolą domyślną, która je ma, choć ta rola nie może nic cudzego — a to jest
+		// anty-cel nazwany w specyfikacji najważniejszym.
+		add_role( 'pusers_strony', 'Autor stron', array( 'read' => true, 'edit_posts' => true, 'edit_pages' => true, 'publish_pages' => true ) );
+		update_option( 'default_role', 'pusers_strony' );
+		$this->post( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+		$email = $this->lastEmail();
+		$this->submit();
+		$id = email_exists( $email );
+		// Role czytamy PRZED usunięciem roli: po `remove_role()` konto nie ma już jak jej nazwać.
+		$roles = false === $id ? array() : get_userdata( (int) $id )->roles;
+		update_option( 'default_role', 'subscriber' );
+		remove_role( 'pusers_strony' );
+
+		$this->assertNotFalse( $id, 'Rola z uprawnieniami do własnych stron nie może zamykać rejestracji.' );
+		$this->assertSame( array( 'pusers_strony' ), $roles );
+	}
+
+	public function test_a_role_that_can_delete_someone_elses_pages_is_refused(): void {
+		// Symetryczne do `delete_others_posts`, którego lista zabraniała: brakowało go, więc rola
+		// mogąca usunąć stronę napisaną przez redakcję przechodziła guard.
+		add_role( 'pusers_niszczyciel', 'Niszczyciel stron', array( 'read' => true, 'delete_others_pages' => true ) );
+		update_option( 'default_role', 'pusers_niszczyciel' );
+		$before = $this->user_ids();
+		$flash  = $this->follow( $this->post_and_submit( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) ) );
+		update_option( 'default_role', 'subscriber' );
+		remove_role( 'pusers_niszczyciel' );
+
+		$this->assertSame( $before, $this->user_ids() );
+		$this->assertSame( 'registration_closed', $flash['errors']['registration'] ?? '' );
 	}
 
 	public function test_a_role_with_rights_to_someone_elses_content_is_refused_even_without_unfiltered_html(): void {
