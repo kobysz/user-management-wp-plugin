@@ -102,10 +102,13 @@ final class RegistrationHandler {
 	 * Guard istnieje WYŁĄCZNIE dla roli nietypowej albo podmienionej, więc argument „domyślne role
 	 * WordPressa tego nie mają” nie ma tu wartości: w jedynym przypadku, w którym lista pracuje,
 	 * rola jest własna. Lista zakazów obejmuje zarządzanie kontami, wykonanie i aktualizację kodu,
-	 * nieprzefiltrowany HTML, wyprowadzenie danych oraz uprawnienia sieciowe.
+	 * nieprzefiltrowany HTML, wyprowadzenie danych, uprawnienia do CUDZEJ treści oraz uprawnienia
+	 * sieciowe.
 	 *
-	 * Uprawnienia do treści (`edit_posts`, `publish_posts`, `upload_files`) NIE są tu wymienione:
-	 * rejestracja musi działać na portalu z rolą domyślną `subscriber`, `contributor` albo `author`.
+	 * Uprawnienia do WŁASNEJ treści (`edit_posts`, `publish_posts`, `upload_files`) NIE są tu
+	 * wymienione: rejestracja musi działać na portalu z rolą domyślną `subscriber`, `contributor`
+	 * albo `author`. To zapisana decyzja i granica tej listy przebiega dokładnie tu: swoje wolno,
+	 * cudze nie.
 	 */
 	private const DANGEROUS_CAPABILITIES = array(
 		// Zarządzanie kontami: samorejestrujące się konto nie może awansować siebie ani zakładać kont.
@@ -142,6 +145,15 @@ final class RegistrationHandler {
 		'export_others_personal_data',
 		'erase_others_personal_data',
 		'delete_site',
+		// Cudza treść: samo zarejestrowane, jeszcze niepotwierdzone konto nie może edytować tego, co
+		// napisała redakcja, ani moderować komentarzy. Rola „redaktor bez HTML-a” (własna rola z
+		// wtyczki do edycji ról) przechodziła przez tę listę, bo brakowało w niej tych nazw.
+		'edit_others_posts',
+		'edit_others_pages',
+		'edit_pages',
+		'publish_pages',
+		'delete_others_posts',
+		'moderate_comments',
 		// Sieć (multisite): wszystko powyżej, tylko na wszystkich witrynach naraz.
 		'manage_network',
 		'manage_network_options',

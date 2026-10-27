@@ -386,6 +386,12 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 			'export_others_personal_data',
 			'erase_others_personal_data',
 			'delete_site',
+			'edit_others_posts',
+			'edit_others_pages',
+			'edit_pages',
+			'publish_pages',
+			'delete_others_posts',
+			'moderate_comments',
 			'manage_network',
 			'manage_network_options',
 			'manage_network_plugins',
@@ -491,6 +497,21 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$id = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
 
 		$this->assertSame( array( $role ), get_userdata( $id )->roles );
+	}
+
+	public function test_a_role_with_rights_to_someone_elses_content_is_refused_even_without_unfiltered_html(): void {
+		// „Redaktor bez HTML-a”: własna rola z wtyczki do edycji ról, która ma uprawnienia do cudzej
+		// treści, ale nie ma unfiltered_html. Osoba, która sama się zarejestrowała i jeszcze nie
+		// potwierdziła adresu, mogłaby edytować treść napisaną przez redakcję portalu.
+		add_role( 'pusers_redaktor', 'Redaktor bez HTML-a', array( 'read' => true, 'edit_posts' => true, 'edit_others_posts' => true ) );
+		update_option( 'default_role', 'pusers_redaktor' );
+		$before = $this->user_ids();
+		$flash  = $this->follow( $this->post_and_submit( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) ) );
+		update_option( 'default_role', 'subscriber' );
+		remove_role( 'pusers_redaktor' );
+
+		$this->assertSame( $before, $this->user_ids() );
+		$this->assertSame( 'registration_closed', $flash['errors']['registration'] ?? '' );
 	}
 
 	public function test_the_login_is_random_and_does_not_contain_the_address_part(): void {
