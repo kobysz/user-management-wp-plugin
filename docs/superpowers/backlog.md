@@ -81,6 +81,21 @@ Nie jest to mina — `Settings::fromArray()` dopełnia brakujące klucze domyśl
 
 ## Plan 4 — Logowanie
 
+### Brama logowania NIE ISTNIEJE i do jej powstania wtyczka nie egzekwuje stanu konta
+
+**To najpoważniejsza otwarta pozycja po Planie 3.** `LoginGate::decide()` istnieje od Planu 1, ma testy i **nie ma ani jednego konsumenta** — w `src/` nie ma żadnego podpięcia pod `authenticate` ani `wp_authenticate`. Skutek: konto utworzone w stanie `email_unconfirmed` **loguje się normalnie**, czyli specyfikacja („logowanie wpuszcza wyłącznie `zatwierdzony`") nie jest po Planie 3 egzekwowana w ogóle.
+
+Drugi, poważniejszy skutek: **to przewraca całą pracę Planów 3 nad nieujawnianiem kont.** Plan 3 zamknął enumerację w formularzu rejestracji (zgłoszenie na istniejący adres zwraca dokładnie odpowiedź przyjętego), ale atakujący omija to dwoma żądaniami: wysyła zgłoszenie na adres kandydata z **własnym** hasłem, potem próbuje się zalogować. Wejście znaczy „adres był wolny", komunikat o błędnym haśle znaczy „adres jest zajęty". Dwa żądania, ustawienia domyślne, pewność całkowita.
+
+Plan 4 ma więc dwa wymogi, oba wiążące:
+
+1. **Podpiąć bramę** i odmawiać wejścia kontu bez stanu `zatwierdzony`.
+2. **Odmowa dla `email_unconfirmed` musi brzmieć IDENTYCZNIE jak błędne hasło.** Inaczej brama sama staje się sondą: „to konto czeka na potwierdzenie adresu" mówi atakującemu, że adres jest zajęty. Rozróżnienie komunikatów, którego chce specyfikacja („każdy inny stan daje własny komunikat, żeby użytkownik wiedział, czy ma szukać maila"), jest **bezpieczne tylko dla stanów po potwierdzeniu adresu** — czyli `oczekujący`, `zatwierdzony`, `odrzucony`. Dla `niepotwierdzony_mail` własny komunikat ujawnia istnienie konta komuś, kto hasła nie zna.
+
+### Punkt końcowy REST `wp/v2/users` ujawnia powstanie konta
+
+Niezależnie od formularza i bramy: rdzeń WordPressa odpowiada na `/wp-json/wp/v2/users/<id>` kodem `rest_user_invalid_id` (404) dla nieistniejącego identyfikatora i `rest_user_cannot_view` (403) dla istniejącego, więc „czy pojawił się nowy wiersz użytkownika" czyta się **bez uwierzytelnienia**. Dla portalu medycznego to ta sama własność, którą Plan 3 zamykał w formularzu. Zamknąć ten punkt dla anonima (albo zawęzić do kont z opublikowanymi wpisami) razem z bramą logowania, bo osobno jedno bez drugiego niczego nie daje.
+
 ### Adapter stanu konta MUSI odróżnić brak klucza od wartości nierozpoznanej
 
 `AccountStatus::tryFromStored()` zwraca `null` zarówno dla brakującego klucza, jak i dla wartości nierozpoznanej (`'Approved'`, `'Pending'`, `' pending'` — enum jest wrażliwy na wielkość liter i nie przycina spacji). `LoginGate::decide( null )` **wpuszcza**, bo konto bez stanu to konto założone ręcznie w panelu, a brama nie może zamknąć administratora poza portalem.
