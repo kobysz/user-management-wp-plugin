@@ -7,6 +7,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration\Front;
 
+use PortalUsers\Acf\AcfFieldSource;
 use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Fields\FieldMatrix;
@@ -34,6 +35,19 @@ require_once dirname( __DIR__ ) . '/Support/acf-render-stub.php';
 final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 	private const PASSWORD = 'S3kret\\ne"Haslo!';
+
+	/**
+	 * Klucze ACF pól harnessu (nazwa pola => klucz). Definicja z `acf_get_fields()` zawsze nosi
+	 * klucz, a `acf_prepare_field()` nazywa nim input, więc żądanie niesie `pusers_fields[<klucz>]`.
+	 * Testy podają pola po NAZWIE (tak je widzi macierz i metadane), a `post()` tłumaczy je na klucze.
+	 */
+	private const FIELD_KEYS = array(
+		'pwz'          => 'field_6731a2c4de',
+		'zgoda'        => 'field_8f20b5d1ac',
+		'newsletter'   => 'field_1c94e7f308',
+		'notatka'      => 'field_4a5db28e96',
+		'capabilities' => 'field_e03f71b4ca',
+	);
 
 	/**
 	 * Adres ostatniego przekierowania (przekierowanie jest anulowane, żeby test przeżył).
@@ -110,11 +124,11 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		add_filter(
 			'pusers_acf_fields',
 			static fn (): array => array(
-				array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text' ),
-				array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false' ),
-				array( 'name' => 'newsletter', 'label' => 'Newsletter', 'type' => 'true_false' ),
-				array( 'name' => 'notatka', 'label' => 'Notatka', 'type' => 'text' ),
-				array( 'name' => $cap, 'label' => 'Podstęp', 'type' => 'text' ),
+				array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text', 'key' => self::FIELD_KEYS['pwz'] ),
+				array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false', 'key' => self::FIELD_KEYS['zgoda'] ),
+				array( 'name' => 'newsletter', 'label' => 'Newsletter', 'type' => 'true_false', 'key' => self::FIELD_KEYS['newsletter'] ),
+				array( 'name' => 'notatka', 'label' => 'Notatka', 'type' => 'text', 'key' => self::FIELD_KEYS['notatka'] ),
+				array( 'name' => $cap, 'label' => 'Podstęp', 'type' => 'text', 'key' => self::FIELD_KEYS['capabilities'] ),
 			)
 		);
 		SettingsRepository::save(
@@ -167,6 +181,21 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Indeks, pod którym pole wraca w żądaniu — tak, jak nazwałoby input ACF: klucz pola, gdy
+	 * definicja go nosi, a w przeciwnym razie nazwa pola. Czytamy to z tej samej definicji, którą
+	 * widzi render, żeby test podający pola po nazwie wysyłał to, co wysłałaby przeglądarka.
+	 * Nazwa spoza grupy zostaje nazwą: takie wejście i tak ma być odrzucone.
+	 *
+	 * @param string $name Nazwa pola.
+	 */
+	private function requestIndex( string $name ): string {
+		$definition = ( new AcfFieldSource( SettingsRepository::get()->acfGroupKey ) )->definition( $name );
+		$key        = $definition['key'] ?? null;
+
+		return is_string( $key ) && '' !== $key ? $key : $name;
+	}
+
+	/**
 	 * Prawdziwy klucz metadanej z rolami konta na tej witrynie.
 	 */
 	private function capabilitiesKey(): string {
@@ -205,7 +234,11 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 			}
 		}
 		if ( isset( $post[ AcfFields::INPUT ] ) && is_array( $post[ AcfFields::INPUT ] ) ) {
-			$post[ AcfFields::INPUT ] = array_filter( $post[ AcfFields::INPUT ], static fn ( $v ): bool => null !== $v );
+			$container = array();
+			foreach ( array_filter( $post[ AcfFields::INPUT ], static fn ( $v ): bool => null !== $v ) as $name => $value ) {
+				$container[ $this->requestIndex( (string) $name ) ] = $value;
+			}
+			$post[ AcfFields::INPUT ] = $container;
 		}
 		// WordPress dodaje ukośniki do danych żądania; obsługa musi je zdjąć.
 		$_POST                     = wp_slash( $post );
@@ -811,6 +844,34 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 		$id = $this->register_ok();
 		$this->assertSame( '5425740', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'pwz', true ) );
+	}
+
+	public function test_a_field_is_read_from_the_request_under_its_acf_key_and_stored_under_its_name(): void {
+		// `acf_prepare_field()` nadpisuje nazwę pola jego KLUCZEM, a potem owija ją prefiksem, więc
+		// przeglądarka wysyła `pusers_fields[field_abc123]`, nie `pusers_fields[pwz]`. Metadana,
+		// macierz i walidator pracują dalej po NAZWIE: mapowanie jest wyłącznie na wejściu.
+		remove_all_filters( 'pusers_acf_fields' );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array(
+				array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text', 'key' => 'field_abc123' ),
+				array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false', 'key' => 'field_def456' ),
+			)
+		);
+
+		$email = $this->email();
+		$this->post(
+			array(
+				RegistrationForm::EMAIL => $email,
+				AcfFields::INPUT        => array( 'field_abc123' => '5425740', 'field_def456' => '1' ),
+			)
+		);
+		$this->submit();
+
+		$id = email_exists( $email );
+		$this->assertNotFalse( $id, 'Konto powinno powstać: żądanie niesie klucze pól, jak na żywym ACF.' );
+		$this->assertSame( '5425740', get_user_meta( (int) $id, RegistrationHandler::ACF_META_PREFIX . 'pwz', true ) );
+		$this->assertSame( '1', get_user_meta( (int) $id, RegistrationHandler::ACF_META_PREFIX . 'zgoda', true ) );
 	}
 
 	public function test_values_are_stored_as_sanitised_text_with_the_acf_prefix(): void {

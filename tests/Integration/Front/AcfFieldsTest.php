@@ -16,6 +16,15 @@ require_once dirname( __DIR__ ) . '/Support/acf-render-stub.php';
 
 final class AcfFieldsTest extends WP_UnitTestCase {
 
+	/**
+	 * Klucze ACF pól harnessu. Definicja z `acf_get_fields()` zawsze nosi klucz, a
+	 * `acf_prepare_field()` nazywa nim input, więc to on jest indeksem w żądaniu.
+	 */
+	private const KEY_PWZ        = 'field_6731a2c4de';
+	private const KEY_ZGODA      = 'field_8f20b5d1ac';
+	private const KEY_NEWSLETTER = 'field_1c94e7f308';
+	private const KEY_LATA       = 'field_4a5db28e96';
+
 	public function set_up(): void {
 		parent::set_up();
 		AcfRenderRecorder::$fields = array();
@@ -23,10 +32,10 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 		add_filter(
 			'pusers_acf_fields',
 			static fn (): array => array(
-				array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text' ),
-				array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false' ),
-				array( 'name' => 'newsletter', 'label' => 'Newsletter', 'type' => 'true_false' ),
-				array( 'name' => 'lata', 'label' => 'Lata praktyki', 'type' => 'number' ),
+				array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text', 'key' => self::KEY_PWZ ),
+				array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false', 'key' => self::KEY_ZGODA ),
+				array( 'name' => 'newsletter', 'label' => 'Newsletter', 'type' => 'true_false', 'key' => self::KEY_NEWSLETTER ),
+				array( 'name' => 'lata', 'label' => 'Lata praktyki', 'type' => 'number', 'key' => self::KEY_LATA ),
 			)
 		);
 	}
@@ -90,13 +99,16 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 		$this->assertSame( array(), ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->booleanKeys() );
 	}
 
-	public function test_values_are_read_only_for_known_fields(): void {
+	public function test_values_are_read_under_the_field_key_and_returned_under_the_field_name(): void {
+		// Żądanie niesie KLUCZE (tak nazywa inputy ACF), a wynik jest po NAZWACH: po nazwach
+		// pracują macierz, walidator i zapis metadanych.
 		$raw = array(
 			AcfFields::INPUT => array(
-				'pwz'      => '5425740',
-				'zgoda'    => '1',
-				'is_admin' => '1',
-				'role'     => 'administrator',
+				self::KEY_PWZ   => '5425740',
+				self::KEY_ZGODA => '1',
+				'pwz'           => 'nie-ta-nazwa',
+				'is_admin'      => '1',
+				'role'          => 'administrator',
 			),
 			'role'           => 'administrator',
 		);
@@ -109,6 +121,45 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 		);
 	}
 
+	public function test_a_definition_without_a_key_is_read_under_its_name(): void {
+		// Definicja bez klucza to legalny wariant: tak wyglądają pola podane filtrem
+		// `pusers_acf_fields`. ACF owija wtedy prefiksem samą nazwę, raz.
+		remove_all_filters( 'pusers_acf_fields' );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array( array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text' ) )
+		);
+		$fields = new AcfFields( new AcfFieldSource( 'group_abc' ) );
+
+		$this->assertSame( array( 'pwz' => '5425740' ), $fields->fromRequest( array( AcfFields::INPUT => array( 'pwz' => '5425740' ) ) ) );
+
+		ob_start();
+		$fields->render( 'pwz', true, null );
+		ob_end_clean();
+		$this->assertSame( AcfFields::INPUT . '[pwz]', AcfRenderRecorder::$fields[0]['name'] );
+	}
+
+	public function test_two_definitions_sharing_one_request_index_are_both_rejected(): void {
+		// Klucz jednego pola równy nazwie drugiego: wejście jest nierozstrzygalne, więc żadnego
+		// z nich nie czytamy. Cicha wygrana jednego byłaby tym samym błędem, co czytanie pola
+		// pod nazwą, której ACF nie wysyła.
+		remove_all_filters( 'pusers_acf_fields' );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array(
+				array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text', 'key' => 'numer' ),
+				array( 'name' => 'numer', 'label' => 'Numer', 'type' => 'text' ),
+				array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false', 'key' => self::KEY_ZGODA ),
+			)
+		);
+
+		$read = ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest(
+			array( AcfFields::INPUT => array( 'numer' => '5425740', self::KEY_ZGODA => '1' ) )
+		);
+
+		$this->assertSame( array( 'zgoda' => '1' ), $read, 'Pole o spornym indeksie nie jest czytane; reszta grupy tak.' );
+	}
+
 	public function test_request_without_the_fields_container_yields_nothing(): void {
 		$this->assertSame( array(), ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest( array( 'pwz' => '5425740' ) ) );
 		$this->assertSame( array(), ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest( array( AcfFields::INPUT => 'bzdura' ) ) );
@@ -117,11 +168,11 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 	public function test_unchecked_consent_from_the_request_is_read_as_the_zero_that_acf_sends(): void {
 		// Odznaczony `true_false` wysyła ukryte `0`; odczyt nie może go gubić ani zmieniać
 		// (normalizacja to osobny krok, który widzi tę wartość).
-		$read = ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest( array( AcfFields::INPUT => array( 'zgoda' => '0' ) ) );
+		$read = ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest( array( AcfFields::INPUT => array( self::KEY_ZGODA => '0' ) ) );
 		$this->assertSame( array( 'zgoda' => '0' ), $read );
 	}
 
-	public function test_render_hands_the_field_to_acf_with_requiredness_value_and_plugin_input_name(): void {
+	public function test_render_hands_the_field_to_acf_with_requiredness_value_and_the_plugin_prefix(): void {
 		ob_start();
 		( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->render( 'zgoda', true, '1' );
 		$html = (string) ob_get_clean();
@@ -132,7 +183,8 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 		$this->assertSame( 1, $field['required'] );
 		$this->assertSame( '1', $field['value'] );
 		$this->assertSame( AcfFields::INPUT, $field['prefix'] );
-		$this->assertSame( AcfFields::INPUT . '[zgoda]', $field['name'] );
+		// Nazwę nadaje ACF: klucz pola owinięty prefiksem, RAZ. Wtyczka jej nie ustawia.
+		$this->assertSame( AcfFields::INPUT . '[' . self::KEY_ZGODA . ']', $field['name'] );
 		$this->assertStringContainsString( 'acf-stub', $html );
 	}
 

@@ -22,7 +22,11 @@ defined( 'ABSPATH' ) || exit;
 final class AcfFields {
 
 	/**
-	 * Nazwa kontenera w żądaniu: pola trafiają do `pusers_fields[<klucz pola>]`.
+	 * Nazwa kontenera w żądaniu: pola trafiają do `pusers_fields[<indeks pola>]`.
+	 *
+	 * Indeksem jest KLUCZ ACF (`field_abc123`), gdy definicja go nosi, a nazwa pola tylko wtedy,
+	 * gdy klucza nie ma (tak wyglądają definicje podane filtrem `pusers_acf_fields`). Nazywa
+	 * pole ACF, nie wtyczka: patrz `render()` i `indexMap()`.
 	 */
 	public const INPUT = 'pusers_fields';
 
@@ -69,7 +73,12 @@ final class AcfFields {
 	/**
 	 * Renderuje pole przez ACF. Pole spoza grupy nie jest renderowane.
 	 *
-	 * @param string $fieldKey Klucz pola.
+	 * Wtyczka ustawia WYŁĄCZNIE prefiks i pozwala ACF nazwać pole: `acf_prepare_field()`
+	 * nadpisuje nazwę kluczem pola, a dopiero potem owija ją prefiksem. Własne przypisanie
+	 * `name` byłoby kodem martwym przy definicji z kluczem, a przy definicji bez klucza
+	 * dawałoby nazwę owiniętą dwa razy (`pusers_fields[pusers_fields[pwz]]`).
+	 *
+	 * @param string $fieldKey Nazwa pola w źródle.
 	 * @param bool   $required Czy pole jest wymagane dla wybranej profesji.
 	 * @param mixed  $value    Wartość początkowa.
 	 */
@@ -80,7 +89,6 @@ final class AcfFields {
 		}
 
 		$field['prefix']   = self::INPUT;
-		$field['name']     = self::INPUT . '[' . $fieldKey . ']';
 		$field['required'] = $required ? 1 : 0;
 		$field['value']    = $value;
 
@@ -88,12 +96,14 @@ final class AcfFields {
 	}
 
 	/**
-	 * Czyta wartości pól z żądania białą listą kluczy ze źródła; reszta żądania jest ignorowana.
-	 * Wartości są surowe (w tym `'0'` z odznaczonego pola logicznego): normalizacja i sanityzacja
-	 * to osobne kroki.
+	 * Czyta wartości pól z żądania po INDEKSIE, którym ACF nazwało input, i oddaje je pod
+	 * NAZWAMI pól: po nazwach pracują macierz, walidator i zapis metadanych, więc mapowanie
+	 * dotyczy wyłącznie wejścia. Wejście, którego nie ma w mapie indeksów, jest odrzucane
+	 * (fail-closed). Wartości są surowe (w tym `'0'` z odznaczonego pola logicznego):
+	 * normalizacja i sanityzacja to osobne kroki.
 	 *
 	 * @param array<mixed> $raw Żądanie (np. `$_POST` po `wp_unslash()`).
-	 * @return array<string, mixed> Klucz pola => wartość.
+	 * @return array<string, mixed> Nazwa pola => wartość.
 	 */
 	public function fromRequest( array $raw ): array {
 		$submitted = $raw[ self::INPUT ] ?? null;
@@ -102,12 +112,41 @@ final class AcfFields {
 		}
 
 		$values = array();
-		foreach ( array_keys( $this->source->fields() ) as $fieldKey ) {
-			if ( array_key_exists( $fieldKey, $submitted ) ) {
-				$values[ $fieldKey ] = $submitted[ $fieldKey ];
+		foreach ( $this->indexMap() as $index => $fieldKey ) {
+			if ( array_key_exists( $index, $submitted ) ) {
+				$values[ $fieldKey ] = $submitted[ $index ];
 			}
 		}
 
 		return $values;
+	}
+
+	/**
+	 * Mapa indeks w żądaniu => nazwa pola, z jednej migawki definicji. Indeksem jest klucz ACF,
+	 * gdy definicja go nosi, a w przeciwnym razie nazwa pola.
+	 *
+	 * Gdy dwie definicje dają ten sam indeks (klucz jednego pola równy nazwie drugiego albo
+	 * powtórzony klucz), odrzucane są OBIE: wejście jest wtedy nierozstrzygalne, a cicha wygrana
+	 * jednej z nich byłaby tym samym rodzajem błędu co czytanie pola pod nazwą, której ACF nie
+	 * wysyła. Pole wymagane, które tak wypadło, zatrzyma zgłoszenie na `required`.
+	 *
+	 * @return array<string, string>
+	 */
+	private function indexMap(): array {
+		$map      = array();
+		$collided = array();
+		foreach ( array_keys( $this->source->fields() ) as $fieldKey ) {
+			$fieldKey   = (string) $fieldKey;
+			$definition = $this->source->definition( $fieldKey );
+			$key        = $definition['key'] ?? null;
+			$index      = is_string( $key ) && '' !== $key ? $key : $fieldKey;
+			if ( array_key_exists( $index, $map ) ) {
+				$collided[ $index ] = true;
+				continue;
+			}
+			$map[ $index ] = $fieldKey;
+		}
+
+		return array_diff_key( $map, $collided );
 	}
 }
