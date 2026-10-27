@@ -120,8 +120,14 @@ final class RegistrationForm {
 
 	/**
 	 * Zwraca formularz albo komunikat o niedostępności rejestracji.
+	 *
+	 * Strona z shortcode'em jest wyłączana z cache'owania: niesie nonce, podpisany znacznik czasu
+	 * i komunikaty potwierdzenia adresu, a zapisana w cache podaje każdemu odwiedzającemu ten sam
+	 * nonce — po dobie martwy (patrz `RegistrationHandler::no_cache()`).
 	 */
 	public static function render(): string {
+		RegistrationHandler::no_cache();
+
 		return Confirmation::notice_html() . self::render_form();
 	}
 

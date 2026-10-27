@@ -12,6 +12,7 @@ use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Front\AcfFields;
 use PortalUsers\Front\RegistrationForm;
+use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\SpamGuard;
 use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
@@ -465,5 +466,49 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 
 		$this->assertTrue( shortcode_exists( RegistrationForm::SHORTCODE ) );
 		$this->assertStringContainsString( 'name="pusers_profession"', do_shortcode( '[' . RegistrationForm::SHORTCODE . ']' ) );
+	}
+
+	public function test_the_form_page_is_excluded_from_page_caching(): void {
+		// Strona z nonce'em i podpisanym znacznikiem czasu zapisana w cache na dłużej niż dobę
+		// odpowiada każdemu tym samym martwym nonce'em, a komunikat „odśwież stronę” nie może pomóc,
+		// bo odświeżenie zwraca tę samą stronę z cache. Rejestracja jest wtedy trwale niemożliwa.
+		$fired = 0;
+		add_action(
+			'litespeed_control_set_nocache',
+			static function () use ( &$fired ): void {
+				++$fired;
+			}
+		);
+
+		RegistrationForm::render();
+		$this->assertSame( 1, $fired, 'Render shortcode\'u musi wyłączyć stronę z cache.' );
+		$this->assertTrue( defined( 'DONOTCACHEPAGE' ) );
+
+		// Ten sam zestaw co po zgłoszeniu: jedno miejsce, bez dwóch kopii.
+		$fired = 0;
+		RegistrationHandler::no_cache();
+		$this->assertSame( 1, $fired );
+
+		remove_all_actions( 'litespeed_control_set_nocache' );
+	}
+
+	public function test_the_unavailability_notice_is_excluded_from_caching_too(): void {
+		// Bez czytelnej grupy ACF render oddaje komunikat, nie formularz. Strona zapisana w cache
+		// w tej chwili pokazywałaby „rejestracja niedostępna” także po naprawieniu konfiguracji.
+		remove_all_filters( 'pusers_acf_groups' );
+		add_filter( 'pusers_acf_groups', static fn (): array => array() );
+		$fired = 0;
+		add_action(
+			'litespeed_control_set_nocache',
+			static function () use ( &$fired ): void {
+				++$fired;
+			}
+		);
+
+		$html = RegistrationForm::render();
+
+		$this->assertStringContainsString( 'pusers-notice', $html );
+		$this->assertSame( 1, $fired );
+		remove_all_actions( 'litespeed_control_set_nocache' );
 	}
 }

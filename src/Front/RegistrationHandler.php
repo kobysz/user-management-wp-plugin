@@ -193,6 +193,29 @@ final class RegistrationHandler {
 	}
 
 	/**
+	 * Wyłącza bieżącą stronę z cache'owania: stała uznawana przez wtyczki cache, nagłówki rdzenia
+	 * i nagłówek oraz hook LiteSpeed Cache. JEDYNE miejsce z tym zestawem — czytają je dwa
+	 * wywołania (strona po zgłoszeniu i render formularza), a dwie kopie rozjechałyby się przy
+	 * pierwszej zmianie.
+	 *
+	 * Strona formularza musi być wyłączona z cache, bo niesie nonce i podpisany znacznik czasu,
+	 * które starzeją się po dobie. Zapisana w cache na dłużej odpowiada każdemu odwiedzającemu
+	 * tym samym martwym nonce'em, a komunikat „odśwież stronę” każe wtedy człowiekowi zrobić rzecz,
+	 * która nie może pomóc: odświeżenie zwraca tę samą stronę z cache, więc rejestracja jest
+	 * trwale niemożliwa dla wszystkich i nie powstaje przy tym żaden wpis w logu.
+	 */
+	public static function no_cache(): void {
+		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
+			define( 'DONOTCACHEPAGE', true ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- stała uznawana przez wtyczki cache.
+		}
+		nocache_headers();
+		if ( ! headers_sent() ) {
+			header( 'X-LiteSpeed-Cache-Control: no-cache' );
+		}
+		do_action( 'litespeed_control_set_nocache', 'pusers registration' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- hook cudzej wtyczki (LiteSpeed Cache).
+	}
+
+	/**
 	 * Strona po zgłoszeniu (udanym albo nie) niesie dane osobowe z magazynu, więc nie może trafić do
 	 * żadnego cache'a stron; ciasteczko z kluczem kasujemy tu, zanim wyjdą nagłówki (z treści strony
 	 * `setcookie()` już nie poleci).
@@ -203,14 +226,7 @@ final class RegistrationHandler {
 			return;
 		}
 
-		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
-			define( 'DONOTCACHEPAGE', true ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- stała uznawana przez wtyczki cache.
-		}
-		nocache_headers();
-		if ( ! headers_sent() ) {
-			header( 'X-LiteSpeed-Cache-Control: no-cache' );
-		}
-		do_action( 'litespeed_control_set_nocache', 'pusers registration' ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedHooknameFound -- hook cudzej wtyczki (LiteSpeed Cache).
+		self::no_cache();
 
 		// Kasujemy przy OBU znacznikach: po nieudanym zgłoszeniu dane właśnie zostały odczytane (transient
 		// zniknął), a po udanej rejestracji nikt ich już nie przeczyta i martwe ciasteczko żyłoby 10 minut.

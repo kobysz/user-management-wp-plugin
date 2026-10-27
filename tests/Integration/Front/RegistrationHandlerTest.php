@@ -1190,7 +1190,9 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 		$_GET = array();
 		RegistrationHandler::on_template_redirect();
-		$this->assertSame( 0, $fired, 'Zwykła strona formularza może być w cache.' );
+		// Bez znacznika po przekierowaniu ten hook nic nie robi; stronę samego formularza wyłącza
+		// z cache jej render (RegistrationForm::render()).
+		$this->assertSame( 0, $fired );
 
 		foreach ( array( RegistrationHandler::FAILED_ARG => '1', RegistrationHandler::DONE_ARG => '1' ) as $arg => $value ) {
 			$_GET  = array( $arg => $value );
