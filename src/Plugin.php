@@ -15,6 +15,7 @@ use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Front\Confirmation;
+use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\TermsBinding;
@@ -65,6 +66,7 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationHandler::class, 'register' ) );
 		add_action( 'pusers_register_features', array( Confirmation::class, 'register' ) );
+		add_action( 'pusers_register_features', array( PasswordSetup::class, 'register' ) );
 		add_action( 'pusers_register_features', array( TermsBinding::class, 'register' ) );
 		add_action( 'pusers_register_features', array( PurgeUnconfirmed::class, 'register' ) );
 	}

@@ -23,12 +23,14 @@ defined( 'ABSPATH' ) || exit;
  */
 final class UserMeta {
 
-	public const PROFESSION      = 'pusers_profession';
-	public const STATUS          = 'pusers_status';
-	public const CONFIRM_HASH    = 'pusers_confirm_hash';
-	public const CONFIRM_EXPIRES = 'pusers_confirm_expires';
-	public const TERMS_VERSION   = 'pusers_terms_version';
-	public const CONSENT_AT      = 'pusers_consent_at';
+	public const PROFESSION              = 'pusers_profession';
+	public const STATUS                  = 'pusers_status';
+	public const CONFIRM_HASH            = 'pusers_confirm_hash';
+	public const CONFIRM_EXPIRES         = 'pusers_confirm_expires';
+	public const PASSWORD_TICKET_HASH    = 'pusers_password_ticket_hash';
+	public const PASSWORD_TICKET_EXPIRES = 'pusers_password_ticket_expires';
+	public const TERMS_VERSION           = 'pusers_terms_version';
+	public const CONSENT_AT              = 'pusers_consent_at';
 
 	/**
 	 * Przedrostek metadanych z wartościami pól ACF ze zgłoszenia: nazwa metadanej to przedrostek
@@ -61,6 +63,8 @@ final class UserMeta {
 			self::STATUS,
 			self::CONFIRM_HASH,
 			self::CONFIRM_EXPIRES,
+			self::PASSWORD_TICKET_HASH,
+			self::PASSWORD_TICKET_EXPIRES,
 			self::TERMS_VERSION,
 			self::CONSENT_AT,
 		);

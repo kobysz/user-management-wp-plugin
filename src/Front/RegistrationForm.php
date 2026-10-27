@@ -164,11 +164,17 @@ final class RegistrationForm {
 	 * To DRUGA warstwa: pierwsza, z nagłówkami, jedzie przed renderem z `on_template_redirect()`.
 	 * Tutaj pokrywamy umieszczenie formularza poza treścią wpisu, gdzie tamta nie zadziała.
 	 * Wywołanie jest idempotentne, więc oba razem dają jeden zestaw.
+	 *
+	 * Ustawienie hasła po potwierdzeniu adresu dzieje się na TEJ SAMEJ stronie i ZASTĘPUJE
+	 * formularz rejestracji: człowiek, który właśnie potwierdził adres, ma ustawić hasło do konta,
+	 * które już ma, a nie dostać drugi formularz zgłoszenia.
 	 */
 	public static function render(): string {
 		RegistrationHandler::no_cache();
 
-		return Confirmation::notice_html() . self::render_form();
+		$password = PasswordSetup::render();
+
+		return '' === $password ? Confirmation::notice_html() . self::render_form() : $password;
 	}
 
 	/**

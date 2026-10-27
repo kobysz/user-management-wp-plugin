@@ -16,6 +16,7 @@ use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Front\Confirmation;
+use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\TermsBinding;
@@ -50,6 +51,7 @@ final class WiringTest extends WP_UnitTestCase {
 			MatrixScreen::ACTION_DELETE_FIELD,
 			RegistrationHandler::ACTION,
 			Confirmation::ACTION_RESEND,
+			PasswordSetup::ACTION,
 		);
 	}
 
@@ -65,6 +67,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'registration' => array( RegistrationForm::class ),
 			'registration handler' => array( RegistrationHandler::class ),
 			'confirmation' => array( Confirmation::class ),
+			'password setup' => array( PasswordSetup::class ),
 			'terms binding' => array( TermsBinding::class ),
 			'purge unconfirmed' => array( PurgeUnconfirmed::class ),
 		);
@@ -155,6 +158,14 @@ final class WiringTest extends WP_UnitTestCase {
 		$this->assertNotFalse( has_action( 'template_redirect', array( Confirmation::class, 'handle' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . Confirmation::ACTION_RESEND, array( Confirmation::class, 'handle_resend' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_' . Confirmation::ACTION_RESEND, array( Confirmation::class, 'handle_resend' ) ) );
+	}
+
+	public function test_password_setup_register_hooks_its_handler_for_logged_out_visitors_too(): void {
+		// Konto po potwierdzeniu adresu NIE jest zalogowane (hasła jeszcze nie ma), więc bez
+		// wariantu `nopriv` formularz ustawienia hasła nie miałby kto obsłużyć.
+		PasswordSetup::register();
+		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . PasswordSetup::ACTION, array( PasswordSetup::class, 'handle' ) ) );
+		$this->assertNotFalse( has_action( 'admin_post_' . PasswordSetup::ACTION, array( PasswordSetup::class, 'handle' ) ) );
 	}
 
 	public function test_the_resend_form_posts_to_the_registered_action(): void {

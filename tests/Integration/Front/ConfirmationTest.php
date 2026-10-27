@@ -12,6 +12,7 @@ use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\Mailer;
+use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\Migrations;
@@ -429,7 +430,9 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$this->assertSame( AccountStatus::Pending, $this->status( $id ) );
 		$this->assertStringNotContainsString( $token, $this->redirected, 'Token nie zostaje w adresie po odświeżeniu.' );
 		$this->assertStringNotContainsString( Confirmation::QUERY_TOKEN, $this->redirected );
-		$this->assertStringContainsString( Confirmation::RESULT_ARG . '=' . Confirmation::RESULT_OK, $this->redirected );
+		// Udane potwierdzenie prowadzi na stronę ustawienia hasła; bilet jedzie ciasteczkiem,
+		// więc w adresie nie ma ŻADNEGO tokenu (szczegóły: PasswordSetupTest).
+		$this->assertStringContainsString( PasswordSetup::PAGE_ARG . '=' . PasswordSetup::RESULT_FORM, $this->redirected );
 		$this->assertStringContainsString( 'page_id=' . $this->registerPage, $this->redirected );
 	}
 

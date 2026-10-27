@@ -23,6 +23,9 @@ use PortalUsers\Persistence\UserMeta;
  * zostaje wyłącznie jego skrót z terminem ważności. Poprawny token przenosi konto w `pending` (akceptacja
  * włączona) albo prosto w `approved` (wyłączona) i jest zużywany. Przejście robi się WYŁĄCZNIE ze stanu
  * `email_unconfirmed`: ponowne kliknięcie starego linku nie cofa decyzji redakcji.
+ *
+ * Po udanym potwierdzeniu `handle()` odsyła na stronę ustawienia hasła (`PasswordSetup`): rejestracja
+ * nie pyta o hasło, więc hasło ustawia dopiero ten, kto otworzył link z własnej skrzynki.
  */
 final class Confirmation {
 
@@ -167,6 +170,16 @@ final class Confirmation {
 		$result = self::confirm( $userId, $token );
 
 		nocache_headers();
+
+		// Bilet na ustawienie hasła powstaje WYŁĄCZNIE tutaj, na ścieżce PIERWSZEGO udanego
+		// potwierdzenia. Zużycie tokenu w `confirm()` jest atomowe, więc drugie kliknięcie tego
+		// samego linku dostaje RESULT_INVALID i biletu nie wystawia. W adresie, na który odsyłamy,
+		// nie ma żadnego tokenu ani biletu: bilet jedzie ciasteczkiem (patrz `PasswordSetup`).
+		if ( self::RESULT_OK === $result ) {
+			self::redirect( PasswordSetup::start( $userId ) );
+			return;
+		}
+
 		self::redirect( add_query_arg( self::RESULT_ARG, $result, self::base_url() ) );
 	}
 
@@ -310,8 +323,11 @@ final class Confirmation {
 
 	/**
 	 * Strona rejestracji z ustawień albo strona główna.
+	 *
+	 * Publiczna, bo ta sama strona niesie ustawienie hasła (`PasswordSetup`): dwie kopie reguły
+	 * „skąd się bierze adres strony rejestracji” rozjechałyby się przy pierwszej zmianie ustawień.
 	 */
-	private static function base_url(): string {
+	public static function base_url(): string {
 		$page = SettingsRepository::get()->registerPageId;
 		$link = $page > 0 ? get_permalink( $page ) : false;
 
