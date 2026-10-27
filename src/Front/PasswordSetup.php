@@ -98,6 +98,14 @@ final class PasswordSetup {
 	private const BUCKET_SETPASS_IP = 'setpass_ip:';
 
 	/**
+	 * Kubełek progu prób per KONTO. Specyfikacja żąda liczenia per adres IP **i** per konto:
+	 * liczenie wyłącznie per IP odcina całą przychodnię siedzącą za jednym adresem wyjściowym
+	 * (ktoś z nich dostanie „zbyt wiele prób”, mając w ręku bilet dowodzący władzy nad skrzynką),
+	 * a wyłącznie per konto nie ogranicza uderzania w wiele kont naraz.
+	 */
+	private const BUCKET_SETPASS_USER = 'setpass_user:';
+
+	/**
 	 * Podpina obsługę wysłanego formularza (także dla niezalogowanych: konto czeka na decyzję redakcji).
 	 */
 	public static function register(): void {
@@ -151,8 +159,14 @@ final class PasswordSetup {
 	/**
 	 * Obsługuje wysłany formularz ustawienia hasła.
 	 *
-	 * Kolejność bramek: nonce, metoda POST, próg per IP, bilet, reguły hasła, zużycie biletu, zapis.
-	 * Próg stoi PRZED biletem, żeby zgadywanie wartości ciasteczka też się liczyło.
+	 * Kolejność bramek: nonce, metoda POST, próg per IP, bilet, próg per konto, reguły hasła,
+	 * zużycie biletu, zapis.
+	 *
+	 * Próg per IP stoi PRZED biletem, żeby zgadywanie wartości ciasteczka też się liczyło.
+	 * Próg per konto stoi PO bilecie i tylko dlatego: licznik konta rośnie WYŁĄCZNIE na żądaniu,
+	 * które okazało bilet tego konta. Liczony wcześniej pozwalałby osobie trzeciej wyczerpać
+	 * właścicielowi budżet samą podmianą identyfikatora w ciasteczku — to ta sama reguła, co
+	 * w `Confirmation::handle_resend()`.
 	 */
 	public static function handle(): void {
 		$nonce = isset( $_POST[ self::NONCE_FIELD ] ) && is_string( $_POST[ self::NONCE_FIELD ] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- to jest weryfikacja nonce'a.
@@ -181,6 +195,11 @@ final class PasswordSetup {
 		$user = get_userdata( $ticket['user'] );
 		if ( false === $user ) {
 			self::redirect( self::RESULT_EXPIRED );
+			return;
+		}
+
+		if ( ! self::within_account_limit( $ticket['user'] ) ) {
+			self::redirect( self::RESULT_TOO_MANY );
 			return;
 		}
 
@@ -379,6 +398,17 @@ final class PasswordSetup {
 		$ip       = IpAddress::from( $_SERVER, $settings->trustedProxyHeader );
 
 		return '' === $ip || RateLimiter::hit( self::BUCKET_SETPASS_IP . $ip ) <= $settings->rateLimitPerHour;
+	}
+
+	/**
+	 * Drugi wymiar progu: próby na KONTO, w osobnym kubełku (patrz BUCKET_SETPASS_USER). Wartość
+	 * progu jest ta sama co dla adresu IP — rozdzielenie WARTOŚCI progów na ścieżki jest osobną
+	 * pozycją backlogu i nie należy tu.
+	 *
+	 * @param int $userId Konto z okazanego biletu.
+	 */
+	private static function within_account_limit( int $userId ): bool {
+		return RateLimiter::hit( self::BUCKET_SETPASS_USER . $userId ) <= SettingsRepository::get()->rateLimitPerHour;
 	}
 
 	/**

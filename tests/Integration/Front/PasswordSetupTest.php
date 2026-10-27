@@ -520,6 +520,49 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->assertNotSame( SpamVerdict::IP_LIMIT, $verdict->reason(), 'Próby ustawienia hasła nie zużywają kubełka rejestracji.' );
 	}
 
+	public function test_the_account_dimension_of_the_limit_is_keyed_by_account(): void {
+		// Specyfikacja żąda progu per adres IP I per konto. Wymiar konta liczy się osobno dla
+		// każdego konta: wyczerpanie budżetu jednego nie może odciąć drugiego. Adres IP zmieniam
+		// przy każdej próbie, żeby to wymiar konta, a nie IP, rozstrzygał o odmowie.
+		$this->configure( true, array( 'rate_limit_per_hour' => 2 ) );
+		list( $id, $ticket )      = $this->confirmed();
+		list( $other, $otherTkt ) = $this->confirmed();
+
+		$results = array();
+		foreach ( array( '10.1.0.1', '10.1.0.2', '10.1.0.3' ) as $address ) {
+			$_SERVER['REMOTE_ADDR'] = $address;
+			$results[]              = $this->submit( 'krotkie', $ticket );
+		}
+
+		$this->assertSame( array( PasswordSetup::RESULT_SHORT, PasswordSetup::RESULT_SHORT, PasswordSetup::RESULT_TOO_MANY ), $results, 'Trzecia próba tego konta przekracza próg per konto.' );
+		$this->assertFalse( wp_check_password( 'krotkie', get_userdata( $id )->user_pass, $id ) );
+
+		$_SERVER['REMOTE_ADDR'] = '10.1.0.4';
+		$this->assertSame( PasswordSetup::RESULT_SHORT, $this->submit( 'krotkie', $otherTkt ), 'Inne konto ma własny budżet.' );
+		$this->assertNotSame( '', (string) get_user_meta( $other, UserMeta::PASSWORD_TICKET_HASH, true ) );
+	}
+
+	public function test_the_ip_dimension_of_the_limit_is_keyed_by_address_and_separate_from_the_account_one(): void {
+		// Odwrotnie: wyczerpanie budżetu adresu IP nie jest wyczerpaniem budżetu konta. Konto
+		// odrzucone progiem IP musi przejść z adresu, który budżet jeszcze ma.
+		$this->configure( true, array( 'rate_limit_per_hour' => 2 ) );
+		$tickets = array();
+		for ( $i = 0; $i < 3; $i++ ) {
+			$tickets[] = $this->confirmed();
+		}
+
+		$_SERVER['REMOTE_ADDR'] = '10.2.0.1';
+		$results                = array();
+		foreach ( $tickets as $pair ) {
+			$results[] = $this->submit( 'krotkie', $pair[1] );
+		}
+
+		$this->assertSame( array( PasswordSetup::RESULT_SHORT, PasswordSetup::RESULT_SHORT, PasswordSetup::RESULT_TOO_MANY ), $results, 'Trzecie konto z tego samego adresu przekracza próg per IP.' );
+
+		$_SERVER['REMOTE_ADDR'] = '10.2.0.2';
+		$this->assertSame( PasswordSetup::RESULT_SHORT, $this->submit( 'krotkie', $tickets[2][1] ), 'To konto nie zużyło własnego budżetu, bo odmowa padła na progu IP.' );
+	}
+
 	public function test_setting_the_password_does_not_log_the_user_in(): void {
 		// Konto po potwierdzeniu czeka na decyzję redakcji: automatyczne logowanie obiecywałoby dostęp, którego nie ma.
 		list( $id, $ticket ) = $this->confirmed();
