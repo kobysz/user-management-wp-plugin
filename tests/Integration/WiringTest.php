@@ -15,6 +15,7 @@ use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Front\RegistrationForm;
+use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
@@ -30,6 +31,7 @@ final class WiringTest extends WP_UnitTestCase {
 		remove_all_actions( 'admin_menu' );
 		foreach ( $this->adminPostActions() as $action ) {
 			remove_all_actions( 'admin_post_' . $action );
+			remove_all_actions( 'admin_post_nopriv_' . $action );
 		}
 	}
 
@@ -43,6 +45,7 @@ final class WiringTest extends WP_UnitTestCase {
 			ProfessionsScreen::ACTION_DELETE,
 			MatrixScreen::ACTION_SAVE,
 			MatrixScreen::ACTION_DELETE_FIELD,
+			RegistrationHandler::ACTION,
 		);
 	}
 
@@ -56,6 +59,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'professions' => array( ProfessionsScreen::class ),
 			'matrix'      => array( MatrixScreen::class ),
 			'registration' => array( RegistrationForm::class ),
+			'registration handler' => array( RegistrationHandler::class ),
 		);
 	}
 

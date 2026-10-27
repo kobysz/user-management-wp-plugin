@@ -32,6 +32,15 @@ final class RegistrationPlan {
 	) {}
 
 	/**
+	 * Macierz przycięta do pól źródła: ta sama, na której plan liczy pola. Walidacja zgłoszenia ma
+	 * budować się na niej, nigdy na surowej macierzy z repozytorium (wymóg pola spoza grupy ACF
+	 * blokowałby rejestrację, której pole nie ma jak wypełnić).
+	 */
+	public function matrix(): FieldMatrix {
+		return $this->pruned;
+	}
+
+	/**
 	 * Pola do wyrenderowania dla profesji, w kolejności ze źródła. Pola ukryte
 	 * oraz pola bez wpisu w macierzy są pomijane.
 	 *

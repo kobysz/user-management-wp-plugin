@@ -169,4 +169,11 @@ final class RegistrationPlanTest extends TestCase {
 
 		$this->assertSame( array( 'pwz', 'zgoda' ), $plan->requiredFor( 'lekarz' ) );
 	}
+
+	public function test_exposes_the_pruned_matrix_it_plans_from(): void {
+		$matrix = FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required', 'ghost' => 'required' ) ) )->prunedTo( array( 'pwz' ) );
+		$plan   = new RegistrationPlan( $matrix, $this->source( array( 'pwz' => 'PWZ' ) ) );
+
+		$this->assertSame( array( 'pwz' ), $plan->matrix()->requiredFields( 'lekarz' ) );
+	}
 }

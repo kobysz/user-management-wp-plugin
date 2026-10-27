@@ -15,6 +15,7 @@ use PortalUsers\Acf\AcfFieldSource;
 use PortalUsers\Domain\Fields\FieldState;
 use PortalUsers\Domain\Profession\Profession;
 use PortalUsers\Domain\Registration\RegistrationPlan;
+use PortalUsers\Domain\Submission\SubmissionResult;
 use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
@@ -125,6 +126,9 @@ final class RegistrationForm {
 		if ( null === $state ) {
 			return '<p class="pusers-notice">' . esc_html__( 'Rejestracja jest chwilowo niedostępna. Spróbuj ponownie później.', 'portal-users' ) . '</p>';
 		}
+		if ( RegistrationHandler::completed() ) {
+			return '<p class="pusers-notice">' . esc_html__( 'Dziękujemy za rejestrację. Konto zostało utworzone.', 'portal-users' ) . '</p>';
+		}
 
 		$source      = $state['source'];
 		$plan        = $state['plan'];
@@ -142,8 +146,11 @@ final class RegistrationForm {
 
 		self::enqueue_script( $map );
 
-		$acf  = new AcfFields( $source );
-		$html = '<form class="pusers-registration" method="post" novalidate="novalidate">';
+		$acf = new AcfFields( $source );
+
+		$html  = '<form class="pusers-registration" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" novalidate="novalidate">';
+		$html .= '<input type="hidden" name="action" value="' . esc_attr( RegistrationHandler::ACTION ) . '" />';
+		$html .= self::render_feedback( $source->fields() );
 
 		$html .= '<p class="pusers-field-profession"><label for="' . esc_attr( self::PROFESSION ) . '">' . esc_html__( 'Profesja', 'portal-users' ) . '</label> ';
 		$html .= '<select id="' . esc_attr( self::PROFESSION ) . '" name="' . esc_attr( self::PROFESSION ) . '" required="required">';
@@ -184,6 +191,40 @@ final class RegistrationForm {
 		$html .= '<p><button type="submit">' . esc_html__( 'Zarejestruj się', 'portal-users' ) . '</button></p>';
 
 		return $html . '</form>';
+	}
+
+	/**
+	 * Komunikaty po nieudanym zgłoszeniu: odmowa antyspamu, błędy pól i miękkie ostrzeżenia.
+	 *
+	 * @param array<string, string> $labels Etykiety pól źródła: klucz => etykieta.
+	 */
+	private static function render_feedback( array $labels ): string {
+		$flash  = RegistrationHandler::flash();
+		$labels = array_merge(
+			$labels,
+			array(
+				self::PROFESSION                 => __( 'Profesja', 'portal-users' ),
+				self::EMAIL                      => __( 'Adres e-mail', 'portal-users' ),
+				self::PASSWORD                   => __( 'Hasło', 'portal-users' ),
+				self::PASSWORD_REPEAT            => __( 'Powtórz hasło', 'portal-users' ),
+				SubmissionResult::PROFESSION_KEY => __( 'Profesja', 'portal-users' ),
+			)
+		);
+		$html   = '';
+		if ( '' !== $flash['notice'] ) {
+			$html .= '<p class="pusers-notice" role="alert">' . esc_html( RegistrationHandler::message_for( $flash['notice'] ) ) . '</p>';
+		}
+
+		$items = '';
+		foreach ( $flash['errors'] as $field => $code ) {
+			$label  = $labels[ $field ] ?? '';
+			$items .= '<li>' . ( '' === $label ? '' : esc_html( $label ) . ': ' ) . esc_html( RegistrationHandler::message_for( $code ) ) . '</li>';
+		}
+		foreach ( array_keys( $flash['warnings'] ) as $field ) {
+			$items .= '<li>' . esc_html( $labels[ $field ] ?? $field ) . ': ' . esc_html( RegistrationHandler::message_for( 'credential_warning' ) ) . '</li>';
+		}
+
+		return '' === $items ? $html : $html . '<ul class="pusers-errors" role="alert">' . $items . '</ul>';
 	}
 
 	/**
