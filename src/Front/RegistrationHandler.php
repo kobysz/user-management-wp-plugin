@@ -51,9 +51,20 @@ final class RegistrationHandler {
 	public const LOG_ACTION = 'registration_created';
 
 	/**
-	 * Argument adresu z jednorazowym kluczem błędów i wpisanych wartości (przeżywają PRG).
+	 * Neutralny znacznik w adresie: „zgłoszenie nie przeszło, jest co pokazać”. Nie niesie żadnego
+	 * identyfikatora danych; klucz do nich jedzie w ciasteczku (adres wyciekałby referrerem, historią i logami).
 	 */
-	public const FLASH_ARG = 'pusers_r';
+	public const FAILED_ARG = 'pusers_failed';
+
+	/**
+	 * Ciasteczko z jednorazowym kluczem błędów i wpisanych wartości (przeżywają PRG).
+	 */
+	public const COOKIE = 'pusers_flash';
+
+	/**
+	 * Szew wysyłania ciasteczka (testy go przechwytują i zwracają false); argumenty: nazwa, wartość, opcje.
+	 */
+	public const COOKIE_FILTER = 'pusers_registration_send_cookie';
 
 	/**
 	 * Argument adresu po udanej rejestracji.
@@ -62,6 +73,13 @@ final class RegistrationHandler {
 
 	private const FLASH_PREFIX = 'pusers_flash_';
 	private const FLASH_TTL    = 10 * MINUTE_IN_SECONDS;
+
+	/**
+	 * Odczytane w tym żądaniu dane (klucz => dane): transient znika przy pierwszym odczycie, a formularz czyta go kilka razy.
+	 *
+	 * @var array<string, array{profession: string, email: string, fields: array<string, mixed>, errors: array<string, string>, warnings: array<string, string>, notice: string}>
+	 */
+	private static array $read = array();
 
 	/**
 	 * Podpina obsługę zgłoszenia (także dla niezalogowanych) i zasila powtórne wypełnienie formularza.
@@ -100,13 +118,17 @@ final class RegistrationHandler {
 		// 3. Antyspam, przed walidacją i przed jakimkolwiek odczytem pól.
 		$verdict = SpamGuard::check( $_SERVER, $request, $email );
 		if ( ! $verdict->passed() ) {
-			self::back(
-				array(
-					'profession' => $key,
-					'email'      => $email,
-					'notice'     => self::spam_notice( $verdict ),
-				)
+			$kept = array(
+				'profession' => $key,
+				'email'      => $email,
+				'notice'     => self::spam_notice( $verdict ),
 			);
+			// Tylko przeterminowany formularz (uczciwy człowiek z kartą otwartą od doby) zachowuje wpisane pola;
+			// dane bota nie trafiają do magazynu. Wartości niezwalidowane, więc sanityzowane; limit liczby pól.
+			if ( SpamVerdict::STALE_FORM === $verdict->reason() && isset( $request[ AcfFields::INPUT ] ) && is_array( $request[ AcfFields::INPUT ] ) ) {
+				$kept['fields'] = self::clean_values( array_slice( $request[ AcfFields::INPUT ], 0, 50, true ) );
+			}
+			self::back( $kept );
 			return;
 		}
 
@@ -269,14 +291,26 @@ final class RegistrationHandler {
 			'warnings'   => array(),
 			'notice'     => '',
 		);
-		// Odczyt po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje.
-		$token = isset( $_GET[ self::FLASH_ARG ] ) && is_string( $_GET[ self::FLASH_ARG ] ) ? sanitize_text_field( wp_unslash( $_GET[ self::FLASH_ARG ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
-		if ( 1 !== preg_match( '/^[A-Za-z0-9]{32}$/', $token ) ) {
+		// Odczyt po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje. Bez znacznika w adresie nic nie czytamy.
+		if ( ! isset( $_GET[ self::FAILED_ARG ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 			return $empty;
 		}
+		// Znacznik jest, a danych nie ma (ciasteczko zablokowane, wygasłe, cudze): formularz jest pusty, ale mówi, że zgłoszenie nie przeszło.
+		$lost  = array_merge( $empty, array( 'notice' => 'lost' ) );
+		$token = isset( $_COOKIE[ self::COOKIE ] ) && is_string( $_COOKIE[ self::COOKIE ] ) ? sanitize_text_field( wp_unslash( $_COOKIE[ self::COOKIE ] ) ) : '';
+		if ( 1 !== preg_match( '/^[A-Za-z0-9]{32}$/', $token ) ) {
+			return $lost;
+		}
+		if ( isset( self::$read[ $token ] ) ) {
+			return self::$read[ $token ];
+		}
 		$raw = get_transient( self::FLASH_PREFIX . $token );
+		// Jednorazowość: dane i ciasteczko znikają przy pierwszym odczycie (wynik zostaje w pamięci tego żądania).
+		delete_transient( self::FLASH_PREFIX . $token );
+		$request_path = isset( $_SERVER['REQUEST_URI'] ) && is_string( $_SERVER['REQUEST_URI'] ) ? wp_parse_url( wp_unslash( $_SERVER['REQUEST_URI'] ), PHP_URL_PATH ) : null;
+		self::send_cookie( '', time() - YEAR_IN_SECONDS, is_string( $request_path ) && '' !== $request_path ? $request_path : '/' );
 		if ( ! is_array( $raw ) ) {
-			return $empty;
+			return $lost;
 		}
 
 		$fields = array();
@@ -286,7 +320,7 @@ final class RegistrationHandler {
 			}
 		}
 
-		return array(
+		self::$read[ $token ] = array(
 			'profession' => isset( $raw['profession'] ) && is_string( $raw['profession'] ) ? $raw['profession'] : '',
 			'email'      => isset( $raw['email'] ) && is_string( $raw['email'] ) ? $raw['email'] : '',
 			'fields'     => $fields,
@@ -294,6 +328,8 @@ final class RegistrationHandler {
 			'warnings'   => self::codes( $raw['warnings'] ?? null ),
 			'notice'     => isset( $raw['notice'] ) && is_string( $raw['notice'] ) ? $raw['notice'] : '',
 		);
+
+		return self::$read[ $token ];
 	}
 
 	/**
@@ -331,6 +367,8 @@ final class RegistrationHandler {
 				return __( 'Formularz wysłano zbyt szybko. Poczekaj chwilę i spróbuj ponownie.', 'portal-users' );
 			case 'too_many':
 				return __( 'Zbyt wiele prób rejestracji. Spróbuj ponownie później.', 'portal-users' );
+			case 'lost':
+				return __( 'Zgłoszenie nie zostało przyjęte, a wpisanych danych nie udało się zachować. Wypełnij formularz ponownie.', 'portal-users' );
 			case 'rejected':
 				return __( 'Nie udało się przyjąć zgłoszenia.', 'portal-users' );
 			case 'credential_warning':
@@ -353,7 +391,40 @@ final class RegistrationHandler {
 			}
 		}
 		set_transient( self::FLASH_PREFIX . $token, $data, self::FLASH_TTL );
-		self::redirect( add_query_arg( self::FLASH_ARG, $token, self::return_url() ) );
+
+		// Klucz jedzie w ciasteczku ograniczonym do strony formularza, nie w adresie.
+		$url  = self::return_url();
+		$path = wp_parse_url( $url, PHP_URL_PATH );
+		self::send_cookie( $token, time() + self::FLASH_TTL, is_string( $path ) && '' !== $path ? $path : '/' );
+		self::redirect( add_query_arg( self::FAILED_ARG, '1', $url ) );
+	}
+
+	/**
+	 * Wysyła (albo, przy pustej wartości i dacie z przeszłości, kasuje) ciasteczko z kluczem danych.
+	 *
+	 * @param string $value   Wartość.
+	 * @param int    $expires Moment wygaśnięcia.
+	 * @param string $path    Ścieżka ciasteczka.
+	 */
+	private static function send_cookie( string $value, int $expires, string $path ): void {
+		$options = array(
+			'expires'  => $expires,
+			'path'     => $path,
+			'secure'   => is_ssl(),
+			'httponly' => true,
+			'samesite' => 'Lax',
+		);
+		/**
+		 * Szew wysyłania ciasteczka; zwrócenie false pomija `setcookie()`.
+		 *
+		 * @param bool                 $send    Czy wysłać.
+		 * @param string               $name    Nazwa ciasteczka.
+		 * @param string               $value   Wartość.
+		 * @param array<string, mixed> $options Opcje.
+		 */
+		if ( apply_filters( 'pusers_registration_send_cookie', true, self::COOKIE, $value, $options ) && ! headers_sent() ) {
+			setcookie( self::COOKIE, $value, $options );
+		}
 	}
 
 	/**
@@ -380,7 +451,7 @@ final class RegistrationHandler {
 			$referer = false === $link ? home_url( '/' ) : $link;
 		}
 
-		return remove_query_arg( array( self::FLASH_ARG, self::DONE_ARG ), $referer );
+		return remove_query_arg( array( self::FAILED_ARG, self::DONE_ARG ), $referer );
 	}
 
 	/**

@@ -50,6 +50,13 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	private string $originalAddr   = '';
 	private int $sequence          = 0;
 
+	/**
+	 * Ciasteczka przechwycone przez szew wysyłania.
+	 *
+	 * @var list<array{value: string, options: array<string, mixed>}>
+	 */
+	private array $cookies = array();
+
 	public function set_up(): void {
 		parent::set_up();
 		require_once ABSPATH . 'wp-admin/includes/user.php';
@@ -64,6 +71,18 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 			return false;
 		};
 		add_filter( 'wp_redirect', $this->cancelRedirect );
+		add_filter(
+			RegistrationHandler::COOKIE_FILTER,
+			function ( $send, $name, $value, $options ) {
+				$this->cookies[] = array(
+					'value'   => (string) $value,
+					'options' => (array) $options,
+				);
+				return false;
+			},
+			10,
+			4
+		);
 
 		$cap = $this->capabilitiesKey();
 		add_filter( 'pusers_acf_groups', static fn (): array => array( 'group_abc' => 'Rejestracja' ) );
@@ -114,6 +133,8 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		remove_all_filters( 'pusers_acf_groups' );
 		remove_all_filters( 'pusers_acf_fields' );
 		remove_all_filters( SpamGuard::FILTER );
+		remove_all_filters( RegistrationHandler::COOKIE_FILTER );
+		$_COOKIE = array();
 		remove_all_actions( RegistrationHandler::REGISTERED_HOOK );
 		RateLimiter::reset_failure_report();
 		$_POST                     = array();
@@ -176,6 +197,7 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	 */
 	private function submit(): string {
 		$this->redirected = '';
+		$this->cookies    = array();
 		RegistrationHandler::handle();
 		return $this->redirected;
 	}
@@ -189,8 +211,27 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	private function follow( string $location ): array {
 		$query = array();
 		parse_str( (string) wp_parse_url( $location, PHP_URL_QUERY ), $query );
-		$_GET = $query;
+		$_GET    = $query;
+		$_COOKIE = array();
+		foreach ( $this->cookies as $sent ) {
+			if ( '' !== $sent['value'] ) {
+				$_COOKIE[ RegistrationHandler::COOKIE ] = $sent['value'];
+			}
+		}
 		return RegistrationHandler::flash();
+	}
+
+	/**
+	 * Wartość ostatnio wysłanego niepustego ciasteczka z kluczem.
+	 */
+	private function sentToken(): string {
+		$token = '';
+		foreach ( $this->cookies as $sent ) {
+			if ( '' !== $sent['value'] ) {
+				$token = $sent['value'];
+			}
+		}
+		return $token;
 	}
 
 	/**
@@ -241,7 +282,7 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( array( 'subscriber' ), get_userdata( (int) $id )->roles );
 		$this->assertNotFalse( wp_check_password( self::PASSWORD, get_userdata( (int) $id )->user_pass ), 'Hasło ma zostać zapisane dokładnie tak, jak wpisano.' );
 		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $location );
-		$this->assertStringNotContainsString( RegistrationHandler::FLASH_ARG . '=', $location );
+		$this->assertStringNotContainsString( RegistrationHandler::COOKIE, $location );
 	}
 
 	public function test_the_account_gets_the_site_default_role(): void {
@@ -544,16 +585,12 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	public function test_the_redirect_data_carries_values_to_the_form_but_never_a_password(): void {
 		$email    = $this->email();
 		$location = $this->post_and_submit( array( RegistrationForm::EMAIL => $email ), array( 'zgoda' => null ) );
+		$token    = $this->sentToken();
 		$flash    = $this->follow( $location );
 
 		$this->assertStringNotContainsString( 'Haslo', $location );
 		$this->assertStringNotContainsString( $email, $location, 'Adres nie trafia do adresu przekierowania.' );
 		$this->assertStringNotContainsString( 'S3kret', (string) wp_json_encode( $flash ) );
-
-		parse_str( (string) wp_parse_url( $location, PHP_URL_QUERY ), $query );
-		$stored = get_transient( 'pusers_flash_' . $query[ RegistrationHandler::FLASH_ARG ] );
-		$this->assertIsArray( $stored );
-		$this->assertStringNotContainsString( 'S3kret', serialize( $stored ), 'Hasło nie trafia do danych na czas przekierowania.' );
 
 		// Szew powtórnego wypełnienia formularza jest zasilony, a wyrenderowany formularz hasła nie niesie.
 		RegistrationHandler::register();
@@ -565,20 +602,120 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'value="' . $email . '"', $html );
 		$this->assertStringNotContainsString( 'S3kret', $html );
 		$this->assertStringContainsString( 'pusers-errors', $html );
+		$this->assertNotSame( '', $token );
 	}
 
-	public function test_redirect_data_is_not_available_without_the_one_time_key(): void {
-		$location = $this->post_and_submit( array(), array( 'zgoda' => null ) );
-		$this->follow( $location );
-		$this->assertNotSame( array(), RegistrationHandler::flash()['errors'] );
+	public function test_the_password_is_not_in_the_stored_redirect_data(): void {
+		$this->post_and_submit( array(), array( 'zgoda' => null ) );
+		$stored = get_transient( 'pusers_flash_' . $this->sentToken() );
 
-		// Inna przeglądarka: bez klucza albo ze zmyślonym kluczem nic nie dostaje.
-		$_GET = array();
-		$this->assertSame( array(), RegistrationHandler::flash()['errors'] );
-		$_GET = array( RegistrationHandler::FLASH_ARG => str_repeat( 'a', 32 ) );
-		$this->assertSame( array(), RegistrationHandler::flash()['errors'] );
-		$_GET = array( RegistrationHandler::FLASH_ARG => '../../etc' );
-		$this->assertSame( array(), RegistrationHandler::flash()['errors'] );
+		$this->assertIsArray( $stored );
+		$this->assertStringNotContainsString( 'S3kret', serialize( $stored ) );
+	}
+
+	public function test_the_redirect_url_carries_no_key_or_identifier_of_the_stored_data(): void {
+		$location = $this->post_and_submit( array(), array( 'zgoda' => null ) );
+		$token    = $this->sentToken();
+
+		$this->assertNotSame( '', $token );
+		$this->assertStringNotContainsString( $token, $location );
+		$this->assertSame( array( RegistrationHandler::FAILED_ARG => '1' ), $this->query_of( $location ) );
+	}
+
+	/**
+	 * @param string $location Adres.
+	 * @return array<string, mixed>
+	 */
+	private function query_of( string $location ): array {
+		$query = array();
+		parse_str( (string) wp_parse_url( $location, PHP_URL_QUERY ), $query );
+		return $query;
+	}
+
+	public function test_the_key_cookie_is_http_only_lax_and_short_lived(): void {
+		$this->post_and_submit( array(), array( 'zgoda' => null ) );
+
+		$this->assertCount( 1, $this->cookies );
+		$options = $this->cookies[0]['options'];
+		$this->assertTrue( $options['httponly'] );
+		$this->assertSame( 'Lax', $options['samesite'] );
+		$this->assertSame( is_ssl(), $options['secure'] );
+		$this->assertEqualsWithDelta( time() + 10 * MINUTE_IN_SECONDS, $options['expires'], 5 );
+		$this->assertSame( '/', $options['path'], 'Ścieżka to strona formularza (tu: strona główna z fallbacku).' );
+	}
+
+	public function test_the_redirect_data_is_consumed_on_first_read(): void {
+		$location = $this->post_and_submit( array(), array( 'zgoda' => null ) );
+		$token    = $this->sentToken();
+		$this->assertIsArray( get_transient( 'pusers_flash_' . $token ) );
+
+		$this->follow( $location );
+
+		$this->assertFalse( get_transient( 'pusers_flash_' . $token ), 'Dane znikają po odczycie.' );
+		$cleared = end( $this->cookies );
+		$this->assertIsArray( $cleared );
+		$this->assertSame( '', $cleared['value'] );
+		$this->assertLessThan( time(), $cleared['options']['expires'], 'Ciasteczko jest kasowane po odczycie.' );
+		$this->assertTrue( $cleared['options']['httponly'] );
+	}
+
+	public function test_without_the_cookie_the_form_is_empty_and_says_the_submission_failed(): void {
+		$location = $this->post_and_submit( array(), array( 'zgoda' => null ) );
+		$_GET     = $this->query_of( $location );
+		$_COOKIE  = array();
+
+		$flash = RegistrationHandler::flash();
+		$this->assertSame( 'lost', $flash['notice'] );
+		$this->assertSame( '', $flash['email'] );
+		$this->assertSame( array(), $flash['errors'] );
+
+		$html = RegistrationForm::render();
+		$this->assertStringContainsString( 'Zgłoszenie nie zostało przyjęte', $html );
+		$this->assertStringContainsString( 'name="pusers_profession"', $html );
+	}
+
+	public function test_a_forged_or_malformed_cookie_shows_nothing_but_the_failure_notice(): void {
+		$_GET = array( RegistrationHandler::FAILED_ARG => '1' );
+		foreach ( array( str_repeat( 'a', 32 ), '../../etc' ) as $value ) {
+			$_COOKIE = array( RegistrationHandler::COOKIE => $value );
+			$flash   = RegistrationHandler::flash();
+			$this->assertSame( array(), $flash['errors'] );
+			$this->assertSame( 'lost', $flash['notice'] );
+		}
+		$_GET    = array();
+		$_COOKIE = array( RegistrationHandler::COOKIE => str_repeat( 'a', 32 ) );
+		$this->assertSame( '', RegistrationHandler::flash()['notice'], 'Bez znacznika w adresie nic się nie czyta.' );
+	}
+
+	public function test_a_stale_form_keeps_the_typed_fields_and_escapes_them(): void {
+		$location = $this->post_and_submit(
+			array( RegistrationForm::TIMESTAMP => SpamGuard::stamp( time() - 3 * DAY_IN_SECONDS ) ),
+			array( 'notatka' => '<script>alert(1)</script>Moja notatka' )
+		);
+		$flash = $this->follow( $location );
+
+		$this->assertSame( 'stale_form', $flash['notice'] );
+		$this->assertSame( '5425740', $flash['fields']['pwz'] ?? '' );
+		$this->assertStringNotContainsString( '<script', (string) wp_json_encode( $flash['fields'] ) );
+		$this->assertStringContainsString( 'Moja notatka', (string) ( $flash['fields']['notatka'] ?? '' ) );
+
+		RegistrationHandler::register();
+		RegistrationForm::render();
+		foreach ( AcfRenderRecorder::$fields as $field ) {
+			$this->assertStringNotContainsString( '<script', (string) wp_json_encode( $field['value'] ?? '' ) );
+		}
+	}
+
+	public function test_other_spam_refusals_do_not_keep_the_fields(): void {
+		foreach ( array(
+			array( RegistrationForm::HONEYPOT => 'http://spam.example' ),
+			array( RegistrationForm::TIMESTAMP => SpamGuard::stamp( time() ) ),
+		) as $over ) {
+			$flash = $this->follow( $this->post_and_submit( $over ) );
+			$this->assertNotSame( '', $flash['notice'] );
+			$this->assertNotSame( 'stale_form', $flash['notice'] );
+			$this->assertSame( array(), $flash['fields'] );
+		}
 	}
 
 	public function test_the_rendered_form_posts_to_a_registered_handler(): void {
