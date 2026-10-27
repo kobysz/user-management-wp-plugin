@@ -54,6 +54,19 @@ final class EventLogTest extends WP_UnitTestCase {
 		$this->assertLessThanOrEqual( $after, $stamp );
 	}
 
+	public function test_quotes_backslashes_and_sql_in_the_context_and_action_are_stored_verbatim(): void {
+		$context = array(
+			'note' => "O'Brien \"cytat\" \ back\slash '; DROP TABLE x; --",
+			'ip'   => '10.0.0.1',
+		);
+		EventLog::write( "it's \"x\"", 0, 0, $context );
+
+		$rows = $this->rows();
+		$this->assertCount( 1, $rows );
+		$this->assertSame( "it's \"x\"", $rows[0]->action );
+		$this->assertSame( $context, json_decode( (string) $rows[0]->context, true ) );
+	}
+
 	public function test_every_write_adds_a_row(): void {
 		EventLog::write( 'a', 0, 0, array() );
 		EventLog::write( 'b', 0, 0, array() );

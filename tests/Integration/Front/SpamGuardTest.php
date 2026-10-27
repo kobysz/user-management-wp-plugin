@@ -9,6 +9,7 @@ namespace PortalUsers\Tests\Integration\Front;
 
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Spam\SpamVerdict;
+use PortalUsers\Front\RateLimiter;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\SpamGuard;
 use PortalUsers\Persistence\Migrations;
@@ -19,11 +20,13 @@ final class SpamGuardTest extends WP_UnitTestCase {
 
 	public function set_up(): void {
 		parent::set_up();
+		RateLimiter::reset_failure_report();
 		$this->configure( array() );
 	}
 
 	public function tear_down(): void {
 		remove_all_filters( SpamGuard::FILTER );
+		RateLimiter::reset_failure_report();
 		parent::tear_down();
 	}
 
@@ -72,6 +75,20 @@ final class SpamGuardTest extends WP_UnitTestCase {
 		$request                               = $this->request();
 		$request[ RegistrationForm::HONEYPOT ] = 'http://spam.example';
 		return $request;
+	}
+
+	/**
+	 * Zgłoszenie, które przeszło walidację: check(), a po przepustce record_registration().
+	 *
+	 * @param string $email Adres e-mail.
+	 * @param string $ip    Adres połączenia.
+	 */
+	private function register( string $email, string $ip = '10.0.0.1' ): SpamVerdict {
+		$verdict = SpamGuard::check( $this->server( $ip ), $this->request(), $email );
+		if ( $verdict->passed() ) {
+			SpamGuard::record_registration( $email );
+		}
+		return $verdict;
 	}
 
 	/**
@@ -127,6 +144,7 @@ final class SpamGuardTest extends WP_UnitTestCase {
 			),
 			'valid signature, future'   => array( static fn () => SpamGuard::stamp( time() + 3600 ) ),
 			'not a string'              => array( static fn () => array( SpamGuard::stamp( time() - 600 ) ) ),
+			'older than 24 hours'       => array( static fn () => SpamGuard::stamp( time() - DAY_IN_SECONDS - 60 ) ),
 			'signature in upper case'   => array( static fn () => strtoupper( SpamGuard::stamp( time() - 600 ) ) ),
 		);
 	}
@@ -166,9 +184,9 @@ final class SpamGuardTest extends WP_UnitTestCase {
 		$this->assertTrue( SpamGuard::check( $this->server(), $this->request(), 'osoba20@szpital.test' )->passed(), 'Dwudziesta próba mieści się w progu.' );
 	}
 
-	public function test_the_same_email_tried_over_the_email_threshold_is_rejected(): void {
+	public function test_three_valid_registrations_use_up_the_email_threshold_and_the_fourth_is_rejected(): void {
 		for ( $i = 1; $i <= 3; $i++ ) {
-			$this->assertTrue( SpamGuard::check( $this->server( "10.0.1.{$i}" ), $this->request(), 'jan@example.test' )->passed(), "Próba {$i}" );
+			$this->assertTrue( $this->register( 'jan@example.test', "10.0.1.{$i}" )->passed(), "Rejestracja {$i}" );
 		}
 
 		$verdict = SpamGuard::check( $this->server( '10.0.1.9' ), $this->request(), 'jan@example.test' );
@@ -177,10 +195,32 @@ final class SpamGuardTest extends WP_UnitTestCase {
 		$this->assertSame( 'email_limit', $verdict->reason(), 'Próg e-mail działa niezależnie od adresu IP.' );
 	}
 
+	public function test_invalid_submissions_do_not_use_up_the_email_threshold(): void {
+		// Trzy zgłoszenia nieważne (check() przeszedł, walidacja odrzuciła: nikt nie woła record_registration()).
+		for ( $i = 1; $i <= 3; $i++ ) {
+			$this->assertTrue( SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' )->passed() );
+		}
+
+		$this->assertTrue( $this->register( 'jan@example.test' )->passed(), 'Czwarte, poprawne zgłoszenie przechodzi.' );
+	}
+
+	public function test_a_rejection_by_the_extension_point_does_not_use_up_the_email_threshold(): void {
+		add_filter( SpamGuard::FILTER, static fn (): SpamVerdict => SpamVerdict::reject( 'turnstile' ) );
+		for ( $i = 1; $i <= 4; $i++ ) {
+			$this->assertSame( 'turnstile', $this->register( 'jan@example.test' )->reason() );
+		}
+		remove_all_filters( SpamGuard::FILTER );
+
+		for ( $i = 1; $i <= 3; $i++ ) {
+			$this->assertTrue( $this->register( 'jan@example.test' )->passed(), "Rejestracja {$i}" );
+		}
+		$this->assertSame( 'email_limit', SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' )->reason() );
+	}
+
 	public function test_the_email_threshold_ignores_letter_case_and_padding(): void {
-		SpamGuard::check( $this->server(), $this->request(), 'Jan@Example.test' );
-		SpamGuard::check( $this->server(), $this->request(), ' jan@example.test ' );
-		SpamGuard::check( $this->server(), $this->request(), 'JAN@EXAMPLE.TEST' );
+		$this->register( 'Jan@Example.test' );
+		$this->register( ' jan@example.test ' );
+		$this->register( 'JAN@EXAMPLE.TEST' );
 
 		$this->assertSame( 'email_limit', SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' )->reason() );
 	}
@@ -278,8 +318,11 @@ final class SpamGuardTest extends WP_UnitTestCase {
 	}
 
 	public function test_crossing_the_email_threshold_writes_exactly_one_row(): void {
-		for ( $i = 0; $i < 7; $i++ ) {
-			SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' );
+		for ( $i = 0; $i < 3; $i++ ) {
+			$this->register( 'jan@example.test' );
+		}
+		for ( $i = 0; $i < 4; $i++ ) {
+			$this->assertSame( 'email_limit', SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' )->reason() );
 		}
 
 		$rows = $this->log_rows();
@@ -287,12 +330,52 @@ final class SpamGuardTest extends WP_UnitTestCase {
 		$this->assertSame( 'email_limit', json_decode( (string) $rows[0]->context, true )['reason'] );
 	}
 
-	public function test_a_rejected_honeypot_does_not_use_up_the_email_threshold(): void {
-		for ( $i = 0; $i < 5; $i++ ) {
-			SpamGuard::check( $this->server(), $this->filled_honeypot(), 'jan@example.test' );
+	public function test_a_whitespace_only_honeypot_is_not_a_bot(): void {
+		$request                               = $this->request();
+		$request[ RegistrationForm::HONEYPOT ] = "  \t";
+
+		$this->assertTrue( SpamGuard::check( $this->server(), $request, 'jan@example.test' )->passed() );
+	}
+
+	public function test_a_timestamp_older_than_a_day_is_rejected_and_a_fresh_one_is_not(): void {
+		$old = $this->request();
+		$old[ RegistrationForm::TIMESTAMP ] = SpamGuard::stamp( time() - SpamGuard::STAMP_MAX_AGE - 60 );
+		$ok  = $this->request();
+		$ok[ RegistrationForm::TIMESTAMP ]  = SpamGuard::stamp( time() - SpamGuard::STAMP_MAX_AGE + 60 );
+
+		$this->assertSame( 'too_fast', SpamGuard::check( $this->server(), $old, 'jan@example.test' )->reason() );
+		$this->assertTrue( SpamGuard::check( $this->server(), $ok, 'jan@example.test' )->passed() );
+	}
+
+	public function test_requests_without_a_usable_address_are_not_pooled_into_one_ip_bucket(): void {
+		$this->configure( array( 'rate_limit_per_hour' => 2 ) );
+		for ( $i = 1; $i <= 6; $i++ ) {
+			$this->assertTrue( SpamGuard::check( array(), $this->request(), "o{$i}@example.test" )->passed(), "Żądanie {$i}" );
 		}
 
-		$this->assertTrue( SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' )->passed() );
+		$this->assertSame( 'honeypot', SpamGuard::check( array(), $this->filled_honeypot(), 'x@example.test' )->reason(), 'Honeypot działa bez adresu.' );
+		$this->assertSame( 'too_fast', SpamGuard::check( array(), $this->request( 0 ), 'y@example.test' )->reason() );
+	}
+
+	public function test_a_failing_counter_store_is_reported_once_per_request_without_changing_the_verdict(): void {
+		$block = static function ( string $query ): string {
+			return ( str_contains( $query, 'pusers_rl_' ) && 0 === stripos( ltrim( $query ), 'INSERT' ) ) ? 'SELECT 1 FROM dual WHERE 0' : $query;
+		};
+		add_filter( 'query', $block );
+		RateLimiter::reset_failure_report();
+
+		try {
+			$first  = SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' );
+			$second = SpamGuard::check( $this->server(), $this->request(), 'ola@example.test' );
+		} finally {
+			remove_filter( 'query', $block );
+		}
+
+		$this->assertTrue( $first->passed() );
+		$this->assertTrue( $second->passed() );
+		$rows = $this->log_rows();
+		$this->assertCount( 1, $rows );
+		$this->assertSame( RateLimiter::FAILURE_LOG_ACTION, $rows[0]->action );
 	}
 
 	public function test_extension_point_can_turn_a_pass_into_a_rejection(): void {

@@ -202,6 +202,18 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		$this->assertMatchesRegularExpression( '/name="pusers_registration_limit_per_email_per_hour" value="7"/', $html );
 	}
 
+	public function test_the_screen_tells_the_administrator_which_proxy_header_not_to_name(): void {
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+		ob_start();
+		SettingsScreen::render();
+		$html = (string) ob_get_clean();
+
+		$this->assertStringContainsString( 'NADPISUJE', $html );
+		$this->assertStringContainsString( 'prawy (ostatni) wpis', $html );
+		$this->assertStringContainsString( 'wartość należy podnieść', $html );
+	}
+
 	public function test_a_get_request_is_refused_and_changes_nothing(): void {
 		SettingsRepository::save( Settings::fromArray( array( 'rate_limit_per_hour' => 42 ) ) );
 		$this->asAdminPosting( 'pusers_save_settings', array( 'rate_limit_per_hour' => '5' ) );

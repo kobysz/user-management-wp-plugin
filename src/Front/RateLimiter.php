@@ -11,6 +11,8 @@ namespace PortalUsers\Front;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Persistence\EventLog;
+
 /**
  * Licznik prób per kubełek (np. adres IP albo adres e-mail). Okno jest stałe: liczy się od pierwszej
  * próby i po BLOCK_MINUTES licznik znika sam, bo żyje w transiencie. Kolejne próby NIE przedłużają okna,
@@ -26,6 +28,18 @@ final class RateLimiter {
 	private const KEY_PREFIX = 'pusers_rl_';
 
 	/**
+	 * Akcja w logu zdarzeń, gdy licznik nie daje się zapisać (progi przestają wtedy obowiązywać).
+	 */
+	public const FAILURE_LOG_ACTION = 'rate_limiter_failed';
+
+	/**
+	 * Czy awaria zapisu została już zgłoszona w tym żądaniu.
+	 *
+	 * @var bool
+	 */
+	private static bool $failure_reported = false;
+
+	/**
 	 * Zlicza próbę.
 	 *
 	 * @param string $bucket Nazwa kubełka.
@@ -38,7 +52,7 @@ final class RateLimiter {
 		$start  = null === $entry ? $now : $entry['start'];
 		$expiry = max( 1, self::BLOCK_MINUTES * MINUTE_IN_SECONDS - ( $now - $start ) );
 
-		set_transient(
+		$saved = set_transient(
 			self::key( $bucket ),
 			array(
 				'count' => $count,
@@ -46,6 +60,9 @@ final class RateLimiter {
 			),
 			$expiry
 		);
+		if ( ! $saved ) {
+			self::report_failure();
+		}
 
 		return $count;
 	}
@@ -68,6 +85,25 @@ final class RateLimiter {
 	 */
 	public static function clear( string $bucket ): void {
 		delete_transient( self::key( $bucket ) );
+	}
+
+	/**
+	 * Zeruje flagę zgłoszonej awarii (nowe żądanie; używane też przez testy).
+	 */
+	public static function reset_failure_report(): void {
+		self::$failure_reported = false;
+	}
+
+	/**
+	 * Zgłasza w logu zdarzeń nieudany zapis licznika, raz na żądanie. Nie zmienia zachowania bramki:
+	 * administrator ma się tylko dowiedzieć, że progi chwilowo nie działają.
+	 */
+	private static function report_failure(): void {
+		if ( self::$failure_reported ) {
+			return;
+		}
+		self::$failure_reported = true;
+		EventLog::write( self::FAILURE_LOG_ACTION, 0, 0, array( 'reason' => 'storage_unavailable' ) );
 	}
 
 	/**

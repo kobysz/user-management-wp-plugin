@@ -41,7 +41,16 @@ final class SpamGuard {
 	 */
 	public const LOG_ACTION = 'registration_blocked';
 
-	private const STAMP_SCOPE = 'pusers_t|';
+	/**
+	 * Maksymalny wiek znacznika czasu formularza, w sekundach. Starszy jest traktowany jak niepoprawny,
+	 * co bez żadnego stanu ogranicza ponowne użycie podpisanego znacznika.
+	 */
+	public const STAMP_MAX_AGE = DAY_IN_SECONDS;
+
+	private const STAMP_SCOPE   = 'pusers_t|';
+	private const BUCKET_IP     = 'registration_ip:';
+	private const BUCKET_EMAIL  = 'registration_email:';
+	private const BUCKET_LOGGED = 'registration_email_logged:';
 
 	/**
 	 * Wartość znacznika czasu do wstawienia w formularz: moment i jego podpis.
@@ -53,13 +62,15 @@ final class SpamGuard {
 	}
 
 	/**
-	 * Sprawdza zgłoszenie.
+	 * Sprawdza zgłoszenie PRZED walidacją: honeypot, pułapka czasowa, próg IP i próg adresu e-mail.
 	 *
 	 * Każde żądanie zużywa licznik per adres IP, także to z wypełnionym honeypotem albo za szybkie: to
 	 * dowód bota i po przekroczeniu progu dostaje on blokadę czasową zamiast generować ruch bez końca.
-	 * Licznik per adres e-mail zużywają tylko żądania, które przeszły reguły (adres bota bywa zmyślony).
-	 * Do logu zdarzeń trafia wyłącznie PRZEKROCZENIE progu, raz w oknie na próg; odmowa poniżej progu
-	 * i odmowa rozszerzenia nie piszą nic, żeby bot nie zapchał tabeli audytowej.
+	 * Gdy nie da się ustalić adresu klienta (brak poprawnego REMOTE_ADDR), progu IP się NIE liczy:
+	 * ruch bez adresu zlany w jeden kubełek odciąłby cały portal; honeypot, pułapka i próg e-mail działają.
+	 * Licznik adresu e-mail check() tylko CZYTA (patrz record_registration()). Do logu zdarzeń trafia
+	 * wyłącznie przekroczenie progu, raz w oknie na próg; odmowa poniżej progu i odmowa rozszerzenia
+	 * nie piszą nic, żeby bot nie zapchał tabeli audytowej.
 	 *
 	 * @param array<string, mixed> $server  Tablica serwera ($_SERVER).
 	 * @param array<string, mixed> $request Dane żądania bez ukośników (pola z RegistrationForm::HONEYPOT i TIMESTAMP).
@@ -68,8 +79,8 @@ final class SpamGuard {
 	public static function check( array $server, array $request, string $email ): SpamVerdict {
 		$settings = SettingsRepository::get();
 		$ip       = IpAddress::from( $server, $settings->trustedProxyHeader );
+		$ipCount  = '' === $ip ? 0 : RateLimiter::hit( self::BUCKET_IP . $ip );
 
-		$ipCount = RateLimiter::hit( 'registration_ip:' . $ip );
 		if ( $ipCount > $settings->rateLimitPerHour ) {
 			$verdict = SpamVerdict::reject( SpamVerdict::IP_LIMIT );
 			if ( $settings->rateLimitPerHour + 1 === $ipCount ) {
@@ -79,17 +90,7 @@ final class SpamGuard {
 			$verdict = self::own_verdict( $settings->timeTrapSeconds, $settings->registrationLimitPerEmailPerHour, $ip, $request, $email );
 		}
 
-		/**
-		 * Punkt rozszerzenia antyspamu rejestracji. Wołany także wtedy, gdy werdykt już jest odmową
-		 * (filtr musi widzieć odmowę, żeby móc ją zaostrzyć), więc filtr z zewnętrzną usługą (captcha)
-		 * powinien wyjść od razu, gdy `$verdict->passed()` jest fałszem, inaczej odpyta usługę za każdego bota.
-		 * Filtr może zamienić przepustkę na odmowę; odmowy na przepustkę nie zmieni.
-		 *
-		 * @param SpamVerdict          $verdict Werdykt własnych reguł wtyczki.
-		 * @param array<string, mixed> $request Dane żądania.
-		 * @param string               $email   Adres e-mail ze zgłoszenia.
-		 */
-		$filtered = apply_filters( 'pusers_registration_spam_check', $verdict, $request, $email );
+		$filtered = apply_filters( self::FILTER, $verdict, $request, $email ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej FILTER, która ma prefiks pusers_.
 
 		// Filtr może tylko zaostrzyć werdykt: odmowa własnych reguł zostaje, cokolwiek zwrócił.
 		if ( $verdict->passed() && $filtered instanceof SpamVerdict && ! $filtered->passed() ) {
@@ -100,10 +101,28 @@ final class SpamGuard {
 	}
 
 	/**
+	 * Zlicza rejestrację adresu e-mail w progu per adres.
+	 *
+	 * Wolno ją wołać WYŁĄCZNIE po udanej walidacji zgłoszenia i po przepustce z check(). Licznik istnieje,
+	 * żeby bot nie zgadywał adresów, a pomyłka walidacyjna (błędne hasło, nieudana captcha) nie jest
+	 * zgadywaniem, tylko człowiekiem, któremu coś nie wyszło; liczona wcześniej odcięłaby uczciwego
+	 * użytkownika od własnego adresu na godzinę, bez drogi odzyskania. Zgłoszenie nieważne nie zakłada
+	 * konta, więc nie ma czego ograniczać.
+	 *
+	 * @param string $email Adres e-mail zarejestrowanego zgłoszenia.
+	 */
+	public static function record_registration( string $email ): void {
+		$normalised = self::normalise( $email );
+		if ( '' !== $normalised ) {
+			RateLimiter::hit( self::BUCKET_EMAIL . $normalised );
+		}
+	}
+
+	/**
 	 * Werdykt reguł (honeypot, pułapka czasowa, próg e-mail) dla żądania, które mieści się w progu IP.
 	 *
 	 * @param int                  $timeTrapSeconds Minimalny czas wypełniania formularza.
-	 * @param int                  $emailLimit      Próg prób na godzinę per adres e-mail.
+	 * @param int                  $emailLimit      Próg rejestracji na godzinę per adres e-mail.
 	 * @param string               $ip              Adres klienta.
 	 * @param array<string, mixed> $request         Dane żądania.
 	 * @param string               $email           Adres e-mail ze zgłoszenia.
@@ -111,28 +130,34 @@ final class SpamGuard {
 	private static function own_verdict( int $timeTrapSeconds, int $emailLimit, string $ip, array $request, string $email ): SpamVerdict {
 		$honeypot = $request[ RegistrationForm::HONEYPOT ] ?? '';
 		// Pole, które nie jest tekstem (np. tablica), też jest wypełnione: człowiek takiego nie wyśle.
-		$filled = is_string( $honeypot ) ? $honeypot : 'x';
+		// Białe znaki obcinamy: autouzupełnianie przeglądarki potrafi dorzucić spację uczciwemu użytkownikowi.
+		$filled = is_string( $honeypot ) ? trim( $honeypot ) : 'x';
 
 		$verdict = ( new SpamRules( $timeTrapSeconds ) )->check( $filled, self::loaded_at( $request[ RegistrationForm::TIMESTAMP ] ?? null ), time() );
 		if ( ! $verdict->passed() ) {
 			return $verdict;
 		}
 
-		$normalised = strtolower( trim( $email ) );
-		if ( '' === $normalised ) {
+		$normalised = self::normalise( $email );
+		if ( '' === $normalised || RateLimiter::count( self::BUCKET_EMAIL . $normalised ) < $emailLimit ) {
 			return SpamVerdict::pass();
 		}
 
-		$emailCount = RateLimiter::hit( 'registration_email:' . $normalised );
-		if ( $emailCount > $emailLimit ) {
-			$verdict = SpamVerdict::reject( SpamVerdict::EMAIL_LIMIT );
-			if ( $emailLimit + 1 === $emailCount ) {
-				self::log_limit( $verdict, $ip );
-			}
-			return $verdict;
+		$verdict = SpamVerdict::reject( SpamVerdict::EMAIL_LIMIT );
+		// Licznik e-mail się tu nie zmienia, więc „pierwsze przekroczenie” znaczy pierwsza odmowa w oknie.
+		if ( 1 === RateLimiter::hit( self::BUCKET_LOGGED . $normalised ) ) {
+			self::log_limit( $verdict, $ip );
 		}
+		return $verdict;
+	}
 
-		return SpamVerdict::pass();
+	/**
+	 * Adres e-mail w postaci kubełka.
+	 *
+	 * @param string $email Adres e-mail.
+	 */
+	private static function normalise( string $email ): string {
+		return strtolower( trim( $email ) );
 	}
 
 	/**
@@ -153,10 +178,9 @@ final class SpamGuard {
 		);
 	}
 
-
 	/**
-	 * Moment załadowania formularza z podpisanego znacznika; 0 dla znacznika nieobecnego, w złym kształcie
-	 * albo z niezgodnym podpisem (SpamRules traktuje 0 jak odesłanie zbyt szybkie).
+	 * Moment załadowania formularza z podpisanego znacznika; 0 dla znacznika nieobecnego, w złym kształcie,
+	 * z niezgodnym podpisem albo starszego niż STAMP_MAX_AGE (SpamRules traktuje 0 jak odesłanie zbyt szybkie).
 	 *
 	 * @param mixed $raw Wartość pola z żądania.
 	 */
@@ -164,7 +188,11 @@ final class SpamGuard {
 		if ( ! is_string( $raw ) || 1 !== preg_match( '/^(\d{1,10})\.([0-9a-f]{32})$/', $raw, $m ) ) {
 			return 0;
 		}
+		if ( ! hash_equals( wp_hash( self::STAMP_SCOPE . $m[1] ), $m[2] ) ) {
+			return 0;
+		}
 
-		return hash_equals( wp_hash( self::STAMP_SCOPE . $m[1] ), $m[2] ) ? (int) $m[1] : 0;
+		$loadedAt = (int) $m[1];
+		return $loadedAt < time() - self::STAMP_MAX_AGE ? 0 : $loadedAt;
 	}
 }

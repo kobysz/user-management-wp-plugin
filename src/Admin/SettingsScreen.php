@@ -267,7 +267,7 @@ final class SettingsScreen {
 			'confirmation_token_hours'              => array( __( 'Ważność linku potwierdzającego (godziny)', 'portal-users' ), $settings->confirmationTokenHours, 1 ),
 			'unconfirmed_purge_days'                => array( __( 'Usuwanie niepotwierdzonych kont po (dniach)', 'portal-users' ), $settings->unconfirmedPurgeDays, 1 ),
 			'rate_limit_per_hour'                   => array( __( 'Limit zgłoszeń z jednego adresu na godzinę', 'portal-users' ), $settings->rateLimitPerHour, 1 ),
-			'registration_limit_per_email_per_hour' => array( __( 'Limit prób rejestracji tego samego adresu e-mail na godzinę', 'portal-users' ), $settings->registrationLimitPerEmailPerHour, 1 ),
+			'registration_limit_per_email_per_hour' => array( __( 'Limit rejestracji tego samego adresu e-mail na godzinę', 'portal-users' ), $settings->registrationLimitPerEmailPerHour, 1 ),
 			'time_trap_seconds'                     => array( __( 'Minimalny czas wypełniania formularza (sekundy, 0 = wyłączone)', 'portal-users' ), $settings->timeTrapSeconds, 0 ),
 		);
 		foreach ( $numbers as $key => $number ) {
@@ -278,6 +278,9 @@ final class SettingsScreen {
 				esc_attr( (string) $number[1] ),
 				esc_attr( (string) $number[2] )
 			);
+			if ( 'rate_limit_per_hour' === $key ) {
+				self::description( __( 'Liczą się wszystkie próby wysłania formularza z jednego adresu IP, także błędne. Jeśli użytkownicy portalu wychodzą do internetu przez wspólny adres (np. szpital, uczelnia), wartość należy podnieść.', 'portal-users' ) );
+			}
 			self::row_end();
 		}
 
@@ -287,7 +290,7 @@ final class SettingsScreen {
 			esc_attr( self::name( 'trusted_proxy_header' ) ),
 			esc_attr( $settings->trustedProxyHeader )
 		);
-		self::description( __( 'Nazwa nagłówka z adresem klienta, np. X-Forwarded-For. Wypełnij tylko wtedy, gdy serwer stoi za zaufanym proxy; puste pole oznacza adres połączenia.', 'portal-users' ) );
+		self::description( __( 'Puste pole oznacza adres połączenia i jest właściwym ustawieniem, gdy serwer nie stoi za proxy. Za proxy wskaż nagłówek, który proxy NADPISUJE własną wartością, np. X-Real-IP albo CF-Connecting-IP. X-Forwarded-For nadaje się tylko wtedy, gdy proxy go nadpisuje, a nie dopisuje do wartości przysłanej przez klienta. Obsługiwane jest jedno zaufane proxy: z nagłówka zawierającego łańcuch adresów brany jest jego prawy (ostatni) wpis. Jeśli przed serwerem stoi kilka proxy (np. CDN i własny nginx), prawy wpis bywa adresem proxy, identycznym dla wszystkich odwiedzających, i wtedy limit zgłoszeń obejmie wszystkich razem: wskaż nagłówek z adresem klienta ustawiany przez pierwsze proxy albo zostaw pole puste.', 'portal-users' ) );
 		self::row_end();
 	}
 

@@ -20,7 +20,7 @@ final class SettingsTest extends TestCase {
 		$this->assertSame( 48, $s->confirmationTokenHours );
 		$this->assertSame( 7, $s->unconfirmedPurgeDays );
 		$this->assertSame( 3, $s->timeTrapSeconds );
-		$this->assertSame( 10, $s->rateLimitPerHour );
+		$this->assertSame( 50, $s->rateLimitPerHour );
 		$this->assertSame( 3, $s->registrationLimitPerEmailPerHour );
 		$this->assertFalse( $s->deleteDataOnUninstall );
 		$this->assertSame( '', $s->trustedProxyHeader );

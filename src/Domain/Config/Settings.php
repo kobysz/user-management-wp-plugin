@@ -28,7 +28,7 @@ final class Settings {
 
 	private const DEFAULT_TOKEN_HOURS = 48;
 	private const DEFAULT_PURGE_DAYS  = 7;
-	private const DEFAULT_RATE_LIMIT  = 10;
+	private const DEFAULT_RATE_LIMIT  = 50;
 	private const DEFAULT_TIME_TRAP   = 3;
 	private const DEFAULT_EMAIL_LIMIT = 3;
 
