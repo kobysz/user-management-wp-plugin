@@ -21,9 +21,11 @@ traci.
 nieczytelna po loginie.** `display_name` też jest ustawione na tę losową
 wartość — z tego samego powodu, tylko mocniejszego, bo nazwa wyświetlana trafia
 do archiwów autora, komentarzy i RSS-a. Prawdziwe imię i nazwisko redakcja widzi
-w polach ACF na ekranie wniosków, czyli **za uprawnieniem**. Jeśli wolisz
-czytelną listę w panelu i godzisz się na publiczne nazwisko — to jedna zmiana
-w jednym miejscu.
+w polach ACF na ekranie wniosków, czyli **za uprawnieniem**.
+
+**Potwierdzone przez właściciela projektu (2026-10-27): losowe `display_name`
+zostaje.** Nieczytelna lista użytkowników w panelu jest przyjętym kosztem — to
+nie usterka i nie należy jej zgłaszać jako znaleziska.
 
 **Adres e-mail jest polem wtyczki, nie polem ACF.** Stoi zaraz po wyborze
 profesji, jest **zawsze wymagany** i nie podlega macierzy widoczności. Gdyby był
