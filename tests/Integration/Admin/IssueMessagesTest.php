@@ -57,6 +57,18 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'checkbox', $text );
 	}
 
+	public function test_the_credential_field_type_message_claims_no_certainty_that_is_false_for_some_types(): void {
+		// Reguła zgłasza KAŻDY typ spoza listy, także `email` i jednowartościowy `select`/`radio`,
+		// przy których rejestracja działa. Komunikat kłamiący o skutku operacji odbiera
+		// administratorowi zaufanie do raportu spójności, a raport jest tu jedynym kanałem dla
+		// złej konfiguracji.
+		foreach ( array( 'email', 'select', 'checkbox' ) as $type ) {
+			$text = IssueMessages::text( SettingsIssue::error( 'credential_field_wrong_type', array( 'profession' => 'lekarz', 'field' => 'pwz', 'type' => $type ) ) );
+			$this->assertStringNotContainsString( 'nigdy', $text, $type );
+			$this->assertStringContainsString( $type, $text, $type );
+		}
+	}
+
 	public function test_message_names_the_profession_and_field(): void {
 		$text = IssueMessages::text( SettingsIssue::warning( 'field_not_configured', array( 'profession' => 'student', 'field' => 'uczelnia' ) ) );
 		$this->assertStringContainsString( 'student', $text );

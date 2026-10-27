@@ -1053,7 +1053,9 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	}
 
 	public function test_markup_in_a_text_field_is_stripped_when_saved(): void {
-		// Sanityzacja przy zapisie; eskejpowania przy renderze ten test nie dowodzi (atrapa ACF nie renderuje wartości).
+		// Sanityzacja wykonuje się RAZ, przed walidacją (patrz RegistrationHandler::sanitized());
+		// zapis już tylko spłaszcza tablice. Eskejpowania przy renderze ten test nie dowodzi
+		// (atrapa ACF nie renderuje wartości).
 		$id = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null, 'notatka' => '<script>alert(1)</script><b>Tekst</b>' ) );
 
 		$this->assertSame( 'Tekst', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'notatka', true ) );

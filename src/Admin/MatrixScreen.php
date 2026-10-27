@@ -135,6 +135,13 @@ final class MatrixScreen {
 	 * użytkownik widzi „Podaj wartość jako tekst.” przy polu, które wypełnił poprawnie. Pole
 	 * logiczne daje numer uprawnień o wartości `'1'`. Dlatego BŁĄD, nie ostrzeżenie.
 	 *
+	 * Reguła jest SZERSZA niż te dwa przypadki: zgłasza każdy typ spoza listy, także taki, przy
+	 * którym rejestracja działa (`email`, jednowartościowy `select`/`radio` niosą w żądaniu napis).
+	 * Zawężenie listy jest celowe — numer uprawnień ma być polem, o którym wiadomo, że niesie
+	 * tekst — dlatego komunikat mówi, że wtyczka tego typu nie przyjmuje, i NIE twierdzi, że
+	 * rejestracja jest niemożliwa: dla części typów byłoby to nieprawdą, a administrator, który raz
+	 * złapie raport na nieprawdziwym komunikacie, przestaje mu wierzyć.
+	 *
 	 * Pole, którego typu w źródle nie ma (definicja z filtra `pusers_acf_fields` bez typu), jest
 	 * pomijane: nieznany typ to nie jest typ zły, a reguła, która nie umie rozstrzygnąć, nie może
 	 * oskarżać. Pola nieobecnego w źródle pilnują reguły `credential_field_not_required`
