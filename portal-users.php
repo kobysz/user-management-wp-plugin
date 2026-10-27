@@ -42,3 +42,7 @@ register_activation_hook( __FILE__, array( \PortalUsers\Persistence\Migrations::
 
 // Aktualizacja wtyczki nie odpala hooka aktywacji. Bezwarunkowo, bez zależności od ACF Pro.
 add_action( 'plugins_loaded', array( \PortalUsers\Persistence\Migrations::class, 'maybe_upgrade' ) );
+
+// Cron czyszczący niepotwierdzone konta: harmonogram zakładany przy aktywacji, zdejmowany przy deaktywacji.
+register_activation_hook( __FILE__, array( \PortalUsers\Cron\PurgeUnconfirmed::class, 'schedule' ) );
+register_deactivation_hook( __FILE__, array( \PortalUsers\Cron\PurgeUnconfirmed::class, 'unschedule' ) );

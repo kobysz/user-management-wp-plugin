@@ -13,6 +13,7 @@ use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
+use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\RegistrationForm;
@@ -65,6 +66,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'registration handler' => array( RegistrationHandler::class ),
 			'confirmation' => array( Confirmation::class ),
 			'terms binding' => array( TermsBinding::class ),
+			'purge unconfirmed' => array( PurgeUnconfirmed::class ),
 		);
 	}
 
