@@ -17,6 +17,7 @@ use PortalUsers\Domain\Credentials\ValidatorRegistry;
 use PortalUsers\Domain\Profession\Profession;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\EventLog;
+use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
@@ -51,6 +52,11 @@ final class Mailer {
 	 * Zdarzenie w logu: powiadomienie redakcji nie miało komu iść.
 	 */
 	public const NO_RECIPIENTS_LOG_ACTION = 'mail_no_recipients';
+
+	/**
+	 * Zdarzenie w logu: adres redakcji profesji jest ustawiony, ale niepoprawny.
+	 */
+	public const INVALID_RECIPIENT_LOG_ACTION = 'mail_invalid_profession_recipient';
 
 	/**
 	 * Cel maila w kubełku limitu: ponowna wysyłka i mail o próbie rejestracji mają NIEZALEŻNE liczniki,
@@ -111,7 +117,7 @@ final class Mailer {
 		$professionKey = is_string( $professionKey ) ? $professionKey : '';
 		$profession    = ProfessionRepository::get()->get( $professionKey );
 
-		$recipients = self::editorial_recipients( $profession );
+		$recipients = self::editorial_recipients( $profession, $userId );
 		if ( array() === $recipients ) {
 			EventLog::write( self::NO_RECIPIENTS_LOG_ACTION, $userId, 0, array( 'profession' => $professionKey ) );
 			return false;
@@ -130,7 +136,7 @@ final class Mailer {
 		$lines[] = __( 'Numer uprawnień:', 'portal-users' ) . ' ' . self::credential_summary( $userId, $profession );
 		$lines[] = '';
 		$lines[] = __( 'Pola zgłoszenia:', 'portal-users' );
-		foreach ( self::submitted_fields( $userId ) as $name => $value ) {
+		foreach ( self::submitted_fields( $userId, FieldMatrixRepository::get()->visibleFields( $professionKey ) ) as $name => $value ) {
 			$lines[] = '- ' . $name . ': ' . $value;
 		}
 		if ( '' !== $link ) {
@@ -193,8 +199,8 @@ final class Mailer {
 	 *
 	 * Każdy cel (ponowna wysyłka, mail o próbie rejestracji) ma własny kubełek na adres i próg równy progowi
 	 * rejestracji per adres e-mail. Liczniki są rozdzielone, bo wspólny pozwalałby osobie trzeciej zgłaszającej
-	 * cudzy adres odebrać jego właścicielowi ponowną wysyłkę. Licznik rośnie niezależnie od tego, czy adres
-	 * ma konto: odpowiedź nie zdradza, czy ma.
+	 * cudzy adres odebrać jego właścicielowi ponowną wysyłkę. Licznik rośnie tylko przy realnej próbie wysyłki (wołający liczy ją dopiero po ustaleniu, że mail pójdzie), więc cudze
+	 * żądania nie odbierają właścicielowi budżetu.
 	 *
 	 * @param string $email   Adres odbiorcy.
 	 * @param string $purpose Cel (PURPOSE_*): każdy cel ma własny licznik.
@@ -212,12 +218,17 @@ final class Mailer {
 	 * Odbiorcy powiadomienia redakcji: adres profesji nadpisuje listę globalną.
 	 *
 	 * @param Profession|null $profession Profesja konta (null, gdy wycofana).
+	 * @param int             $userId     Identyfikator użytkownika (do wpisu w logu).
 	 * @return list<string>
 	 */
-	private static function editorial_recipients( ?Profession $profession ): array {
+	private static function editorial_recipients( ?Profession $profession, int $userId ): array {
 		$own = null === $profession ? '' : sanitize_email( trim( $profession->notifyEmail ) );
 		if ( '' !== $own && is_email( $own ) ) {
 			return array( $own );
+		}
+		if ( null !== $profession && '' !== trim( $profession->notifyEmail ) ) {
+			// Adres profesji jest ustawiony, ale niepoprawny (literówka): wniosek idzie na listę globalną i ktoś musi się o tym dowiedzieć.
+			EventLog::write( self::INVALID_RECIPIENT_LOG_ACTION, $userId, 0, array( 'profession' => $profession->key ) );
 		}
 
 		$out = array();
@@ -271,20 +282,27 @@ final class Mailer {
 	/**
 	 * Zapisane pola zgłoszenia (metadane z przedrostkiem pól ACF) jako nazwa => wartość w jednej linii.
 	 *
-	 * @param int $userId Identyfikator użytkownika.
+	 * Tylko pola widoczne w macierzy dla profesji wnioskodawcy: ukryte nie trafiają do redakcji.
+	 *
+	 * @param int                $userId        Identyfikator użytkownika.
+	 * @param array<int, string> $visibleFields Pola widoczne dla profesji.
 	 * @return array<string, string>
 	 */
-	private static function submitted_fields( int $userId ): array {
-		$out    = array();
-		$prefix = RegistrationHandler::ACF_META_PREFIX;
-		$all    = get_user_meta( $userId );
+	private static function submitted_fields( int $userId, array $visibleFields ): array {
+		$out     = array();
+		$prefix  = RegistrationHandler::ACF_META_PREFIX;
+		$all     = get_user_meta( $userId );
+		$visible = array_flip( $visibleFields );
 		foreach ( is_array( $all ) ? $all : array() as $key => $values ) {
 			$key = (string) $key;
 			if ( ! str_starts_with( $key, $prefix ) || ! is_array( $values ) ) {
 				continue;
 			}
+			$name = substr( $key, strlen( $prefix ) );
+			if ( ! isset( $visible[ $name ] ) ) {
+				continue;
+			}
 			$value = $values[0] ?? '';
-			$name  = substr( $key, strlen( $prefix ) );
 
 			$out[ $name ] = is_string( $value ) ? trim( (string) preg_replace( '/\s+/', ' ', $value ) ) : '';
 		}
@@ -320,10 +338,17 @@ final class Mailer {
 		 */
 		$filteredSubject = apply_filters( self::FILTER_SUBJECT, $subject, $kind, $context ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej FILTER_SUBJECT, która ma prefiks pusers_.
 
-		return wp_mail(
-			$to,
-			is_string( $filteredSubject ) ? $filteredSubject : $subject,
-			is_string( $filteredBody ) ? $filteredBody : $body
-		);
+		// Osobna wiadomość do każdego odbiorcy: w `To:` jednej wiadomości każdy widziałby adresy pozostałych.
+		$sent = true;
+		foreach ( (array) $to as $recipient ) {
+			$ok   = wp_mail(
+				$recipient,
+				is_string( $filteredSubject ) ? $filteredSubject : $subject,
+				is_string( $filteredBody ) ? $filteredBody : $body
+			);
+			$sent = $ok && $sent;
+		}
+
+		return $sent;
 	}
 }

@@ -435,6 +435,9 @@ final class RegistrationHandler {
 	 * @param string $email      Adres ze zgłoszenia.
 	 */
 	private static function acknowledge_existing( int $existingId, string $email ): void {
+		// Licznik rejestracji adresu rośnie tak samo jak przy adresie wolnym, więc próg (także ustawiony na 1) trafia
+		// obie odpowiedzi symetrycznie i nie wyliczają kont.
+		SpamGuard::record_registration( $email );
 		if ( Mailer::may_send_to( $email, Mailer::PURPOSE_ATTEMPT ) && Mailer::existing_account( $existingId ) ) {
 			EventLog::write( self::EXISTING_LOG_ACTION, $existingId, 0, array() );
 		}

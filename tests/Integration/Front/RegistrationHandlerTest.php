@@ -739,19 +739,45 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( $existing, (int) email_exists( $email ) );
 	}
 
-	public function test_mail_about_attempts_on_an_existing_address_is_rate_limited(): void {
+	public function test_the_attempt_mail_is_not_sent_once_its_limit_is_used_up_and_the_response_stays_the_same(): void {
 		$email = $this->email();
 		$this->register_ok( array( RegistrationForm::EMAIL => $email ) );
 		$this->mails = array();
-
-		$locations = array();
-		for ( $i = 0; $i < 6; $i++ ) {
-			$locations[] = $this->post_and_submit( array( RegistrationForm::EMAIL => $email ) );
+		for ( $i = 0; $i < 3; $i++ ) {
+			Mailer::may_send_to( $email, Mailer::PURPOSE_ATTEMPT );
 		}
 
-		$this->assertCount( 3, $this->mails, 'Próg wiadomości na adres na godzinę (registration_limit_per_email_per_hour).' );
-		$this->assertCount( 1, array_unique( $locations ), 'Po przekroczeniu progu odpowiedź się nie zmienia.' );
+		$location = $this->post_and_submit( array( RegistrationForm::EMAIL => $email ) );
+
+		$this->assertSame( array(), $this->mails, 'Próg maili o próbie rejestracji wyczerpany.' );
+		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $location, 'Odpowiedź ta sama co dla przyjętego zgłoszenia.' );
 		$this->assertTrue( Mailer::may_send_to( $email, Mailer::PURPOSE_RESEND ), 'Cudze zgłoszenia nie odbierają właścicielowi ponownej wysyłki.' );
+	}
+
+	public function test_with_the_per_address_limit_set_to_one_a_taken_and_a_free_address_answer_identically(): void {
+		SettingsRepository::save(
+			Settings::fromArray(
+				array(
+					'acf_group_key'                         => 'group_abc',
+					'rate_limit_per_hour'                   => 50,
+					'registration_limit_per_email_per_hour' => 1,
+					'time_trap_seconds'                     => 3,
+				)
+			)
+		);
+		$taken = $this->email();
+		$free  = $this->email();
+		self::factory()->user->create( array( 'user_email' => $taken ) );
+
+		$answers = array();
+		foreach ( array( 'taken' => $taken, 'free' => $free ) as $label => $address ) {
+			$first                      = $this->post_and_submit( array( RegistrationForm::EMAIL => $address ) );
+			$second                     = $this->post_and_submit( array( RegistrationForm::EMAIL => $address ) );
+			$answers[ $label ]          = array( $first, $second, $this->follow( $second )['notice'] );
+		}
+
+		$this->assertSame( $answers['free'], $answers['taken'], 'Drugie zgłoszenie dostaje ten sam wynik dla adresu zajętego i wolnego.' );
+		$this->assertSame( 'too_many', $answers['free'][2], 'Próg faktycznie zadziałał.' );
 	}
 
 	public function test_other_field_errors_are_reported_the_same_for_an_existing_address_without_an_email_error(): void {

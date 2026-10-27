@@ -9,10 +9,12 @@ namespace PortalUsers\Tests\Integration\Front;
 
 use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Front\Mailer;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Persistence\AccountStatusRepository;
+use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
@@ -40,6 +42,7 @@ final class MailerTest extends WP_UnitTestCase {
 			2
 		);
 		SettingsRepository::save( Settings::fromArray( array( 'notify_emails' => array( 'redakcja@example.test' ) ) ) );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required', 'notatka' => 'visible', 'sekret' => 'hidden' ) ) ) );
 		ProfessionRepository::save(
 			ProfessionCollection::fromArray(
 				array(
@@ -56,6 +59,7 @@ final class MailerTest extends WP_UnitTestCase {
 		if ( '' !== $pwz ) {
 			update_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'pwz', $pwz );
 		}
+		update_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'sekret', 'TAJNE-DANE' );
 		update_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'notatka', "Pierwsza linia\nDruga linia" );
 		AccountStatusRepository::set( $id, AccountStatus::Pending );
 		return $id;
@@ -73,6 +77,16 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '- notatka: Pierwsza linia Druga linia', $body, 'Wartość w jednej linii.' );
 		$this->assertStringContainsString( '5425740 (wynik walidacji: poprawny)', $body );
 		$this->assertStringContainsString( 'user_id=' . $id, $body );
+	}
+
+	public function test_a_field_hidden_for_the_profession_is_not_sent_to_the_editors(): void {
+		$id = $this->account( 'lekarz', '5425740' );
+
+		Mailer::editorial( $id );
+
+		$this->assertStringNotContainsString( 'TAJNE-DANE', (string) $this->mails[0]['message'] );
+		$this->assertStringNotContainsString( 'sekret', (string) $this->mails[0]['message'] );
+		$this->assertStringContainsString( '- notatka:', (string) $this->mails[0]['message'] );
 	}
 
 	public function test_the_editorial_mail_marks_an_invalid_credential_with_the_reason(): void {

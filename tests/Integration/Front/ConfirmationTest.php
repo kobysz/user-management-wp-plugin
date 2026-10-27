@@ -179,7 +179,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 				$this->assertStringNotContainsString( $token, (string) $value, 'Token jawny w metadanej ' . $name );
 			}
 		}
-		$this->assertTrue( Confirmation::verify( $id, $token ), 'Skrót musi odpowiadać tokenowi.' );
+		$this->assertTrue( Confirmation::try_confirm( $id, $token ), 'Skrót musi odpowiadać tokenowi.' );
 		foreach ( $this->log_rows() as $row ) {
 			$this->assertStringNotContainsString( $token, (string) $row->context, 'Token jawny w logu zdarzeń.' );
 		}
@@ -198,7 +198,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$id    = $this->account();
 		$token = Confirmation::issue( $id );
 
-		$this->assertTrue( Confirmation::verify( $id, $token ) );
+		$this->assertTrue( Confirmation::try_confirm( $id, $token ) );
 		$this->assertSame( AccountStatus::Pending, $this->status( $id ) );
 		$this->assertSame( '', get_user_meta( $id, UserMeta::CONFIRM_HASH, true ), 'Token jest jednorazowy.' );
 	}
@@ -208,7 +208,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		Confirmation::issue( $id );
 
 		$this->assertSame( Confirmation::RESULT_INVALID, Confirmation::confirm( $id, str_repeat( 'a', 64 ) ) );
-		$this->assertFalse( Confirmation::verify( $id, '' ) );
+		$this->assertFalse( Confirmation::try_confirm( $id, '' ) );
 		$this->assertSame( AccountStatus::EmailUnconfirmed, $this->status( $id ) );
 		$this->assertSame( array(), $this->mails, 'Redakcja nie dostaje maila przy złym tokenie.' );
 	}
@@ -219,7 +219,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$token  = Confirmation::issue( $first );
 		Confirmation::issue( $second );
 
-		$this->assertFalse( Confirmation::verify( $second, $token ) );
+		$this->assertFalse( Confirmation::try_confirm( $second, $token ) );
 		$this->assertSame( AccountStatus::EmailUnconfirmed, $this->status( $second ) );
 	}
 
@@ -229,7 +229,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		update_user_meta( $id, UserMeta::CONFIRM_EXPIRES, time() - 60 );
 
 		$this->assertSame( Confirmation::RESULT_EXPIRED, Confirmation::confirm( $id, $token ) );
-		$this->assertFalse( Confirmation::verify( $id, $token ) );
+		$this->assertFalse( Confirmation::try_confirm( $id, $token ) );
 		$this->assertSame( AccountStatus::EmailUnconfirmed, $this->status( $id ) );
 		$this->assertSame( array(), $this->mails );
 		$this->assertStringContainsString( 'wygasł', Confirmation::message_for( Confirmation::RESULT_EXPIRED ) );
@@ -264,16 +264,48 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$token = Confirmation::issue( $id );
 		AccountStatusRepository::set( $id, $decided );
 
-		$this->assertFalse( Confirmation::verify( $id, $token ) );
 		$this->assertSame( Confirmation::RESULT_ALREADY, Confirmation::confirm( $id, $token ) );
+		$this->assertFalse( Confirmation::try_confirm( $id, $token ), 'Token po wyniku „już rozpatrzone” nie działa.' );
 		$this->assertSame( $decided, $this->status( $id ) );
+		$this->assertSame( '', get_user_meta( $id, UserMeta::CONFIRM_HASH, true ), 'Token nie zostaje żywy na rozpatrzonym koncie.' );
+		$this->assertSame( '', get_user_meta( $id, UserMeta::CONFIRM_EXPIRES, true ) );
 		$this->assertSame( array(), $this->mails, 'Redakcja nie dostaje drugiego maila.' );
+	}
+
+	public function test_an_account_without_any_status_is_left_alone_by_a_valid_token(): void {
+		$id    = $this->account();
+		$token = Confirmation::issue( $id );
+		delete_user_meta( $id, UserMeta::STATUS );
+
+		$this->assertFalse( Confirmation::try_confirm( $id, $token ) );
+		$this->assertNull( $this->status( $id ) );
+		$this->assertSame( array(), $this->mails );
+	}
+
+	public function test_a_malformed_profession_address_falls_back_to_the_global_list_and_is_logged(): void {
+		ProfessionRepository::save(
+			ProfessionCollection::fromArray(
+				array( array( 'key' => 'lekarz', 'label' => 'Lekarz', 'notify_email' => 'to-nie-adres' ) )
+			)
+		);
+		$id = $this->account();
+		Confirmation::try_confirm( $id, Confirmation::issue( $id ) );
+
+		$this->assertSame( array( self::GLOBAL_RECIPIENT ), (array) $this->mails[0]['to'] );
+		$actions = array_map( static fn ( object $row ): string => (string) $row->action, $this->log_rows() );
+		$this->assertContains( Mailer::INVALID_RECIPIENT_LOG_ACTION, $actions );
+	}
+
+	public function test_the_stale_nonce_page_offers_the_resend_form(): void {
+		$_GET = array( RegistrationHandler::FAILED_ARG => RegistrationHandler::STALE );
+
+		$this->assertStringContainsString( 'name="' . Confirmation::EMAIL_FIELD . '"', Confirmation::notice_html() );
 	}
 
 	public function test_a_token_used_twice_does_not_move_an_approved_account_back_to_pending(): void {
 		$id    = $this->account();
 		$token = Confirmation::issue( $id );
-		$this->assertTrue( Confirmation::verify( $id, $token ) );
+		$this->assertTrue( Confirmation::try_confirm( $id, $token ) );
 		AccountStatusRepository::set( $id, AccountStatus::Approved );
 		$this->mails = array();
 
@@ -287,13 +319,13 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$id    = $this->account();
 		$token = Confirmation::issue( $id );
 
-		$this->assertTrue( Confirmation::verify( $id, $token ) );
+		$this->assertTrue( Confirmation::try_confirm( $id, $token ) );
 		$this->assertSame( AccountStatus::Approved, $this->status( $id ) );
 	}
 
 	public function test_editors_are_notified_on_the_transition_in_both_approval_modes(): void {
 		$id = $this->account();
-		Confirmation::verify( $id, Confirmation::issue( $id ) );
+		Confirmation::try_confirm( $id, Confirmation::issue( $id ) );
 		$pendingMails = $this->mails_to( self::GLOBAL_RECIPIENT );
 		$this->assertCount( 1, $pendingMails );
 		$this->assertStringContainsString( 'czeka na decyzję', (string) $pendingMails[0]['message'] );
@@ -302,7 +334,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$this->mails = array();
 		$this->configure( false );
 		$other = $this->account();
-		Confirmation::verify( $other, Confirmation::issue( $other ) );
+		Confirmation::try_confirm( $other, Confirmation::issue( $other ) );
 		$infoMails = $this->mails_to( self::GLOBAL_RECIPIENT );
 		$this->assertCount( 1, $infoMails );
 		$this->assertStringContainsString( 'informacyjny', (string) $infoMails[0]['message'] );
@@ -312,7 +344,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 
 	public function test_notification_goes_to_the_configured_recipients_not_to_the_site_admin(): void {
 		$id = $this->account();
-		Confirmation::verify( $id, Confirmation::issue( $id ) );
+		Confirmation::try_confirm( $id, Confirmation::issue( $id ) );
 
 		$this->assertCount( 1, $this->mails );
 		$this->assertSame( array( self::GLOBAL_RECIPIENT ), (array) $this->mails[0]['to'] );
@@ -322,14 +354,16 @@ final class ConfirmationTest extends WP_UnitTestCase {
 	public function test_all_configured_global_recipients_are_notified(): void {
 		$this->configure( true, array( 'notify_emails' => array( self::GLOBAL_RECIPIENT, 'druga@example.test' ) ) );
 		$id = $this->account();
-		Confirmation::verify( $id, Confirmation::issue( $id ) );
+		Confirmation::try_confirm( $id, Confirmation::issue( $id ) );
 
-		$this->assertSame( array( self::GLOBAL_RECIPIENT, 'druga@example.test' ), (array) $this->mails[0]['to'] );
+		$this->assertCount( 2, $this->mails, 'Osobna wiadomość do każdego: redaktorzy nie widzą swoich adresów.' );
+		$this->assertSame( array( self::GLOBAL_RECIPIENT ), (array) $this->mails[0]['to'] );
+		$this->assertSame( array( 'druga@example.test' ), (array) $this->mails[1]['to'] );
 	}
 
 	public function test_profession_specific_recipient_overrides_the_global_list(): void {
 		$id = $this->account( 'pielegniarka', '' );
-		Confirmation::verify( $id, Confirmation::issue( $id ) );
+		Confirmation::try_confirm( $id, Confirmation::issue( $id ) );
 
 		$this->assertCount( 1, $this->mails );
 		$this->assertSame( array( self::NURSE_RECIPIENT ), (array) $this->mails[0]['to'], 'Adres profesji zastępuje listę globalną, nie dopisuje się do niej.' );
@@ -338,7 +372,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 	public function test_without_any_recipient_nobody_is_mailed_and_the_gap_is_logged(): void {
 		$this->configure( true, array( 'notify_emails' => array() ) );
 		$id = $this->account();
-		Confirmation::verify( $id, Confirmation::issue( $id ) );
+		Confirmation::try_confirm( $id, Confirmation::issue( $id ) );
 
 		$this->assertSame( array(), $this->mails, 'Brak odbiorców nie przechodzi na adres administratora witryny.' );
 		$actions = array_map( static fn ( object $row ): string => (string) $row->action, $this->log_rows() );
@@ -349,7 +383,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 	public function test_the_transition_is_written_to_the_event_log_without_the_token(): void {
 		$id    = $this->account();
 		$token = Confirmation::issue( $id );
-		Confirmation::verify( $id, $token );
+		Confirmation::try_confirm( $id, $token );
 
 		$rows = array_values( array_filter( $this->log_rows(), static fn ( object $row ): bool => Confirmation::LOG_ACTION === $row->action ) );
 		$this->assertCount( 1, $rows );
@@ -369,7 +403,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$token = $this->token_from_last_mail();
 		$this->assertStringContainsString( Confirmation::QUERY_USER . '=' . $id, (string) $this->mails[0]['message'] );
 		$this->assertNotSame( $token, get_user_meta( $id, UserMeta::CONFIRM_HASH, true ) );
-		$this->assertTrue( Confirmation::verify( $id, $token ) );
+		$this->assertTrue( Confirmation::try_confirm( $id, $token ) );
 	}
 
 	public function test_the_link_in_the_mail_confirms_through_the_request_and_redirects_without_the_token(): void {
@@ -442,8 +476,8 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$this->assertCount( 1, $this->mails );
 		$new = $this->token_from_last_mail();
 		$this->assertNotSame( $old, $new );
-		$this->assertFalse( Confirmation::verify( $id, $old ), 'Poprzedni token przestaje działać.' );
-		$this->assertTrue( Confirmation::verify( $id, $new ) );
+		$this->assertFalse( Confirmation::try_confirm( $id, $old ), 'Poprzedni token przestaje działać.' );
+		$this->assertTrue( Confirmation::try_confirm( $id, $new ) );
 	}
 
 	public function test_resend_does_not_mail_an_account_that_is_already_confirmed(): void {
@@ -518,12 +552,28 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( RegistrationHandler::FAILED_ARG . '=' . RegistrationHandler::STALE, $location );
 	}
 
-	public function test_the_unknown_address_resend_counts_in_the_same_bucket_as_a_known_one(): void {
-		// Licznik rośnie niezależnie od istnienia konta: inaczej próg zdradzałby istnienie adresu.
-		$this->resend( 'nikt-taki@example.test' );
-		$this->resend( 'nikt-taki@example.test' );
-		$this->resend( 'nikt-taki@example.test' );
-		$this->assertFalse( Mailer::may_send_to( 'nikt-taki@example.test', Mailer::PURPOSE_RESEND ), 'Czwarta próba przekracza próg także dla nieistniejącego adresu.' );
+	public function test_requests_for_an_address_without_an_account_do_not_use_up_the_budget_of_its_future_owner(): void {
+		$email = 'przyszly@example.test';
+		for ( $i = 0; $i < 5; $i++ ) {
+			$this->resend( $email );
+		}
+		$this->assertSame( array(), $this->mails );
+		$id = (int) self::factory()->user->create( array( 'user_email' => $email ) );
+		AccountStatusRepository::set( $id, AccountStatus::EmailUnconfirmed );
+
+		$this->resend( $email );
+
+		$this->assertCount( 1, $this->mails, 'Cudze żądania nie zużyły kubełka.' );
+	}
+
+	public function test_requests_for_a_decided_account_do_not_use_up_its_resend_budget(): void {
+		$id = $this->account();
+		AccountStatusRepository::set( $id, AccountStatus::Approved );
+		for ( $i = 0; $i < 5; $i++ ) {
+			$this->resend( get_userdata( $id )->user_email );
+		}
+
+		$this->assertTrue( Mailer::may_send_to( get_userdata( $id )->user_email, Mailer::PURPOSE_RESEND ) );
 	}
 
 	public function test_exhausting_the_attempt_mail_limit_does_not_block_the_resend_for_the_same_address(): void {

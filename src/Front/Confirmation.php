@@ -95,12 +95,13 @@ final class Confirmation {
 	}
 
 	/**
-	 * Czy token potwierdził adres i przeniósł konto dalej.
+	 * PRÓBUJE potwierdzić adres: przy poprawnym tokenie ZMIENIA stan konta, zużywa token i wysyła mail do redakcji
+	 * (nie jest czystym sprawdzeniem). Zwraca, czy potwierdzenie się powiodło.
 	 *
 	 * @param int    $userId Identyfikator użytkownika.
 	 * @param string $token  Token jawny z linku.
 	 */
-	public static function verify( int $userId, string $token ): bool {
+	public static function try_confirm( int $userId, string $token ): bool {
 		return self::RESULT_OK === self::confirm( $userId, $token );
 	}
 
@@ -125,6 +126,9 @@ final class Confirmation {
 
 		// Decyzji redakcji (i każdego innego stanu niż niepotwierdzony) ten token nie ruszy.
 		if ( AccountStatus::EmailUnconfirmed !== AccountStatusRepository::get( $userId ) ) {
+			// Token niczego już nie otwiera, więc nie zostaje na koncie bezterminowo żywy.
+			delete_user_meta( $userId, UserMeta::CONFIRM_HASH );
+			delete_user_meta( $userId, UserMeta::CONFIRM_EXPIRES );
 			return self::RESULT_ALREADY;
 		}
 
@@ -187,9 +191,12 @@ final class Confirmation {
 		$raw   = isset( $_POST[ self::EMAIL_FIELD ] ) && is_string( $_POST[ self::EMAIL_FIELD ] ) ? sanitize_email( trim( wp_unslash( $_POST[ self::EMAIL_FIELD ] ) ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
 		$email = is_email( $raw ) ? $raw : '';
 
-		if ( '' !== $email && self::within_ip_limit() && Mailer::may_send_to( $email, Mailer::PURPOSE_RESEND ) ) {
+		if ( '' !== $email && self::within_ip_limit() ) {
 			$user = get_user_by( 'email', $email );
-			if ( false !== $user && AccountStatus::EmailUnconfirmed === AccountStatusRepository::get( $user->ID ) ) {
+			// Licznik adresu rośnie tylko przy REALNEJ wysyłce: liczony bezwarunkowo pozwalałby osobie trzeciej
+			// wyczerpać właścicielowi ponowną wysyłkę cudzymi żądaniami, a odpowiedź i tak jest zawsze ta sama.
+			// Atakującego ogranicza próg per IP.
+			if ( false !== $user && AccountStatus::EmailUnconfirmed === AccountStatusRepository::get( $user->ID ) && Mailer::may_send_to( $email, Mailer::PURPOSE_RESEND ) ) {
 				self::send_link( $user->ID );
 			}
 		}
@@ -205,6 +212,13 @@ final class Confirmation {
 		// Odczyt po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje.
 		$result = isset( $_GET[ self::RESULT_ARG ] ) && is_string( $_GET[ self::RESULT_ARG ] ) ? sanitize_key( wp_unslash( $_GET[ self::RESULT_ARG ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 		$resent = isset( $_GET[ self::RESENT_ARG ] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$stale  = isset( $_GET[ RegistrationHandler::FAILED_ARG ] ) && RegistrationHandler::STALE === $_GET[ RegistrationHandler::FAILED_ARG ]; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+
+		// Przedawniony nonce (także formularza ponownej wysyłki): komunikat „odśwież stronę” pokazuje formularz rejestracji,
+		// a tu dokładamy drogę powrotu do ponownej wysyłki.
+		if ( $stale ) {
+			return self::resend_form();
+		}
 
 		if ( $resent ) {
 			return '<p class="pusers-notice">' . esc_html( self::message_for( 'resent' ) ) . '</p>';
