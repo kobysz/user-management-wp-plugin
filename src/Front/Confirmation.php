@@ -172,7 +172,12 @@ final class Confirmation {
 
 	/**
 	 * Ponowna wysyłka linku. Odpowiedź jest ZAWSZE ta sama: nie zdradza, czy adres ma konto, czy czeka ono
-	 * na potwierdzenie, ani czy próg prób został przekroczony. Licznik rośnie tak samo dla każdego adresu.
+	 * na potwierdzenie, ani czy próg prób został przekroczony.
+	 *
+	 * Licznik adresu rośnie WYŁĄCZNIE przy realnej wysyłce (konto istnieje i czeka na potwierdzenie). NIE wolno go
+	 * liczyć bezwarunkowo „dla wszystkich adresów”: odpowiedź i tak jest stała, więc to niczego nie ukrywa, a pozwala
+	 * osobie trzeciej wyczerpać właścicielowi adresu budżet ponownej wysyłki cudzymi żądaniami. Atakującego
+	 * ogranicza próg per IP.
 	 */
 	public static function handle_resend(): void {
 		$nonce = isset( $_POST[ self::NONCE_FIELD ] ) && is_string( $_POST[ self::NONCE_FIELD ] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- to jest weryfikacja nonce'a.
@@ -260,7 +265,7 @@ final class Confirmation {
 			case self::RESULT_ALREADY:
 				return __( 'To konto zostało już rozpatrzone. Ten link nie jest już potrzebny.', 'portal-users' );
 			case 'resent':
-				return __( 'Jeżeli na ten adres czeka konto do potwierdzenia, wysłaliśmy nowy link.', 'portal-users' );
+				return __( 'Jeżeli na ten adres czeka konto do potwierdzenia, mogliśmy wysłać nowy link (liczba wysyłek na godzinę jest ograniczona). Otwórz najnowszą wiadomość od nas: starsze linki przestają działać.', 'portal-users' );
 			default:
 				return __( 'Link potwierdzający jest nieprawidłowy albo został już użyty.', 'portal-users' );
 		}

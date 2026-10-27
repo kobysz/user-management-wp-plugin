@@ -89,6 +89,16 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '- notatka:', (string) $this->mails[0]['message'] );
 	}
 
+	public function test_the_credential_number_reaches_the_editors_even_when_the_matrix_hides_its_field(): void {
+		// Numer jest podstawą decyzji redakcji: nie zależy od widoczności pola w macierzy.
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'hidden', 'notatka' => 'visible' ) ) ) );
+		$id = $this->account( 'lekarz', '5425740' );
+
+		Mailer::editorial( $id );
+
+		$this->assertStringContainsString( '5425740 (wynik walidacji: poprawny)', (string) $this->mails[0]['message'] );
+	}
+
 	public function test_the_editorial_mail_marks_an_invalid_credential_with_the_reason(): void {
 		$id = $this->account( 'lekarz', '1234567' );
 

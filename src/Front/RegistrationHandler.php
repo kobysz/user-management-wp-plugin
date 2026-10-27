@@ -351,8 +351,8 @@ final class RegistrationHandler {
 
 		// 6a. Adres ma już konto: odpowiedź jest TA SAMA co dla zgłoszenia przyjętego (przekierowanie z DONE_ARG),
 		// konto nie powstaje i nic się w istniejącym nie zmienia. Właściciel dostaje mail o próbie, pod tym samym
-		// progiem godzinnym co ponowna wysyłka. Licznika rejestracji adresu (record_registration) tu nie ruszamy:
-		// o odmowie decyduje próg maili, a odpowiedź formularza nie zmienia się nigdy.
+		// własnym progiem godzinnym (osobny kubełek niż ponowna wysyłka). Licznik rejestracji adresu (record_registration)
+		// rośnie tak samo jak przy adresie wolnym (w acknowledge_existing), więc próg trafia obie odpowiedzi symetrycznie.
 		if ( false !== $existingId ) {
 			self::acknowledge_existing( (int) $existingId, $clean );
 			self::redirect( add_query_arg( self::DONE_ARG, '1', self::return_url() ) );
@@ -428,8 +428,8 @@ final class RegistrationHandler {
 	}
 
 	/**
-	 * Obsługa zgłoszenia na adres, który ma już konto: mail do właściciela o próbie, pod progiem godzinnym
-	 * wspólnym z ponowną wysyłką. Nic w koncie się nie zmienia. Do logu trafia tylko wysłana wiadomość.
+	 * Obsługa zgłoszenia na adres, który ma już konto: mail do właściciela o próbie, pod własnym progiem godzinnym
+	 * (osobny kubełek niż ponowna wysyłka) i z naliczeniem licznika rejestracji adresu jak przy adresie wolnym. Nic w koncie się nie zmienia. Do logu trafia tylko wysłana wiadomość.
 	 *
 	 * @param int    $existingId Identyfikator istniejącego użytkownika.
 	 * @param string $email      Adres ze zgłoszenia.

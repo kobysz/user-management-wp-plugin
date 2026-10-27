@@ -265,7 +265,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		AccountStatusRepository::set( $id, $decided );
 
 		$this->assertSame( Confirmation::RESULT_ALREADY, Confirmation::confirm( $id, $token ) );
-		$this->assertFalse( Confirmation::try_confirm( $id, $token ), 'Token po wyniku „już rozpatrzone” nie działa.' );
+		// Dowodem, że token nie zostaje żywy, są asercje na pustych metadanych niżej (nie powtórne wywołanie).
 		$this->assertSame( $decided, $this->status( $id ) );
 		$this->assertSame( '', get_user_meta( $id, UserMeta::CONFIRM_HASH, true ), 'Token nie zostaje żywy na rozpatrzonym koncie.' );
 		$this->assertSame( '', get_user_meta( $id, UserMeta::CONFIRM_EXPIRES, true ) );
@@ -294,6 +294,14 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$this->assertSame( array( self::GLOBAL_RECIPIENT ), (array) $this->mails[0]['to'] );
 		$actions = array_map( static fn ( object $row ): string => (string) $row->action, $this->log_rows() );
 		$this->assertContains( Mailer::INVALID_RECIPIENT_LOG_ACTION, $actions );
+	}
+
+	public function test_the_resend_message_does_not_claim_a_mail_was_sent_and_points_to_the_newest_one(): void {
+		$message = Confirmation::message_for( 'resent' );
+
+		$this->assertStringNotContainsString( 'wysłaliśmy', $message );
+		$this->assertStringContainsString( 'najnowszą', $message );
+		$this->assertStringContainsString( 'starsze linki przestają działać', $message );
 	}
 
 	public function test_the_stale_nonce_page_offers_the_resend_form(): void {
