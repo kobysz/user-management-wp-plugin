@@ -846,6 +846,37 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( '5425740', get_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'pwz', true ) );
 	}
 
+	public function test_markup_that_sanitises_to_nothing_in_the_credential_field_creates_no_account(): void {
+		// `sanitize_text_field( '<b>' )` to `''`, a guard numeru pytał o wartość PRZED sanityzacją:
+		// `'<b>'` spełniało `required`, a do metadanej szła pustka. Konto lekarza powstawało bez
+		// numeru, a redakcja czytała w mailu „Numer uprawnień: brak”.
+		$before = $this->user_ids();
+		$flash  = $this->follow( $this->post_and_submit( array(), array( 'pwz' => '<b>' ) ) );
+
+		$this->assertSame( $before, $this->user_ids(), 'Konto nie może powstać bez numeru uprawnień.' );
+		$this->assertSame( 'required', $flash['errors']['pwz'] ?? '' );
+	}
+
+	public function test_markup_that_sanitises_to_nothing_in_any_required_field_creates_no_account(): void {
+		// Ta sama droga dotyczy KAŻDEGO pola wymaganego, nie tylko pola numeru: wymagalność ocenia
+		// się na wartości, która faktycznie trafi do bazy.
+		FieldMatrixRepository::save(
+			FieldMatrix::fromArray(
+				array( 'pielegniarka' => array( 'zgoda' => 'required', 'notatka' => 'required' ) )
+			)
+		);
+		$before = $this->user_ids();
+		$flash  = $this->follow(
+			$this->post_and_submit(
+				array( RegistrationForm::PROFESSION => 'pielegniarka' ),
+				array( 'pwz' => null, 'notatka' => '<x y=1>' )
+			)
+		);
+
+		$this->assertSame( $before, $this->user_ids(), 'Konto nie może powstać z pustym polem wymaganym.' );
+		$this->assertSame( 'required', $flash['errors']['notatka'] ?? '' );
+	}
+
 	public function test_a_field_is_read_from_the_request_under_its_acf_key_and_stored_under_its_name(): void {
 		// `acf_prepare_field()` nadpisuje nazwę pola jego KLUCZEM, a potem owija ją prefiksem, więc
 		// przeglądarka wysyła `pusers_fields[field_abc123]`, nie `pusers_fields[pwz]`. Metadana,

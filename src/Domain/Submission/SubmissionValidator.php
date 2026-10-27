@@ -38,8 +38,10 @@ final class SubmissionValidator {
 	/**
 	 * Waliduje zgłoszenie.
 	 *
-	 * Wartości w `values()` mogą być nietekstowe (tablice, liczby, wartości logiczne),
-	 * więc sanityzacja przy zapisie należy do warstwy zapisu, nie do walidatora.
+	 * Walidator niczego nie sanityzuje: robi to warstwa wywołująca, RAZ i przed walidacją, żeby
+	 * wymagalność oceniała się na wartości, która faktycznie zostanie zapisana. Wartości w
+	 * `values()` nadal mogą być nietekstowe (tablice): kształt wartości jest sam w sobie
+	 * informacją, na której rozstrzyga się błąd typu.
 	 *
 	 * @param string               $professionKey      Klucz wybranej profesji.
 	 * @param string               $credentialFieldKey Klucz pola z numerem uprawnień.

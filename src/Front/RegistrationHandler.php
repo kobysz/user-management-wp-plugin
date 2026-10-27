@@ -291,9 +291,13 @@ final class RegistrationHandler {
 		$matrix     = $context->plan->matrix();
 		$profession = $context->profession;
 		$raw        = $context->fields->fromRequest( $request );
-		$values     = ( new BooleanNormalizer( $context->fields->booleanKeys() ) )->normalize( $raw );
-		$validator  = new SubmissionValidator( ProfessionCollection::fromArray( array( $profession->toArray() ) ), $matrix, new ValidatorRegistry() );
-		$result     = $validator->validate( $profession->key, $profession->credentialField, $values );
+		// Sanityzacja wykonuje się RAZ i tutaj, przed walidacją: walidator, guard numeru, zapis
+		// metadanej i mail do redakcji widzą dokładnie tę wartość, która trafi do bazy. Wcześniej
+		// guard pytał o wartość surową, a zapis sanityzowaną, więc istniały dwie definicje pustki
+		// i `pusers_fields[cokolwiek]=<b>` mieściło się dokładnie między nimi.
+		$values    = self::sanitized( ( new BooleanNormalizer( $context->fields->booleanKeys() ) )->normalize( $raw ) );
+		$validator = new SubmissionValidator( ProfessionCollection::fromArray( array( $profession->toArray() ) ), $matrix, new ValidatorRegistry() );
+		$result    = $validator->validate( $profession->key, $profession->credentialField, $values );
 
 		$password = self::text( $request, RegistrationForm::PASSWORD, false );
 		$repeat   = self::text( $request, RegistrationForm::PASSWORD_REPEAT, false );
@@ -394,7 +398,7 @@ final class RegistrationHandler {
 
 		update_user_meta( $userId, UserMeta::PROFESSION, $profession->key );
 		AccountStatusRepository::set( $userId, AccountStatus::EmailUnconfirmed );
-		// Odsiew po macierzy z kontekstu, potem sanityzacja: values() może nieść tablicę, a do metadanych
+		// Odsiew po macierzy z kontekstu; wartości są już sanityzowane (patrz sanitized()), a do metadanych
 		// wchodzi wyłącznie tekst (patrz stored_values()). Wartości pól ACF zapisujemy z przedrostkiem,
 		// więc kolizja z jakąkolwiek metadaną WordPressa jest niemożliwa z konstrukcji.
 		$stored = ( new SubmissionFilter( $matrix ) )->strip( $profession->key, $result->values() );
@@ -764,10 +768,49 @@ final class RegistrationHandler {
 	}
 
 	/**
-	 * Wartości do metadanych: sanityzowane i ZAWSZE tekstowe. Tablica (wielokrotny wybór, ale też
-	 * tablica podrzucona w polu tekstowym) jedzie jako lista rozdzielana przecinkami: zserializowana
-	 * tablica w `wp_usermeta` wywaliłaby na `TypeError` każdego późniejszego konsumenta deklarującego
-	 * `string` przy `strict_types`, a w zapytaniach po metadanych jest nieczytelna.
+	 * Wartości zgłoszenia po JEDNEJ sanityzacji, zachowujące kształt: tekst zostaje tekstem,
+	 * tablica tablicą (jej liście są sanityzowane rekurencyjnie). Kształt musi zostać, bo tablica
+	 * w polu numeru uprawnień jest błędem twardym (`invalid_type`), a nie wartością do zapisania.
+	 *
+	 * To jedyne miejsce, które sanityzuje wartości pól: dalej pracuje się już wyłącznie na wyniku.
+	 *
+	 * @param array<string, mixed> $values Wartości z żądania po normalizacji pól logicznych.
+	 * @return array<string, mixed>
+	 */
+	private static function sanitized( array $values ): array {
+		$out = array();
+		foreach ( $values as $name => $value ) {
+			$out[ (string) $name ] = self::sanitized_value( $value );
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Jedna wartość sanityzowana, z zachowaniem kształtu.
+	 *
+	 * @param mixed $value Wartość.
+	 */
+	private static function sanitized_value( mixed $value ): mixed {
+		if ( ! is_array( $value ) ) {
+			return self::scalar_text( $value );
+		}
+
+		$out = array();
+		foreach ( $value as $key => $item ) {
+			$out[ $key ] = self::sanitized_value( $item );
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Wartości do metadanych: ZAWSZE tekstowe. Sanityzacja wykonała się raz, przed walidacją
+	 * (patrz `sanitized()`), więc tu zostaje wyłącznie spłaszczenie. Tablica (wielokrotny wybór,
+	 * ale też tablica podrzucona w polu tekstowym) jedzie jako lista rozdzielana przecinkami:
+	 * zserializowana tablica w `wp_usermeta` wywaliłaby na `TypeError` każdego późniejszego
+	 * konsumenta deklarującego `string` przy `strict_types`, a w zapytaniach po metadanych jest
+	 * nieczytelna.
 	 *
 	 * @param array<string, mixed> $values Wartości po odsiewie macierzą.
 	 * @return array<string, string>
@@ -775,24 +818,25 @@ final class RegistrationHandler {
 	private static function stored_values( array $values ): array {
 		$out = array();
 		foreach ( $values as $name => $value ) {
-			$out[ (string) $name ] = self::text_value( $value );
+			$out[ (string) $name ] = self::flattened( $value );
 		}
 
 		return $out;
 	}
 
 	/**
-	 * Jedna wartość jako sanityzowany tekst; tablica rekurencyjnie, z pominięciem pustych gałęzi.
+	 * Jedna sanityzowana wartość jako tekst; tablica rekurencyjnie, z pominięciem pustych gałęzi.
+	 * Nic tu nie sanityzuje: wartość nietekstowa, która tu dotarła, nie ma reprezentacji tekstowej.
 	 *
-	 * @param mixed $value Wartość.
+	 * @param mixed $value Wartość po sanityzacji.
 	 */
-	private static function text_value( mixed $value ): string {
+	private static function flattened( mixed $value ): string {
 		if ( ! is_array( $value ) ) {
-			return self::scalar_text( $value );
+			return is_string( $value ) ? $value : '';
 		}
 		$parts = array();
 		foreach ( $value as $item ) {
-			$text = self::text_value( $item );
+			$text = self::flattened( $item );
 			if ( '' !== $text ) {
 				$parts[] = $text;
 			}
