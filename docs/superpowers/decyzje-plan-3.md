@@ -130,15 +130,34 @@ błędne hasło — inaczej własny komunikat sam staje się sondą ujawniając�
 komuś, kto nie zna hasła. Razem z tym trzeba zamknąć `wp/v2/users` dla
 anonimowych, bo 404 kontra 403 też zdradza istnienie konta.
 
-**Pierwsza rzecz do sprawdzenia przed wdrożeniem, ręcznie, na dev z żywym ACF
-Pro:** `acf_prepare_field()` przebudowuje atrybut `name` pola z prefiksu
-i **klucza**, nie z nazwy, a wtyczka filtruje przychodzące pola białą listą
-**nazw**. Jeśli to prawda, formularz wysyła wszystko, wtyczka czyta **nic** —
-bez żadnego błędu, z komunikatem „pole wymagane" nad polami faktycznie
-wypełnionymi. Cała integracja z ACF jest w testach sprawdzana przez atrapy, więc
-dowodzą naszej strony umowy, nie zachowania ACF. Drugie do sprawdzenia tam samo:
-czy `true_false` renderuje ukryte zero tak, jak zakłada normalizacja — pomyłka
-daje odznaczoną zgodę spełniającą wymóg.
+**Rozstrzygnięte przez recenzję całej gałęzi: szew ACF okazał się BŁĘDEM, nie
+ryzykiem — naprawiany.** `acf_prepare_field()` nadpisuje nazwę pola **kluczem**,
+a potem owija prefiksem, więc na żywym ACF Pro input nazywa się
+`pusers_fields[field_abc123]`, podczas gdy wtyczka filtrowała przychodzące pola
+białą listą **nazw**. Skutek: rejestracja nie działałaby **na żadnym portalu** —
+każde pole wracałoby jako „wymagane" nad wartością, którą lekarz właśnie
+wpisał, wpisane dane przepadałyby przy każdej próbie, licznik per IP by się
+zużywał, a w logu nie powstałby ani jeden wiersz. Potwierdzone niezależnie: sam
+ACF czyta `$_POST['acf']` indeksowane **kluczem** i woła `acf_get_field( $key )`,
+czyli wysyła pola po kluczu z konstrukcji. Przy okazji naprawiana jest zaślepka
+ACF w testach, która honorowała nazwę — przez nią cała suita dowodziła
+kontraktu, **którego ACF nie ma**.
+
+**Zostaje do sprawdzenia ręcznie na dev z żywym ACF Pro:** czy `true_false`
+renderuje ukryte zero tak, jak zakłada normalizacja — pomyłka daje odznaczoną
+zgodę spełniającą wymóg.
+
+**Rejestracja przestaje pytać o hasło (Twoja decyzja z 2026-10-27).** Osoba
+trzecia mogła wysłać zgłoszenie z adresem lekarza i **własnym** hasłem; po
+kliknięciu linku przez ofiarę i zatwierdzeniu przez redakcję miała działające
+dane logowania do zatwierdzonego konta. Brama logowania z Planu 4 tego nie
+zamyka — jej wymogi dotyczą enumeracji, a tu atakujący wchodzi legalnie
+z poprawnym hasłem. Teraz konto powstaje z hasłem losowym, a lekarz ustawia
+swoje z linku potwierdzającego; bilet na ustawienie hasła jedzie ciasteczkiem,
+nie adresem, i jest ważny godzinę. Zgubiony bilet kieruje do standardowego
+odzyskiwania hasła — drugiego mechanizmu nie budujemy. Ryzyko resztkowe: osoba
+trzecia dalej może **zająć** cudzy adres, nie mogąc się zalogować, a adres
+zwalnia cron czyszczący.
 
 **Pięć nazw metadanych** (`STATUS`, `CONFIRM_HASH`, `CONFIRM_EXPIRES`,
 `TERMS_VERSION`, `CONSENT_AT`) nie jest przypiętych testem. Dziś nieszkodliwe,
