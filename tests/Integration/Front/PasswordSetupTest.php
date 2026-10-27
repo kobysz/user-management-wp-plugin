@@ -647,6 +647,48 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'name="' . RegistrationForm::PROFESSION . '"', $rendered );
 	}
 
+	public function test_the_expired_page_keeps_the_registration_form_so_the_visitor_has_a_way_on(): void {
+		// Znacznik w adresie jest niesekretny: trafia tu także ktoś, kto chciał się zarejestrować.
+		// Komunikat o wygasłym linku nie może zostawić strony bez formularza i bez drogi dalej.
+		$_GET    = array( PasswordSetup::PAGE_ARG => PasswordSetup::RESULT_FORM );
+		$_COOKIE = array();
+
+		$this->assertFalse( PasswordSetup::takes_over(), 'Bez biletu strona hasła nie zabiera strony.' );
+		$html = RegistrationForm::render();
+		$this->assertStringContainsString( 'wygasł', $html );
+		$this->assertStringContainsString( wp_lostpassword_url(), $html );
+		$this->assertStringContainsString( 'name="' . RegistrationForm::PROFESSION . '"', $html, 'Formularz zgłoszenia zostaje.' );
+	}
+
+	public function test_the_page_with_a_valid_ticket_takes_over_and_the_done_page_too(): void {
+		list( , $ticket ) = $this->confirmed();
+
+		$_GET    = array( PasswordSetup::PAGE_ARG => PasswordSetup::RESULT_FORM );
+		$_COOKIE = array( PasswordSetup::COOKIE => wp_slash( $ticket ) );
+		$this->assertTrue( PasswordSetup::takes_over(), 'Z ważnym biletem jest co ustawiać.' );
+
+		$_GET    = array( PasswordSetup::PAGE_ARG => PasswordSetup::RESULT_DONE );
+		$_COOKIE = array();
+		$this->assertTrue( PasswordSetup::takes_over(), 'Po ustawieniu hasła formularz zgłoszenia byłby szumem.' );
+
+		$_GET = array();
+		$this->assertFalse( PasswordSetup::takes_over() );
+	}
+
+	public function test_a_dead_ticket_cookie_is_cleared_instead_of_living_on_for_an_hour(): void {
+		list( $id, $ticket ) = $this->confirmed();
+		update_user_meta( $id, UserMeta::PASSWORD_TICKET_EXPIRES, time() - 60 );
+
+		$this->assertSame( PasswordSetup::RESULT_EXPIRED, $this->submit( self::GOOD_PASSWORD, $ticket ) );
+		$this->assertSame( array( '' ), array_map( static fn ( array $sent ): string => $sent['value'], $this->cookies ), 'Martwy bilet wychodzi z przeglądarki.' );
+		$this->assertLessThan( time(), (int) $this->cookies[0]['options']['expires'] );
+
+		// Odmowa z reguły hasła ciasteczka NIE kasuje: tam bilet jest dalej dobry.
+		list( , $good ) = $this->confirmed();
+		$this->assertSame( PasswordSetup::RESULT_SHORT, $this->submit( 'krotkie', $good ) );
+		$this->assertSame( array(), $this->cookies, 'Dobry bilet zostaje w przeglądarce.' );
+	}
+
 	public function test_a_page_without_the_marker_renders_the_registration_form_as_before(): void {
 		$_GET    = array();
 		$_COOKIE = array();

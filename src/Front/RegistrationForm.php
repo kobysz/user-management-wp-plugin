@@ -166,13 +166,20 @@ final class RegistrationForm {
 	 * Ustawienie hasła po potwierdzeniu adresu dzieje się na TEJ SAMEJ stronie i ZASTĘPUJE
 	 * formularz rejestracji: człowiek, który właśnie potwierdził adres, ma ustawić hasło do konta,
 	 * które już ma, a nie dostać drugi formularz zgłoszenia.
+	 *
+	 * Zastępuje go jednak tylko wtedy, gdy strona hasła ma po co (patrz `PasswordSetup::takes_over()`).
+	 * Znacznik w adresie jest niesekretny, więc trafia tu także ktoś, kto chciał się
+	 * zarejestrować; jemu komunikat o wygasłym linku nie może zabrać formularza zgłoszenia.
 	 */
 	public static function render(): string {
 		RegistrationHandler::no_cache();
 
 		$password = PasswordSetup::render();
+		if ( '' === $password ) {
+			return Confirmation::notice_html() . self::render_form();
+		}
 
-		return '' === $password ? Confirmation::notice_html() . self::render_form() : $password;
+		return PasswordSetup::takes_over() ? $password : $password . self::render_form();
 	}
 
 	/**

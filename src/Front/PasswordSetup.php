@@ -48,6 +48,13 @@ final class PasswordSetup {
 	 */
 	public const ACTION = 'pusers_set_password';
 
+	/**
+	 * Akcja i pole nonce'a. UWAGA: dla odwiedzającego NIEZALOGOWANEGO `wp_create_nonce()` nie ma
+	 * tokenu sesji, więc ta wartość jest ta sama dla wszystkich i każdy wybije ją sobie, wchodząc
+	 * na stronę. Wymuszenie ustawienia hasła z cudzej witryny blokuje `samesite => 'Lax'` na
+	 * ciasteczku z biletem (przeglądarka nie wyśle go przy międzywitrynowym POST), a nie nonce.
+	 * Zmiana tego ciasteczka na `SameSite=None` byłaby więc zmianą bezpieczeństwa, nie kosmetyczną.
+	 */
 	public const NONCE_ACTION   = 'pusers_set_password';
 	public const NONCE_FIELD    = 'pusers_setpass_nonce';
 	public const PASSWORD_FIELD = 'pusers_new_password';
@@ -162,11 +169,20 @@ final class PasswordSetup {
 	 * Kolejność bramek: nonce, metoda POST, próg per IP, bilet, próg per konto, reguły hasła,
 	 * zużycie biletu, zapis.
 	 *
-	 * Próg per IP stoi PRZED biletem, żeby zgadywanie wartości ciasteczka też się liczyło.
+	 * Próg per IP stoi PRZED biletem, żeby zgadywanie wartości ciasteczka na TEJ ścieżce też się
+	 * liczyło. Samo sprawdzenie, czy ciasteczko jest ważnym biletem, da się dostać darmo na GET
+	 * (`render()` pokazuje formularz albo „Link wygasł” i progu nie liczy) — i tak zostaje, bo
+	 * próg na renderze strony odcinałby czytających, a przy 256 bitach losowości zgadywanie jest
+	 * niewykonalne niezależnie od liczby prób.
+	 *
 	 * Próg per konto stoi PO bilecie i tylko dlatego: licznik konta rośnie WYŁĄCZNIE na żądaniu,
 	 * które okazało bilet tego konta. Liczony wcześniej pozwalałby osobie trzeciej wyczerpać
 	 * właścicielowi budżet samą podmianą identyfikatora w ciasteczku — to ta sama reguła, co
 	 * w `Confirmation::handle_resend()`.
+	 *
+	 * O stan konta `handle()` nie pyta świadomie: konto odrzucone w ciągu godziny od
+	 * potwierdzenia dalej może dostać hasło. Dostępem rządzi stan konta, nie istnienie hasła,
+	 * więc hasło na koncie odrzuconym niczego nie otwiera.
 	 */
 	public static function handle(): void {
 		$nonce = isset( $_POST[ self::NONCE_FIELD ] ) && is_string( $_POST[ self::NONCE_FIELD ] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- to jest weryfikacja nonce'a.
@@ -189,12 +205,12 @@ final class PasswordSetup {
 
 		$ticket = self::ticket();
 		if ( null === $ticket ) {
-			self::redirect( self::RESULT_EXPIRED );
+			self::refuse_expired();
 			return;
 		}
 		$user = get_userdata( $ticket['user'] );
 		if ( false === $user ) {
-			self::redirect( self::RESULT_EXPIRED );
+			self::refuse_expired();
 			return;
 		}
 
@@ -225,7 +241,7 @@ final class PasswordSetup {
 		// Zużycie biletu jest zarazem rezerwacją: `delete_user_meta()` z wartością zwraca true tylko
 		// jednemu z równoległych żądań, więc bilet nie ustawia hasła dwa razy.
 		if ( ! self::consume( $ticket['user'], $ticket['hash'] ) ) {
-			self::redirect( self::RESULT_EXPIRED );
+			self::refuse_expired();
 			return;
 		}
 
@@ -246,8 +262,7 @@ final class PasswordSetup {
 	 * wywołanie obok tego z hooka przed renderem daje jeden zestaw.
 	 */
 	public static function render(): string {
-		// Odczyt znacznika po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje.
-		$code = isset( $_GET[ self::PAGE_ARG ] ) && is_string( $_GET[ self::PAGE_ARG ] ) ? sanitize_key( wp_unslash( $_GET[ self::PAGE_ARG ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		$code = self::page_code();
 		if ( '' === $code ) {
 			return '';
 		}
@@ -268,6 +283,32 @@ final class PasswordSetup {
 			: '';
 
 		return $notice . self::form();
+	}
+
+	/**
+	 * Czy strona ustawienia hasła ZABIERA stronę formularzowi zgłoszenia.
+	 *
+	 * Prawda tylko wtedy, gdy ma po co: jest ważny bilet (jest co ustawiać) albo hasło właśnie
+	 * zostało ustawione. Znacznik `PAGE_ARG` jest NIESEKRETNY, więc na stronę z nim trafia także
+	 * ktoś, kto chciał się zarejestrować (podrzucony odnośnik, zakładka, skopiowany adres);
+	 * jemu komunikat „Link wygasł” nie może zabrać formularza zgłoszenia i zostawić strony bez
+	 * żadnej drogi dalej.
+	 */
+	public static function takes_over(): bool {
+		$code = self::page_code();
+		if ( '' === $code ) {
+			return false;
+		}
+
+		return self::RESULT_DONE === $code || null !== self::ticket();
+	}
+
+	/**
+	 * Znacznik strony ustawienia hasła z adresu (RESULT_*) albo `''`, gdy adres go nie niesie.
+	 */
+	private static function page_code(): string {
+		// Odczyt znacznika po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje.
+		return isset( $_GET[ self::PAGE_ARG ] ) && is_string( $_GET[ self::PAGE_ARG ] ) ? sanitize_key( wp_unslash( $_GET[ self::PAGE_ARG ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
 	}
 
 	/**
@@ -412,8 +453,18 @@ final class PasswordSetup {
 	}
 
 	/**
-	 * Kasuje ciasteczko z biletem: bilet jest zużyty albo nieważny, a martwa wartość żyłaby
+	 * Odmowa „bilet nieważny”: przy okazji kasuje ciasteczko. Bilet, który tu dotarł, nie zadziała
+	 * już nigdy (nie ma go, jest zużyty albo termin minął), a martwa wartość żyłaby w przeglądarce
 	 * jeszcze godzinę i przy każdym wejściu na stronę kazałaby sprawdzać nieistniejący bilet.
+	 * Odmowy z reguł hasła, progu i nonce'a ciasteczka NIE kasują: tam bilet jest dalej dobry.
+	 */
+	private static function refuse_expired(): void {
+		self::forget_cookie();
+		self::redirect( self::RESULT_EXPIRED );
+	}
+
+	/**
+	 * Kasuje ciasteczko z biletem.
 	 */
 	private static function forget_cookie(): void {
 		self::send_cookie( '', time() - YEAR_IN_SECONDS );

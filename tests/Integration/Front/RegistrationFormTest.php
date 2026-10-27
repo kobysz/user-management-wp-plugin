@@ -542,6 +542,33 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		remove_all_actions( 'litespeed_control_set_nocache' );
 	}
 
+	public function test_a_second_request_in_the_same_php_process_gets_its_own_no_cache_set(): void {
+		// Flaga per PROCES wystarczała w PHP-FPM i mod_php, gdzie proces żyje jedno żądanie.
+		// W długowiecznym workerze (FrankenPHP, RoadRunner) zestaw poszedłby raz na proces,
+		// a kolejne żądania zostałyby bez nagłówków. Flaga jest zakresu ŻĄDANIA.
+		$original = $_SERVER['REQUEST_TIME_FLOAT'] ?? null;
+		$order    = array();
+		$this->countNoCache( $order );
+
+		$_SERVER['REQUEST_TIME_FLOAT'] = 1000.5;
+		RegistrationHandler::no_cache();
+		$this->assertSame( 1, $this->noCacheFired );
+		RegistrationHandler::no_cache();
+		$this->assertSame( 1, $this->noCacheFired, 'W obrębie jednego żądania jeden zestaw.' );
+
+		// Kolejne żądanie w TYM SAMYM procesie, bez wołania reset_no_cache().
+		$_SERVER['REQUEST_TIME_FLOAT'] = 2000.5;
+		RegistrationHandler::no_cache();
+		$this->assertSame( 2, $this->noCacheFired, 'Nowe żądanie dostaje własny zestaw.' );
+
+		if ( null === $original ) {
+			unset( $_SERVER['REQUEST_TIME_FLOAT'] );
+		} else {
+			$_SERVER['REQUEST_TIME_FLOAT'] = $original;
+		}
+		remove_all_actions( 'litespeed_control_set_nocache' );
+	}
+
 	public function test_the_unavailability_notice_is_excluded_from_caching_too(): void {
 		// Bez czytelnej grupy ACF render oddaje komunikat, nie formularz. Strona zapisana w cache
 		// w tej chwili pokazywałaby „rejestracja niedostępna” także po naprawieniu konfiguracji.

@@ -199,11 +199,15 @@ final class RegistrationHandler {
 	private static array $read = array();
 
 	/**
-	 * Czy zestaw zakazu cache już poszedł w tym żądaniu (patrz `no_cache()`).
+	 * Znacznik żądania, w którym zestaw zakazu cache już poszedł (patrz `no_cache()`); null, gdy
+	 * nie poszedł w żadnym. Znacznik, a nie flaga logiczna: stan statyczny żyje tyle, ile proces
+	 * PHP, a w długowiecznym workerze (FrankenPHP, RoadRunner) proces obsługuje wiele żądań —
+	 * flaga logiczna przepuściłaby wtedy zestaw raz na proces, a kolejne żądania zostałyby
+	 * bez nagłówków.
 	 *
-	 * @var bool
+	 * @var string|null
 	 */
-	private static bool $no_cache_sent = false;
+	private static ?string $no_cache_request = null;
 
 	/**
 	 * Podpina obsługę zgłoszenia (także dla niezalogowanych) i zasila powtórne wypełnienie formularza.
@@ -228,15 +232,17 @@ final class RegistrationHandler {
 	 * która nie może pomóc: odświeżenie zwraca tę samą stronę z cache, więc rejestracja jest
 	 * trwale niemożliwa dla wszystkich i nie powstaje przy tym żaden wpis w logu.
 	 *
-	 * Idempotentne: wołane dwa razy w jednym żądaniu (hook przed renderem i render shortcode'u
-	 * jako druga warstwa) nie wysyła dwóch zestawów nagłówków ani nie odpala hooka cudzej wtyczki
-	 * dwa razy.
+	 * Idempotentne W OBRĘBIE ŻĄDANIA: wołane dwa razy w jednym żądaniu (hook przed renderem
+	 * i render shortcode'u jako druga warstwa) nie wysyła dwóch zestawów nagłówków ani nie
+	 * odpala hooka cudzej wtyczki dwa razy. Kolejne żądanie — także obsłużone tym samym
+	 * procesem PHP — dostaje własny zestaw (patrz `$no_cache_request`).
 	 */
 	public static function no_cache(): void {
-		if ( self::$no_cache_sent ) {
+		$request = self::request_marker();
+		if ( null !== self::$no_cache_request && $request === self::$no_cache_request ) {
 			return;
 		}
-		self::$no_cache_sent = true;
+		self::$no_cache_request = $request;
 
 		if ( ! defined( 'DONOTCACHEPAGE' ) ) {
 			define( 'DONOTCACHEPAGE', true ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.NonPrefixedConstantFound -- stała uznawana przez wtyczki cache.
@@ -249,11 +255,23 @@ final class RegistrationHandler {
 	}
 
 	/**
-	 * Zapomina, że zestaw zakazu cache poszedł (jedno żądanie to jeden proces PHP, więc kod
-	 * produkcyjny tego nie woła; używają tego testy, które w jednym procesie udają wiele żądań).
+	 * Zapomina, że zestaw zakazu cache poszedł (kod produkcyjny tego nie woła; używają tego
+	 * testy, które w jednym procesie udają wiele żądań, nie ruszając danych serwera).
 	 */
 	public static function reset_no_cache(): void {
-		self::$no_cache_sent = false;
+		self::$no_cache_request = null;
+	}
+
+	/**
+	 * Znacznik bieżącego żądania. `REQUEST_TIME_FLOAT` jest nadawany na każde żądanie, także
+	 * w workerze, który obsługuje ich wiele jednym procesem. Gdy go nie ma (np. przebieg CLI),
+	 * znacznik jest stały — zachowanie jest wtedy takie jak dawnej flagi logicznej, czyli
+	 * zestaw raz na proces, i jest to w tym kontekście dokładnie to, co ma się dziać.
+	 */
+	private static function request_marker(): string {
+		return isset( $_SERVER['REQUEST_TIME_FLOAT'] ) && is_scalar( $_SERVER['REQUEST_TIME_FLOAT'] )
+			? (string) $_SERVER['REQUEST_TIME_FLOAT']
+			: '';
 	}
 
 	/**
