@@ -124,6 +124,18 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'https://example.test/rejestracja/?pusers_uid=1&pusers_token=abc', (string) $this->mails[0]['message'] );
 	}
 
+	public function test_the_confirmation_mail_says_the_password_is_set_from_the_link_and_keeps_the_warning(): void {
+		// Zgłoszenie o hasło nie pyta, więc link jest JEDYNĄ drogą do danych logowania; człowiek
+		// musi to wiedzieć. Ostrzeżenie zostaje: zgłoszenie cudzego adresu jest nadal możliwe.
+		$id = $this->account( 'lekarz' );
+
+		Mailer::confirmation( $id, 'https://example.test/rejestracja/?pusers_uid=1&pusers_token=abc' );
+
+		$body = (string) $this->mails[0]['message'];
+		$this->assertStringContainsString( 'ustaw hasło', $body );
+		$this->assertStringContainsString( 'Jeżeli to nie Ty zakładałeś konto, zignoruj tę wiadomość.', $body );
+	}
+
 	public function test_the_existing_account_mail_goes_only_to_the_owner_and_carries_no_link_to_act_on(): void {
 		$id = $this->account( 'lekarz' );
 

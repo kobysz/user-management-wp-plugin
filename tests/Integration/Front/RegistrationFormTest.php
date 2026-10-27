@@ -181,7 +181,10 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		$this->assertNull( $values['pusers_fields[pwz]'] );
 	}
 
-	public function test_password_is_never_repopulated(): void {
+	public function test_the_form_has_no_password_field_at_all(): void {
+		// Hasło w zgłoszeniu pozwalało osobie trzeciej założyć konto na cudzy adres z własnym
+		// hasłem i zachować do niego dostęp po zatwierdzeniu wniosku (znalezisko I1). Formularz
+		// o hasło nie pyta; ustawia się je z linku potwierdzającego (PasswordSetup).
 		add_filter(
 			RegistrationForm::OLD_INPUT_FILTER,
 			static fn (): array => array(
@@ -195,9 +198,10 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 
 		$html = RegistrationForm::render();
 
+		$this->assertStringContainsString( '<form', $html, 'Formularz zgłoszenia nadal się renderuje.' );
 		$this->assertStringNotContainsString( 'Sekret-123!', $html );
-		$this->assertSame( 1, preg_match( '/<input type="password" id="pusers_password"[^>]*>/', $html, $m ) );
-		$this->assertStringNotContainsString( 'value=', $m[0] );
+		$this->assertSame( 0, preg_match( '/<input[^>]*type="password"/', $html ), 'W formularzu zgłoszenia nie ma żadnego pola hasła.' );
+		$this->assertStringNotContainsString( 'pusers_password', $html );
 	}
 
 	public function test_shortcode_renders_nothing_but_a_notice_when_no_profession_is_configured(): void {
@@ -462,7 +466,7 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'required="required"', $m[0][0] );
 	}
 
-	public function test_email_is_repopulated_but_the_password_is_not(): void {
+	public function test_email_is_repopulated_but_a_password_from_the_seam_is_not(): void {
 		add_filter(
 			RegistrationForm::OLD_INPUT_FILTER,
 			static fn (): array => array(
@@ -476,8 +480,6 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		$this->assertSame( 1, preg_match( '/<input type="email"[^>]*>/', $html, $m ) );
 		$this->assertStringContainsString( 'value="jan@example.com"', $m[0] );
 		$this->assertStringNotContainsString( 'Sekret-123!', $html );
-		$this->assertSame( 1, preg_match( '/<input type="password" id="pusers_password"[^>]*>/', $html, $p ) );
-		$this->assertStringNotContainsString( 'value=', $p[0] );
 	}
 
 	public function test_email_is_escaped_when_repopulated(): void {

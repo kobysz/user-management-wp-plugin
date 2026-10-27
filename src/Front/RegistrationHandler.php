@@ -34,6 +34,9 @@ use PortalUsers\Persistence\UserMeta;
  * powstaje w stanie `email_unconfirmed` z domyślną rolą witryny; mail potwierdzający (`Confirmation`)
  * i wersja regulaminu podpinają się pod akcję `pusers_account_registered`. Zgłoszenie na adres, który
  * ma już konto, dostaje TĘ SAMĄ odpowiedź co zgłoszenie przyjęte, żeby formularz nie wyliczał kont.
+ *
+ * Zgłoszenie NIE NIESIE hasła: konto powstaje z hasłem losowym, którego nikt nie zna, a prawdziwe
+ * hasło ustawia dopiero ten, kto otworzył link potwierdzający z własnej skrzynki (`PasswordSetup`).
  */
 final class RegistrationHandler {
 
@@ -94,11 +97,6 @@ final class RegistrationHandler {
 	 * w którym czyta się o przedrostku.
 	 */
 	public const ACF_META_PREFIX = UserMeta::ACF_PREFIX;
-
-	/**
-	 * Minimalna długość hasła (znaków).
-	 */
-	public const MIN_PASSWORD_LENGTH = 8;
 
 	/**
 	 * Uprawnienia, z którymi rola domyślna nie może być nadawana przez publiczny formularz.
@@ -358,23 +356,17 @@ final class RegistrationHandler {
 		$validator = new SubmissionValidator( ProfessionCollection::fromArray( array( $profession->toArray() ) ), $matrix, new ValidatorRegistry() );
 		$result    = $validator->validate( $profession->key, $profession->credentialField, $values );
 
-		$password = self::text( $request, RegistrationForm::PASSWORD, false );
-		$repeat   = self::text( $request, RegistrationForm::PASSWORD_REPEAT, false );
-		$clean    = sanitize_email( $email );
-		$errors   = array();
+		// Hasła z żądania NIE CZYTAMY. Gdyby przyszło (strona rejestracji zapisana w cache z
+		// poprzednią wersją formularza wciąż je wysyła), jest IGNOROWANE, a nie odrzucane:
+		// odrzucenie zgłoszenia z nadmiarowym polem odcięłoby tych ludzi od rejestracji.
+		$clean  = sanitize_email( $email );
+		$errors = array();
 		if ( '' === $email || $clean !== $email || ! is_email( $clean ) ) {
 			$errors[ RegistrationForm::EMAIL ] = 'email_invalid';
 		}
 		// Adres, który ma już konto, NIE jest błędem walidacji: odpowiedź ma być identyczna jak dla adresu nowego
 		// (inaczej formularz wyliczałby, kto ma konto w portalu medycznym). Rozstrzyga o tym dopiero krok 6.
 		$existingId = isset( $errors[ RegistrationForm::EMAIL ] ) ? false : email_exists( $clean );
-		if ( '' === $password ) {
-			$errors[ RegistrationForm::PASSWORD ] = 'password_missing';
-		} elseif ( mb_strlen( $password ) < self::MIN_PASSWORD_LENGTH ) {
-			$errors[ RegistrationForm::PASSWORD ] = 'password_short';
-		} elseif ( $password !== $repeat ) {
-			$errors[ RegistrationForm::PASSWORD_REPEAT ] = 'password_mismatch';
-		}
 		// Błąd pola ACF o nazwie pola wtyczki nie ginie: dostaje klucz z przedrostkiem.
 		foreach ( $result->errors() as $field => $code ) {
 			$errors[ isset( $errors[ $field ] ) ? self::ACF_ERROR_PREFIX . $field : $field ] = $code;
@@ -422,14 +414,19 @@ final class RegistrationHandler {
 			return;
 		}
 
-		// 6. Utworzenie konta. Hasło idzie wyłącznie do wp_insert_user(): ani do flash, ani do metadanych.
+		// 6. Utworzenie konta. Konto powstaje JUŻ TERAZ, przed potwierdzeniem adresu: adres musi
+		// zostać zajęty w momencie zgłoszenia, inaczej dwa równoległe zgłoszenia na ten sam adres
+		// dają dwa konta, a cała logika stanu konta stoi na tym, że konto istnieje od zgłoszenia.
+		// Hasło jest LOSOWE: nigdzie go nie zapisujemy i nikomu nie wysyłamy, więc nikt się nim nie
+		// zaloguje. Prawdziwe hasło ustawia dopiero ten, kto otworzył link potwierdzający z własnej
+		// skrzynki (patrz `PasswordSetup`).
 		// Login jest losowy i nieodgadywalny, a display_name (widoczny publicznie) to ten sam login: imię i nazwisko redakcja czyta z pól ACF.
 		$login  = self::random_login();
 		$userId = wp_insert_user(
 			array(
 				'user_login'   => $login,
 				'user_email'   => $clean,
-				'user_pass'    => $password,
+				'user_pass'    => wp_generate_password( 64, true, true ),
 				'role'         => $role,
 				'display_name' => $login,
 			)
@@ -609,22 +606,12 @@ final class RegistrationHandler {
 				return __( 'Wybierz profesję z listy.', 'portal-users' );
 			case 'email_invalid':
 				return __( 'Podaj poprawny adres e-mail.', 'portal-users' );
-			case 'password_missing':
-				return __( 'Podaj hasło.', 'portal-users' );
-			case 'password_short':
-				return sprintf(
-					/* translators: %d: minimalna liczba znaków hasła. */
-					__( 'Hasło musi mieć co najmniej %d znaków.', 'portal-users' ),
-					self::MIN_PASSWORD_LENGTH
-				);
 			case 'invalid_type':
 				return __( 'Podaj wartość jako tekst.', 'portal-users' );
 			case 'logged_in':
 				return __( 'Jesteś już zalogowany, więc nie możesz założyć kolejnego konta.', 'portal-users' );
 			case 'registration_closed':
 				return __( 'Rejestracja jest chwilowo niedostępna.', 'portal-users' );
-			case 'password_mismatch':
-				return __( 'Hasła nie są takie same.', 'portal-users' );
 			case 'unavailable':
 				return __( 'Rejestracja dla wybranej profesji jest chwilowo niedostępna.', 'portal-users' );
 			case 'stale_form':

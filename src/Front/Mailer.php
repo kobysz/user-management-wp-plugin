@@ -70,6 +70,11 @@ final class Mailer {
 	/**
 	 * Wysyła użytkownikowi link potwierdzający adres.
 	 *
+	 * Treść mówi, że po kliknięciu trzeba USTAWIĆ HASŁO: zgłoszenie o hasło nie pyta, a konto bez
+	 * ustawionego hasła nie ma danych logowania, więc człowiek musi wiedzieć, że link jest jedyną
+	 * drogą do konta. Ostrzeżenie „jeżeli to nie Ty zakładałeś konto” ZOSTAJE: samo zgłoszenie
+	 * cudzego adresu jest nadal możliwe, choć nie daje już dostępu do konta.
+	 *
 	 * @param int    $userId Identyfikator użytkownika.
 	 * @param string $link   Pełny odnośnik z tokenem.
 	 */
@@ -82,8 +87,10 @@ final class Mailer {
 		$body = implode(
 			"\n",
 			array(
-				__( 'Dziękujemy za rejestrację. Potwierdź adres e-mail, otwierając odnośnik:', 'portal-users' ),
+				__( 'Dziękujemy za rejestrację. Potwierdź adres e-mail i ustaw hasło do konta, otwierając odnośnik:', 'portal-users' ),
 				$link,
+				'',
+				__( 'Hasła nie ustawia się w formularzu zgłoszenia: ustawisz je dopiero po otwarciu tego odnośnika.', 'portal-users' ),
 				'',
 				__( 'Jeżeli to nie Ty zakładałeś konto, zignoruj tę wiadomość.', 'portal-users' ),
 			)

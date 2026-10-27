@@ -13,6 +13,7 @@ use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Front\AcfFields;
+use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\Mailer;
 use PortalUsers\Front\RateLimiter;
 use PortalUsers\Front\RegistrationForm;
@@ -233,14 +234,12 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	private function post( array $over = array(), array $fields = array(), string $method = 'POST' ): void {
 		$post = array_merge(
 			array(
-				RegistrationForm::PROFESSION      => 'lekarz',
-				RegistrationForm::EMAIL           => $this->email(),
-				RegistrationForm::PASSWORD        => self::PASSWORD,
-				RegistrationForm::PASSWORD_REPEAT => self::PASSWORD,
-				RegistrationForm::HONEYPOT        => '',
-				RegistrationForm::TIMESTAMP       => SpamGuard::stamp( time() - 30 ),
-				RegistrationForm::NONCE_FIELD     => wp_create_nonce( RegistrationForm::NONCE_ACTION ),
-				AcfFields::INPUT                  => array_merge( array( 'pwz' => '5425740', 'zgoda' => '1' ), $fields ),
+				RegistrationForm::PROFESSION  => 'lekarz',
+				RegistrationForm::EMAIL       => $this->email(),
+				RegistrationForm::HONEYPOT    => '',
+				RegistrationForm::TIMESTAMP   => SpamGuard::stamp( time() - 30 ),
+				RegistrationForm::NONCE_FIELD => wp_create_nonce( RegistrationForm::NONCE_ACTION ),
+				AcfFields::INPUT              => array_merge( array( 'pwz' => '5425740', 'zgoda' => '1' ), $fields ),
 			),
 			$over
 		);
@@ -350,9 +349,50 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( AccountStatus::EmailUnconfirmed, AccountStatusRepository::get( (int) $id ) );
 		$this->assertSame( 'pielegniarka', get_user_meta( (int) $id, UserMeta::PROFESSION, true ) );
 		$this->assertSame( array( 'subscriber' ), get_userdata( (int) $id )->roles );
-		$this->assertNotFalse( wp_check_password( self::PASSWORD, get_userdata( (int) $id )->user_pass ), 'Hasło ma zostać zapisane dokładnie tak, jak wpisano.' );
 		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $location );
 		$this->assertStringNotContainsString( RegistrationHandler::COOKIE, $location );
+	}
+
+	public function test_a_password_from_the_submission_never_opens_the_account(): void {
+		// Znalezisko I1: osoba trzecia zgłasza cudzy adres z WŁASNYM hasłem i czeka. Ofiara klika
+		// link potwierdzający, redakcja zatwierdza wniosek z prawdziwym adresem lekarza — i od tej
+		// chwili atakujący ma działające dane logowania. Nazwy pól wpisane dosłownie: wtyczka ich
+		// już nie zna, a przeglądarka z zapisanej w cache starej wersji formularza wciąż je wysyła.
+		$email     = $this->email();
+		$attackers = 'HasloAtakujacego1!';
+		// Zgłoszenie z nadmiarowym polem hasła jest PRZYJĘTE (konto powstaje), a nie odrzucone:
+		// odrzucanie odcięłoby ludzi, którym przeglądarka pokazała stronę ze starym formularzem.
+		$id = $this->register_ok(
+			array(
+				RegistrationForm::EMAIL  => $email,
+				'pusers_password'        => $attackers,
+				'pusers_password_repeat' => $attackers,
+			)
+		);
+
+		$this->assertTrue( Confirmation::try_confirm( $id, Confirmation::issue( $id ) ), 'Ofiara potwierdza adres.' );
+		$this->assertFalse(
+			wp_check_password( $attackers, get_userdata( $id )->user_pass, $id ),
+			'Hasło ze zgłoszenia nie może otwierać konta: hasło ustawia ten, kto dowiódł władzy nad adresem.'
+		);
+	}
+
+	public function test_the_account_is_created_with_a_random_password_nobody_knows(): void {
+		// Konto powstaje JUŻ w kroku pierwszym (adres musi zostać zajęty w momencie zgłoszenia),
+		// ale z hasłem losowym: nigdzie nie zapisanym i nikomu nie wysłanym.
+		$id   = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+		$hash = (string) get_userdata( $id )->user_pass;
+
+		$this->assertNotSame( '', $hash, 'Konto bez hasła logowałoby się pustym hasłem.' );
+		$this->assertFalse( wp_check_password( '', $hash, $id ) );
+		foreach ( $this->mails as $mail ) {
+			$this->assertStringNotContainsString( $hash, (string) $mail['message'], 'Hasła nikomu nie wysyłamy.' );
+		}
+		$this->assertStringNotContainsString( $hash, serialize( get_user_meta( $id ) ), 'Hasła nigdzie nie zapisujemy.' );
+
+		// Drugie konto dostaje INNE hasło losowe (jedna stała wartość byłaby hasłem współdzielonym).
+		$other = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+		$this->assertNotSame( $hash, (string) get_userdata( $other )->user_pass );
 	}
 
 	public function test_the_account_gets_the_site_default_role(): void {
@@ -587,12 +627,23 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( 'logged_in', $flash['errors']['registration'] ?? '' );
 	}
 
-	public function test_a_password_shorter_than_the_minimum_creates_no_account(): void {
-		$before = $this->user_ids();
-		$flash  = $this->follow( $this->post_and_submit( array( RegistrationForm::PASSWORD => 'a', RegistrationForm::PASSWORD_REPEAT => 'a' ) ) );
+	public function test_a_rubbish_password_in_the_submission_does_not_block_the_registration(): void {
+		// Hasło ze zgłoszenia jest IGNOROWANE, nie walidowane: reguły hasła obowiązują na stronie
+		// ustawienia hasła (PasswordSetupTest). Zgłoszenie z hasłem zbyt krótkim albo niezgodnym
+		// z powtórzeniem musi przejść, bo inaczej odcinałoby ludzi ze stroną z cache'a.
+		$email = $this->email();
+		$flash = $this->follow(
+			$this->post_and_submit(
+				array(
+					RegistrationForm::EMAIL  => $email,
+					'pusers_password'        => 'a',
+					'pusers_password_repeat' => 'zupelnie-inne',
+				)
+			)
+		);
 
-		$this->assertSame( $before, $this->user_ids() );
-		$this->assertSame( 'password_short', $flash['errors'][ RegistrationForm::PASSWORD ] ?? '' );
+		$this->assertSame( array(), $flash['errors'], 'Nadmiarowe pole hasła nie tworzy błędu.' );
+		$this->assertNotFalse( email_exists( $email ), 'Konto powstaje.' );
 	}
 
 	public function test_an_acf_error_on_a_field_named_like_a_plugin_field_is_not_lost(): void {
@@ -753,16 +804,10 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		return $this->submit();
 	}
 
-	public function test_an_invalid_email_or_mismatched_passwords_create_no_account(): void {
+	public function test_an_invalid_email_creates_no_account(): void {
 		$before = $this->user_ids();
 		$flash  = $this->follow( $this->post_and_submit( array( RegistrationForm::EMAIL => 'to-nie-adres' ) ) );
 		$this->assertSame( 'email_invalid', $flash['errors'][ RegistrationForm::EMAIL ] ?? '' );
-
-		$flash = $this->follow( $this->post_and_submit( array( RegistrationForm::PASSWORD_REPEAT => 'inne' ) ) );
-		$this->assertSame( 'password_mismatch', $flash['errors'][ RegistrationForm::PASSWORD_REPEAT ] ?? '' );
-
-		$flash = $this->follow( $this->post_and_submit( array( RegistrationForm::PASSWORD => '', RegistrationForm::PASSWORD_REPEAT => '' ) ) );
-		$this->assertSame( 'password_missing', $flash['errors'][ RegistrationForm::PASSWORD ] ?? '' );
 
 		$this->assertSame( $before, $this->user_ids() );
 	}
@@ -800,7 +845,7 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 			}
 		);
 
-		$this->post_and_submit( array( RegistrationForm::EMAIL => $email, RegistrationForm::PASSWORD => 'Zupelnie!Inne1', RegistrationForm::PASSWORD_REPEAT => 'Zupelnie!Inne1' ), array( 'pwz' => '1234567' ) );
+		$this->post_and_submit( array( RegistrationForm::EMAIL => $email, 'pusers_password' => 'Zupelnie!Inne1' ), array( 'pwz' => '1234567' ) );
 
 		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $id ) );
 		$this->assertSame( $passwordHash, get_userdata( $id )->user_pass );
@@ -1199,8 +1244,10 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	}
 
 	public function test_the_redirect_data_carries_values_to_the_form_but_never_a_password(): void {
+		// Zgłoszenie z nadmiarowym polem hasła (strona z cache ze starą wersją formularza):
+		// wartość jest ignorowana i nie wolno jej zachować w magazynie ani oddać w formularzu.
 		$email    = $this->email();
-		$location = $this->post_and_submit( array( RegistrationForm::EMAIL => $email ), array( 'zgoda' => null ) );
+		$location = $this->post_and_submit( array( RegistrationForm::EMAIL => $email, 'pusers_password' => self::PASSWORD ), array( 'zgoda' => null ) );
 		$token    = $this->sentToken();
 		$flash    = $this->follow( $location );
 
@@ -1222,7 +1269,7 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	}
 
 	public function test_the_password_is_not_in_the_stored_redirect_data(): void {
-		$this->post_and_submit( array(), array( 'zgoda' => null ) );
+		$this->post_and_submit( array( 'pusers_password' => self::PASSWORD ), array( 'zgoda' => null ) );
 		$stored = get_transient( 'pusers_flash_' . $this->sentToken() );
 
 		$this->assertIsArray( $stored );

@@ -46,13 +46,11 @@ final class RegistrationForm {
 	public const HONEYPOT  = 'pusers_pole_kontrolne';
 	public const TIMESTAMP = 'pusers_t';
 
-	public const PROFESSION      = 'pusers_profession';
-	public const PASSWORD        = 'pusers_password';
-	public const PASSWORD_REPEAT = 'pusers_password_repeat';
-	public const NONCE_FIELD     = 'pusers_nonce';
+	public const PROFESSION  = 'pusers_profession';
+	public const NONCE_FIELD = 'pusers_nonce';
 
 	/**
-	 * Adres e-mail należy do wtyczki, nie do ACF (jak profesja i hasło): konto WordPressa go wymaga,
+	 * Adres e-mail należy do wtyczki, nie do ACF (jak profesja): konto WordPressa go wymaga,
 	 * a potwierdzenie adresu opiera się na tym, że wtyczka wie, gdzie on jest. Pole jest ZAWSZE
 	 * wymagane i NIE podlega macierzy (macierz rządzi polami profilu z ACF, nie polami konta);
 	 * nie umacierzać. HTML-owe `required` to wygoda, serwer sprawdza adres niezależnie.
@@ -235,10 +233,10 @@ final class RegistrationForm {
 			$html .= '<div class="pusers-field" data-pusers-field="' . esc_attr( $fieldKey ) . '">' . (string) ob_get_clean() . '</div>';
 		}
 
-		$html .= '<p><label for="' . esc_attr( self::PASSWORD ) . '">' . esc_html__( 'Hasło', 'portal-users' ) . '</label> ';
-		$html .= '<input type="password" id="' . esc_attr( self::PASSWORD ) . '" name="' . esc_attr( self::PASSWORD ) . '" autocomplete="new-password" required="required" /></p>';
-		$html .= '<p><label for="' . esc_attr( self::PASSWORD_REPEAT ) . '">' . esc_html__( 'Powtórz hasło', 'portal-users' ) . '</label> ';
-		$html .= '<input type="password" id="' . esc_attr( self::PASSWORD_REPEAT ) . '" name="' . esc_attr( self::PASSWORD_REPEAT ) . '" autocomplete="new-password" required="required" /></p>';
+		// Pola hasła tu NIE MA i mieć nie może: hasło ustawia dopiero ten, kto otworzył link
+		// potwierdzający z własnej skrzynki (patrz `PasswordSetup`). Hasło w zgłoszeniu pozwalało
+		// osobie trzeciej założyć konto na cudzy adres z własnym hasłem i zachować do niego dostęp
+		// po zatwierdzeniu wniosku przez redakcję.
 
 		// Honeypot: zwykłe pole tekstowe (bot wypełnia widoczne pola), ukryte dla człowieka stylem.
 		// Nazwa i etykieta są odmagnesowane: nie nazywają żadnej znanej danej, a etykieta wprost mówi
@@ -267,8 +265,6 @@ final class RegistrationForm {
 			array(
 				self::PROFESSION                 => __( 'Profesja', 'portal-users' ),
 				self::EMAIL                      => __( 'Adres e-mail', 'portal-users' ),
-				self::PASSWORD                   => __( 'Hasło', 'portal-users' ),
-				self::PASSWORD_REPEAT            => __( 'Powtórz hasło', 'portal-users' ),
 				SubmissionResult::PROFESSION_KEY => __( 'Profesja', 'portal-users' ),
 			)
 		);
