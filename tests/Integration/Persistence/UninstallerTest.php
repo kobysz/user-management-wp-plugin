@@ -22,6 +22,8 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration\Persistence;
 
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Front\RateLimiter;
+use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\OptionStore;
 use PortalUsers\Persistence\SettingsRepository;
@@ -107,6 +109,23 @@ final class UninstallerTest extends WP_UnitTestCase {
 		foreach ( OptionStore::all() as $option ) {
 			$this->assertFalse( get_option( $option ), $option . ' powinna zniknąć' );
 		}
+	}
+
+	public function test_deletion_removes_the_throttling_timestamps_written_outside_option_store(): void {
+		// Dwa znaczniki throttlingu wpisów do logu są zapisywane bezpośrednio przez `update_option()`
+		// (nie są tablicami), więc łatwo było je pominąć w spisie. Po usunięciu wtyczki z otwartą
+		// bramką zostawały w `wp_options`.
+		$this->install_with_data();
+		update_option( RegistrationHandler::ROLE_REFUSAL_OPTION, time(), false );
+		update_option( RateLimiter::FAILURE_OPTION, time(), false );
+		$this->assertNotFalse( get_option( RegistrationHandler::ROLE_REFUSAL_OPTION ) );
+		$this->assertNotFalse( get_option( RateLimiter::FAILURE_OPTION ) );
+		$this->save_gate( true );
+
+		Uninstaller::run();
+
+		$this->assertFalse( get_option( RegistrationHandler::ROLE_REFUSAL_OPTION ) );
+		$this->assertFalse( get_option( RateLimiter::FAILURE_OPTION ) );
 	}
 
 	public function test_deletion_does_not_touch_user_accounts_or_their_meta(): void {

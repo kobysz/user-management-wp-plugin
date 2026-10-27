@@ -22,6 +22,15 @@ final class OptionStore {
 	public const OPTION_MATRIX      = 'pusers_field_matrix';
 
 	/**
+	 * Znaczniki czasu throttlingu wpisów do logu zdarzeń. Nie są tablicami, więc nie przechodzą
+	 * przez `read()` ani `write()` — ich właściciele czytają i zapisują je sami, zawsze
+	 * z `autoload = false`. Spis `all()` musi je jednak znać, bo inaczej odinstalowanie
+	 * zostawiłoby po wtyczce wiersze w `wp_options`.
+	 */
+	public const OPTION_ROLE_REFUSAL_AT    = 'pusers_role_refusal_logged_at';
+	public const OPTION_LIMITER_FAILURE_AT = 'pusers_limiter_failure_at';
+
+	/**
 	 * Czyta opcję jako tablicę; brak opcji lub wartość nietablicowa daje pustą tablicę.
 	 *
 	 * @param string $option Nazwa opcji.
@@ -58,6 +67,12 @@ final class OptionStore {
 	 * @return array<int, string>
 	 */
 	public static function all(): array {
-		return array( self::OPTION_SETTINGS, self::OPTION_PROFESSIONS, self::OPTION_MATRIX );
+		return array(
+			self::OPTION_SETTINGS,
+			self::OPTION_PROFESSIONS,
+			self::OPTION_MATRIX,
+			self::OPTION_ROLE_REFUSAL_AT,
+			self::OPTION_LIMITER_FAILURE_AT,
+		);
 	}
 }

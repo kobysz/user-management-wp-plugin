@@ -21,6 +21,7 @@ use PortalUsers\Domain\Submission\SubmissionResult;
 use PortalUsers\Domain\Submission\SubmissionValidator;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\EventLog;
+use PortalUsers\Persistence\OptionStore;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
 
@@ -172,8 +173,11 @@ final class RegistrationHandler {
 	 * Opcja z momentem ostatniego wpisu o odmowie guarda roli. Opcja, nie transient: przy niedostępnym
 	 * magazynie transientów flaga nie działałaby, a wiersz na każde żądanie zapchałby tabelę audytu,
 	 * która jest śladem decyzji redakcji o zatwierdzaniu kont.
+	 *
+	 * Nazwa mieszka w `OptionStore`, bo spis `OptionStore::all()` jest tym, po czym iteruje
+	 * odinstalowanie; dwie nazwy obok siebie zostawiłyby po wtyczce wiersz w `wp_options`.
 	 */
-	public const ROLE_REFUSAL_OPTION = 'pusers_role_refusal_logged_at';
+	public const ROLE_REFUSAL_OPTION = OptionStore::OPTION_ROLE_REFUSAL_AT;
 
 	/**
 	 * Przedrostek klucza błędu pola ACF, które nazywa się jak pole konta (kolizja kluczy).

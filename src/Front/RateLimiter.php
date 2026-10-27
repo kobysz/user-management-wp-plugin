@@ -12,6 +12,7 @@ namespace PortalUsers\Front;
 defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Persistence\EventLog;
+use PortalUsers\Persistence\OptionStore;
 
 /**
  * Licznik prób per kubełek (np. adres IP albo adres e-mail). Okno jest stałe: liczy się od pierwszej
@@ -35,8 +36,11 @@ final class RateLimiter {
 	/**
 	 * Opcja z momentem ostatniego zgłoszenia awarii zapisu. Opcja, nie transient: przy awarii magazynu
 	 * transientów flaga w transiencie by nie działała i zapis w logu wróciłby na każde żądanie.
+	 *
+	 * Nazwa mieszka w `OptionStore`, bo spis `OptionStore::all()` jest tym, po czym iteruje
+	 * odinstalowanie; dwie nazwy obok siebie zostawiłyby po wtyczce wiersz w `wp_options`.
 	 */
-	public const FAILURE_OPTION = 'pusers_limiter_failure_at';
+	public const FAILURE_OPTION = OptionStore::OPTION_LIMITER_FAILURE_AT;
 
 	/**
 	 * Zlicza próbę.
