@@ -261,7 +261,7 @@ final class PurgeUnconfirmedTest extends WP_UnitTestCase {
 	public function test_run_does_nothing_on_multisite_instead_of_logging_deletions_that_did_not_happen(): void {
 		// Na sieci wp_delete_user() zwraca true, ale konto zostaje; bez strażnika log twierdziłby co dzień, że usunął.
 		$id = $this->account( 10, AccountStatus::EmailUnconfirmed );
-		add_filter( 'pusers_purge_is_multisite', '__return_true' );
+		add_filter( 'pusers_internal_test_seam_is_multisite', '__return_true' );
 
 		PurgeUnconfirmed::run();
 
@@ -328,8 +328,32 @@ final class PurgeUnconfirmedTest extends WP_UnitTestCase {
 		$this->assertCount( 1, $rows );
 		$context = json_decode( (string) $rows[0]->context, true );
 		$this->assertSame( $registered, $context['registered_at'] );
-		$this->assertSame( hash( 'sha256', 'doktor.x@example.com' ), $context['email_hash'], 'Skrót z adresu w małych literach: administrator sprawdzi konkretny adres.' );
+		$this->assertSame( wp_hash( 'doktor.x@example.com' ), $context['email_hash'], 'Skrót z adresu w małych literach: administrator sprawdzi konkretny adres.' );
+		$this->assertNotSame( hash( 'sha256', 'doktor.x@example.com' ), $context['email_hash'], 'Skrót musi być solony: nieposolony sha256 odwraca się słownikiem adresów.' );
+		$this->assertNotSame( wp_hash( 'inny@example.com' ), $context['email_hash'] );
 		$this->assertStringNotContainsString( 'example.com', (string) $rows[0]->context, 'Adresu nie przechowujemy.' );
 	}
 
+	public function test_account_whose_status_changes_after_the_batch_was_read_is_not_deleted(): void {
+		global $wpdb;
+		$id      = $this->account( 10, AccountStatus::EmailUnconfirmed );
+		$flipped = false;
+		// Pierwszy odczyt stanu tego konta (z zasilonego cache) widzi jeszcze email_unconfirmed;
+		// tuż po nim baza dostaje approved, jak przy kliknięciu linku w trakcie przebiegu.
+		$flip = function ( $check, $object_id, $meta_key ) use ( $id, &$flipped, $wpdb ) {
+			if ( ! $flipped && $id === (int) $object_id && UserMeta::STATUS === $meta_key ) {
+				$flipped = true;
+				$wpdb->update( $wpdb->usermeta, array( 'meta_value' => AccountStatus::Approved->value ), array( 'user_id' => $id, 'meta_key' => UserMeta::STATUS ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Fixtura: zmiana stanu poza cache.
+			}
+			return $check;
+		};
+		add_filter( 'get_user_metadata', $flip, 10, 3 );
+
+		PurgeUnconfirmed::run();
+
+		remove_filter( 'get_user_metadata', $flip, 10 );
+		$this->assertTrue( $flipped, 'Fixtura nie zadziałała: stan nie został zmieniony w trakcie przebiegu.' );
+		$this->assertNotFalse( get_userdata( $id ), 'Konto potwierdzone w trakcie przebiegu nie może zostać usunięte.' );
+		$this->assertSame( array(), $this->logRows( PurgeUnconfirmed::LOG_ACTION ) );
+	}
 }

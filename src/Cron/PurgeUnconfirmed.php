@@ -11,6 +11,7 @@ namespace PortalUsers\Cron;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Account\PurgeSelection;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\EventLog;
@@ -65,10 +66,22 @@ final class PurgeUnconfirmed {
 
 	/**
 	 * Czy wtyczka działa w sieci witryn. Stała MULTISITE jest zdefiniowana w całym procesie, więc
-	 * testu pojedynczej witryny nie da się przełączyć na sieć; filtr jest szwem testowym tej jednej decyzji.
+	 * testu pojedynczej witryny nie da się przełączyć na sieć; filtr jest szwem testowym tej jednej decyzji
+	 * i WEWNĘTRZNYM, nie punktem rozszerzenia. Przefiltrowanie go na false na prawdziwej sieci sprawi, że
+	 * konta nie będą usuwane (wp_delete_user() tylko odpina je od witryny), a log będzie twierdzić, że są.
 	 */
 	public static function is_network(): bool {
-		return (bool) apply_filters( 'pusers_purge_is_multisite', is_multisite() );
+		return (bool) apply_filters( 'pusers_internal_test_seam_is_multisite', is_multisite() );
+	}
+
+	/**
+	 * Stan konta czytany z bazy, z pominięciem cache metadanych zasilonego na początku paczki.
+	 *
+	 * @param int $id Identyfikator użytkownika.
+	 */
+	private static function fresh_status( int $id ): ?AccountStatus {
+		wp_cache_delete( $id, 'user_meta' );
+		return AccountStatusRepository::get( $id );
 	}
 
 	/**
@@ -113,6 +126,12 @@ final class PurgeUnconfirmed {
 					++$kept;
 					continue;
 				}
+				// Priming dotyczy przebiegu filtrującego. Konto, które ma zniknąć, czytamy jeszcze raz bez cache,
+				// tuż przed usunięciem: stan zmieniony w międzyczasie (np. potwierdzony adres) ma zatrzymać kasowanie.
+				if ( ! $selection->qualifies( self::fresh_status( $id ), $registeredAt, $now ) ) {
+					++$kept;
+					continue;
+				}
 				if ( wp_delete_user( $id ) ) {
 					EventLog::write(
 						self::LOG_ACTION,
@@ -120,7 +139,7 @@ final class PurgeUnconfirmed {
 						0,
 						array(
 							'registered_at' => $user->user_registered,
-							'email_hash'    => hash( 'sha256', strtolower( $user->user_email ) ),
+							'email_hash'    => wp_hash( strtolower( $user->user_email ) ),
 						)
 					);
 				} else {
