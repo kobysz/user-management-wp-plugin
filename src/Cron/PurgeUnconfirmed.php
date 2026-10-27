@@ -15,6 +15,7 @@ use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Account\PurgeSelection;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\EventLog;
+use PortalUsers\Persistence\OptionStore;
 use PortalUsers\Persistence\SettingsRepository;
 
 /**
@@ -34,6 +35,11 @@ final class PurgeUnconfirmed {
 	 * Zdarzenie w logu: konto usunięte. To jedyny ślad po nim.
 	 */
 	public const LOG_ACTION = 'account_purged';
+
+	/**
+	 * Zdarzenie w logu: przebieg wyszedł na szwie multisite i nie usunął niczego.
+	 */
+	public const SKIPPED_LOG_ACTION = 'purge_skipped_network';
 
 	private const DEFAULT_BATCH = 200;
 
@@ -75,6 +81,28 @@ final class PurgeUnconfirmed {
 	}
 
 	/**
+	 * Zapisuje w logu zdarzeń, że przebieg wyszedł na szwie multisite, NAJWYŻEJ RAZ NA GODZINĘ.
+	 *
+	 * Bez tego wpisu dowolna wtyczka zwracająca z filtra `pusers_internal_test_seam_is_multisite`
+	 * wartość `true` wyłącza jedyny mechanizm zwalniający zajęte adresy — i nikt się o tym nie
+	 * dowiaduje. Skutek byłby dokładnie tym celem wrogim, który cron ma zamykać: lekarz nie może
+	 * się zarejestrować, bo adres zajęło porzucone zgłoszenie.
+	 *
+	 * Throttling na OPCJI, nie na transiencie (wzorzec z `RateLimiter::report_failure()`): przy
+	 * niedostępnym magazynie transientów flaga by nie działała, a wiersz na każdy przebieg zapchałby
+	 * tabelę audytu, która jest śladem decyzji redakcji o zatwierdzaniu kont.
+	 */
+	private static function report_skip(): void {
+		$last = get_option( OptionStore::OPTION_PURGE_SKIP_AT, 0 );
+		if ( is_numeric( $last ) && time() - (int) $last < HOUR_IN_SECONDS ) {
+			return;
+		}
+		update_option( OptionStore::OPTION_PURGE_SKIP_AT, time(), false );
+
+		EventLog::write( self::SKIPPED_LOG_ACTION, 0, 0, array( 'reason' => 'multisite' ) );
+	}
+
+	/**
 	 * Stan konta czytany z bazy, z pominięciem cache metadanych zasilonego na początku paczki.
 	 *
 	 * @param int $id Identyfikator użytkownika.
@@ -91,6 +119,7 @@ final class PurgeUnconfirmed {
 		// Na sieci wp_delete_user() tylko odpina konto od witryny i zwraca true, więc konto zostaje,
 		// adres nadal jest zajęty, a log kłamałby o usunięciu. Multisite jest poza zakresem wtyczki.
 		if ( self::is_network() ) {
+			self::report_skip();
 			return;
 		}
 

@@ -29,6 +29,7 @@ final class OptionStore {
 	 */
 	public const OPTION_ROLE_REFUSAL_AT    = 'pusers_role_refusal_logged_at';
 	public const OPTION_LIMITER_FAILURE_AT = 'pusers_limiter_failure_at';
+	public const OPTION_PURGE_SKIP_AT      = 'pusers_purge_skip_logged_at';
 
 	/**
 	 * Czyta opcję jako tablicę; brak opcji lub wartość nietablicowa daje pustą tablicę.
@@ -73,6 +74,7 @@ final class OptionStore {
 			self::OPTION_MATRIX,
 			self::OPTION_ROLE_REFUSAL_AT,
 			self::OPTION_LIMITER_FAILURE_AT,
+			self::OPTION_PURGE_SKIP_AT,
 		);
 	}
 }

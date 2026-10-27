@@ -14,6 +14,7 @@ use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\Migrations;
+use PortalUsers\Persistence\OptionStore;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
 use PortalUsers\Plugin;
@@ -267,6 +268,41 @@ final class PurgeUnconfirmedTest extends WP_UnitTestCase {
 
 		$this->assertNotFalse( get_userdata( $id ) );
 		$this->assertSame( array(), $this->logRows( PurgeUnconfirmed::LOG_ACTION ) );
+	}
+
+	public function test_the_multisite_exit_leaves_one_row_in_the_event_log_at_most_once_an_hour(): void {
+		// Dowolna wtyczka zwracająca z tego filtra true wyłącza jedyny mechanizm zwalniający zajęte
+		// adresy. Bez wpisu nikt by się o tym nie dowiedział, a skutkiem byłby dokładnie ten cel
+		// wrogi, który cron ma zamykać: adres zajęty przez porzucone zgłoszenie.
+		delete_option( OptionStore::OPTION_PURGE_SKIP_AT );
+		add_filter( 'pusers_internal_test_seam_is_multisite', '__return_true' );
+
+		PurgeUnconfirmed::run();
+		PurgeUnconfirmed::run();
+
+		$rows = $this->logRows( PurgeUnconfirmed::SKIPPED_LOG_ACTION );
+		$this->assertCount( 1, $rows, 'Wiersz na każdy przebieg zapchałby tabelę audytu.' );
+		$context = json_decode( (string) $rows[0]->context, true );
+		$this->assertIsArray( $context );
+		$this->assertSame( 'multisite', $context['reason'] ?? null );
+		$this->assertSame( array(), $this->logRows( PurgeUnconfirmed::LOG_ACTION ), 'Przebieg nie usunął niczego, więc nie może tego twierdzić.' );
+
+		// Po upływie okna kolejne wyjście znów trafia do logu: usterka nie przestaje być widoczna.
+		update_option( OptionStore::OPTION_PURGE_SKIP_AT, time() - HOUR_IN_SECONDS - 1, false );
+		PurgeUnconfirmed::run();
+		$this->assertCount( 2, $this->logRows( PurgeUnconfirmed::SKIPPED_LOG_ACTION ) );
+
+		delete_option( OptionStore::OPTION_PURGE_SKIP_AT );
+	}
+
+	public function test_a_run_on_a_single_site_writes_no_skip_row(): void {
+		delete_option( OptionStore::OPTION_PURGE_SKIP_AT );
+		$this->account( 10, AccountStatus::EmailUnconfirmed );
+
+		PurgeUnconfirmed::run();
+
+		$this->assertSame( array(), $this->logRows( PurgeUnconfirmed::SKIPPED_LOG_ACTION ) );
+		$this->assertFalse( get_option( OptionStore::OPTION_PURGE_SKIP_AT ) );
 	}
 
 	public function test_the_network_decision_follows_wordpress_by_default(): void {
