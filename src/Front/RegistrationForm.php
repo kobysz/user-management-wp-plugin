@@ -13,6 +13,7 @@ defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Acf\AcfFieldSource;
 use PortalUsers\Domain\Fields\FieldState;
+use PortalUsers\Domain\Profession\Profession;
 use PortalUsers\Domain\Registration\RegistrationPlan;
 use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
@@ -69,33 +70,47 @@ final class RegistrationForm {
 	 * Plan formularza: JEDYNE miejsce, które przycina macierz do pól źródła. Render i obsługa
 	 * żądania mają korzystać z tego planu, żeby formularz i walidacja widziały to samo.
 	 *
-	 * UWAGA: nieczytelne źródło (`AcfFieldSource::groupExists()` fałszywe) daje plan bez żadnych
-	 * wymagań, w tym bez wymogu numeru uprawnień. Wywołujący musi to sprawdzić (`is_available()`)
-	 * i nie przyjmować zgłoszenia.
+	 * Fail-closed: null, gdy rejestracja jest niedostępna (grupa nieczytelna albo żadna profesja
+	 * nie jest oferowana). Plan z nieczytelnego źródła nie miałby żadnych wymagań, w tym wymogu
+	 * numeru uprawnień, więc go nie zwracamy. Obsługa żądania musi też odrzucić zgłoszenie
+	 * wskazujące profesję spoza `offered_professions()`.
 	 */
-	public static function plan(): RegistrationPlan {
-		return self::compose( self::source() );
+	public static function plan(): ?RegistrationPlan {
+		$state = self::state();
+		return null === $state ? null : $state['plan'];
 	}
 
 	/**
-	 * Czy rejestracja może działać: grupa pól jest czytelna i są skonfigurowane profesje.
-	 * Fail-closed: bez tego rejestracja nie jest przyjmowana.
+	 * Profesje oferowane w formularzu: profesja z typem numeru uprawnień, której pola numeru nie
+	 * ma w źródle albo nie jest dla niej wymagane w macierzy, wypada (wymogu nie da się wyegzekwować),
+	 * a pozostałe rejestrują się dalej. Zgłoszenie z profesją spoza tej listy trzeba odrzucić.
+	 *
+	 * @return array<string, Profession> Klucz profesji => profesja; pusta, gdy rejestracja niedostępna.
+	 */
+	public static function offered_professions(): array {
+		$state = self::state();
+		return null === $state ? array() : $state['professions'];
+	}
+
+	/**
+	 * Czy rejestracja może działać. Fail-closed: bez tego rejestracja nie jest przyjmowana.
 	 */
 	public static function is_available(): bool {
-		return self::available( self::source() );
+		return null !== self::state();
 	}
 
 	/**
 	 * Zwraca formularz albo komunikat o niedostępności rejestracji.
 	 */
 	public static function render(): string {
-		$source = self::source();
-		if ( ! self::available( $source ) ) {
+		$state = self::state();
+		if ( null === $state ) {
 			return '<p class="pusers-notice">' . esc_html__( 'Rejestracja jest chwilowo niedostępna. Spróbuj ponownie później.', 'portal-users' ) . '</p>';
 		}
 
-		$professions = ProfessionRepository::get()->all();
-		$plan        = self::compose( $source );
+		$source      = $state['source'];
+		$plan        = $state['plan'];
+		$professions = $state['professions'];
 		$old         = self::old_input();
 
 		// Mapa profesja => pole => stan; brak pola w mapie oznacza ukryte. Tylko dla skryptu.
@@ -109,7 +124,7 @@ final class RegistrationForm {
 
 		self::enqueue_script( $map );
 
-		$acf  = new AcfFields( SettingsRepository::get()->acfGroupKey );
+		$acf  = new AcfFields( SettingsRepository::get()->acfGroupKey, $source );
 		$html = '<form class="pusers-registration" method="post" novalidate="novalidate">';
 
 		$html .= '<p class="pusers-field-profession"><label for="' . esc_attr( self::PROFESSION ) . '">' . esc_html__( 'Profesja', 'portal-users' ) . '</label> ';
@@ -161,12 +176,53 @@ final class RegistrationForm {
 	}
 
 	/**
-	 * Czy źródło jest czytelne i są profesje.
+	 * Stan rejestracji budowany z JEDNEJ instancji źródła: plan, źródło i oferowane profesje
+	 * patrzą na tę samą migawkę. Null, gdy rejestracja nie może działać (fail-closed).
 	 *
-	 * @param AcfFieldSource $source Źródło pól.
+	 * @return array{source: AcfFieldSource, plan: RegistrationPlan, professions: array<string, Profession>}|null
 	 */
-	private static function available( AcfFieldSource $source ): bool {
-		return $source->groupExists() && array() !== ProfessionRepository::get()->all();
+	private static function state(): ?array {
+		$source = self::source();
+		if ( ! $source->groupExists() ) {
+			return null;
+		}
+
+		$plan        = self::compose( $source );
+		$fields      = $source->fields();
+		$professions = array();
+		foreach ( ProfessionRepository::get()->all() as $profession ) {
+			if ( self::can_enforce_credential( $profession, $plan, $fields ) ) {
+				$professions[ $profession->key ] = $profession;
+			}
+		}
+		if ( array() === $professions ) {
+			return null;
+		}
+
+		return array(
+			'source'      => $source,
+			'plan'        => $plan,
+			'professions' => $professions,
+		);
+	}
+
+	/**
+	 * Czy wymóg numeru uprawnień da się wyegzekwować. Profesja bez typu numeru zawsze tak; profesja
+	 * z typem numeru tylko, gdy jej pole numeru istnieje w źródle i jest dla niej wymagane w macierzy.
+	 *
+	 * @param Profession            $profession Profesja.
+	 * @param RegistrationPlan      $plan       Plan.
+	 * @param array<string, string> $fields     Pola źródła.
+	 */
+	private static function can_enforce_credential( Profession $profession, RegistrationPlan $plan, array $fields ): bool {
+		if ( ! $profession->requiresCredential() ) {
+			return true;
+		}
+		$field = $profession->credentialField;
+
+		return '' !== $field
+			&& array_key_exists( $field, $fields )
+			&& ( $plan->fieldsFor( $profession->key )[ $field ] ?? null ) === FieldState::Required;
 	}
 
 	/**

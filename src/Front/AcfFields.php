@@ -41,10 +41,12 @@ final class AcfFields {
 	/**
 	 * Konstruktor.
 	 *
-	 * @param string $groupKey Klucz grupy ACF z polami rejestracji.
+	 * @param string              $groupKey Klucz grupy ACF z polami rejestracji.
+	 * @param AcfFieldSource|null $source   Źródło współdzielone z wywołującym (jedna migawka definicji);
+	 *                                      bez niego powstaje własne.
 	 */
-	public function __construct( string $groupKey ) {
-		$this->source = new AcfFieldSource( $groupKey );
+	public function __construct( string $groupKey, ?AcfFieldSource $source = null ) {
+		$this->source = $source ?? new AcfFieldSource( $groupKey );
 	}
 
 	/**

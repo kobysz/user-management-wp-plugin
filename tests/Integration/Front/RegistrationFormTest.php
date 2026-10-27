@@ -15,7 +15,6 @@ use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Tests\Integration\Support\AcfRenderRecorder;
-use ReflectionProperty;
 use WP_UnitTestCase;
 
 require_once dirname( __DIR__ ) . '/Support/acf-render-stub.php';
@@ -205,22 +204,128 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 
 	public function test_plan_keeps_the_credential_requirement_for_a_readable_source(): void {
 		$this->assertTrue( RegistrationForm::is_available() );
-		$this->assertSame( array( 'pwz', 'zgoda' ), RegistrationForm::plan()->requiredFor( 'lekarz' ) );
-		$this->assertSame( array( 'zgoda' ), RegistrationForm::plan()->requiredFor( 'pielegniarka' ) );
+		$plan = RegistrationForm::plan();
+		$this->assertNotNull( $plan );
+		$this->assertSame( array( 'pwz', 'zgoda' ), $plan->requiredFor( 'lekarz' ) );
+		$this->assertSame( array( 'zgoda' ), $plan->requiredFor( 'pielegniarka' ) );
 	}
 
-	public function test_plan_prunes_the_matrix_to_the_fields_of_the_source(): void {
-		FieldMatrixRepository::save(
-			FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required', 'duch' => 'required' ) ) )
+	public function test_plan_refuses_to_exist_when_the_source_is_unreadable(): void {
+		remove_all_filters( 'pusers_acf_groups' );
+		add_filter( 'pusers_acf_groups', static fn (): array => array() );
+
+		$this->assertNull( RegistrationForm::plan() );
+		$this->assertSame( array(), RegistrationForm::offered_professions() );
+	}
+
+	public function test_plan_and_availability_agree_when_the_filter_changes_between_calls(): void {
+		$this->assertNotNull( RegistrationForm::plan() );
+		$this->assertTrue( RegistrationForm::is_available() );
+
+		// Lekarz traci pole numeru, student zostaje: nadal dostępne, ale oferta się zmienia.
+		$this->professions(
+			array(
+				array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ),
+			)
+		);
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array( array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false' ) ),
+			30
 		);
 
-		$plan = RegistrationForm::plan();
+		$this->assertNull( RegistrationForm::plan() );
+		$this->assertFalse( RegistrationForm::is_available() );
+		$this->assertSame( array(), RegistrationForm::offered_professions() );
+	}
 
-		// RegistrationPlan iteruje po polach źródła, więc wynik fieldsFor()/requiredFor() jest ten sam
-		// z przycięciem i bez niego. Przycięcie widać wyłącznie w macierzy trzymanej przez plan.
-		$pruned = ( new ReflectionProperty( $plan, 'pruned' ) )->getValue( $plan );
-		$this->assertSame( array( 'lekarz' => array( 'pwz' => 'required' ) ), $pruned->toArray() );
-		$this->assertSame( array( 'pwz' ), $plan->requiredFor( 'lekarz' ) );
+	public function test_render_reads_the_field_definitions_once(): void {
+		$calls = 0;
+		add_filter(
+			'pusers_acf_fields',
+			static function ( array $raw ) use ( &$calls ): array {
+				++$calls;
+				return $raw;
+			},
+			30
+		);
+
+		RegistrationForm::render();
+
+		$this->assertSame( 1, $calls, 'Render i ACF muszą czytać jedną migawkę definicji pól.' );
+	}
+
+	public function test_profession_whose_credential_field_left_the_source_is_not_offered(): void {
+		$this->professions(
+			array(
+				array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'numer_pwz' ),
+				array( 'key' => 'student', 'label' => 'Student' ),
+			)
+		);
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'numer_pwz' => 'required' ), 'student' => array( 'zgoda' => 'required' ) ) ) );
+
+		$html = RegistrationForm::render();
+
+		preg_match_all( '/<option value="([^"]+)"/', $html, $m );
+		$this->assertSame( array( 'student' ), $m[1] );
+		$this->assertSame( array( 'student' ), array_keys( RegistrationForm::offered_professions() ) );
+		$this->assertSame( array( 'student' ), array_keys( $this->localisedMap() ) );
+	}
+
+	public function test_profession_whose_credential_field_is_only_visible_is_not_offered(): void {
+		FieldMatrixRepository::save(
+			FieldMatrix::fromArray(
+				array(
+					'lekarz'       => array( 'pwz' => 'visible', 'zgoda' => 'required' ),
+					'pielegniarka' => array( 'zgoda' => 'required' ),
+				)
+			)
+		);
+
+		preg_match_all( '/<option value="([^"]+)"/', RegistrationForm::render(), $m );
+		$this->assertSame( array( 'pielegniarka' ), $m[1] );
+	}
+
+	public function test_profession_with_a_properly_configured_credential_is_offered_beside_one_without(): void {
+		$this->professions(
+			array(
+				array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ),
+				array( 'key' => 'student', 'label' => 'Student' ),
+			)
+		);
+
+		preg_match_all( '/<option value="([^"]+)"/', RegistrationForm::render(), $m );
+		$this->assertSame( array( 'lekarz', 'student' ), $m[1] );
+	}
+
+	public function test_registration_closes_when_every_profession_is_filtered_out(): void {
+		$this->professions( array( array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'zniklo' ) ) );
+
+		$html = RegistrationForm::render();
+
+		$this->assertStringContainsString( 'pusers-notice', $html );
+		$this->assertStringNotContainsString( '<form', $html );
+		$this->assertFalse( RegistrationForm::is_available() );
+	}
+
+	public function test_profession_key_and_field_key_are_escaped_in_attributes(): void {
+		$this->professions( array( array( 'key' => 'a"b', 'label' => 'X' ) ) );
+		add_filter(
+			'pusers_acf_fields',
+			static function ( array $raw ): array {
+				$raw[] = array( 'name' => 'c"d', 'label' => 'Y', 'type' => 'text' );
+				return $raw;
+			},
+			20
+		);
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'a"b' => array( 'c"d' => 'visible' ) ) ) );
+
+		$html = RegistrationForm::render();
+
+		$this->assertStringContainsString( '<option value="a&quot;b"', $html );
+		$this->assertStringContainsString( 'data-pusers-field="c&quot;d"', $html );
+		$this->assertStringNotContainsString( 'value="a"b"', $html );
+		$this->assertStringNotContainsString( 'data-pusers-field="c"d"', $html );
 	}
 
 	public function test_browser_required_is_set_only_for_a_field_every_profession_requires(): void {
@@ -289,8 +394,9 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 
 		$html = RegistrationForm::render();
 
-		$this->assertSame( 1, preg_match( '/<input type="email"[^>]*name="pusers_email"[^>]*>/', $html, $m ) );
-		$this->assertStringContainsString( 'required="required"', $m[0] );
+		$this->assertSame( 1, preg_match_all( '/<input type="email"[^>]*name="pusers_email"[^>]*>/', $html, $m ) );
+		$this->assertCount( 1, $m[0], 'Pole adresu konta ma wystąpić dokładnie raz.' );
+		$this->assertStringContainsString( 'required="required"', $m[0][0] );
 	}
 
 	public function test_email_is_repopulated_but_the_password_is_not(): void {
