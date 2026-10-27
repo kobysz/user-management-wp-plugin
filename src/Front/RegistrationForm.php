@@ -93,6 +93,24 @@ final class RegistrationForm {
 	}
 
 	/**
+	 * JEDYNE wejście, którym ma się posługiwać obsługa wysłanego zgłoszenia. Przyjmuje klucz profesji
+	 * ze zgłoszenia i zwraca null, gdy rejestracja jest niedostępna ALBO ta profesja nie jest
+	 * oferowana. Samo null z `plan()` nie wystarcza: plan istnieje także dla profesji wycofanej z
+	 * oferty (jej `requiredFor()` po prostu nie zawiera pola numeru), więc zgłoszenie z taką profesją
+	 * przeszłoby bez numeru uprawnień. Plan i `AcfFields` w wyniku pochodzą z jednej instancji źródła.
+	 *
+	 * @param string $professionKey Klucz profesji ze zgłoszenia.
+	 */
+	public static function context_for( string $professionKey ): ?RegistrationContext {
+		$state = self::state();
+		if ( null === $state || ! isset( $state['professions'][ $professionKey ] ) ) {
+			return null;
+		}
+
+		return new RegistrationContext( $state['professions'][ $professionKey ], $state['plan'], new AcfFields( $state['source'] ) );
+	}
+
+	/**
 	 * Czy rejestracja może działać. Fail-closed: bez tego rejestracja nie jest przyjmowana.
 	 */
 	public static function is_available(): bool {
@@ -117,14 +135,14 @@ final class RegistrationForm {
 		$map = array();
 		foreach ( $professions as $profession ) {
 			$map[ $profession->key ] = array();
-			foreach ( $plan->fieldsFor( $profession->key ) as $fieldKey => $state ) {
-				$map[ $profession->key ][ $fieldKey ] = $state->value;
+			foreach ( $plan->fieldsFor( $profession->key ) as $fieldKey => $fieldState ) {
+				$map[ $profession->key ][ $fieldKey ] = $fieldState->value;
 			}
 		}
 
 		self::enqueue_script( $map );
 
-		$acf  = new AcfFields( SettingsRepository::get()->acfGroupKey, $source );
+		$acf  = new AcfFields( $source );
 		$html = '<form class="pusers-registration" method="post" novalidate="novalidate">';
 
 		$html .= '<p class="pusers-field-profession"><label for="' . esc_attr( self::PROFESSION ) . '">' . esc_html__( 'Profesja', 'portal-users' ) . '</label> ';
@@ -220,6 +238,7 @@ final class RegistrationForm {
 		}
 		$field = $profession->credentialField;
 
+		// Warunek na pusty klucz jest jawny celowo (brak pola numeru to osobny, nazwany przypadek).
 		return '' !== $field
 			&& array_key_exists( $field, $fields )
 			&& ( $plan->fieldsFor( $profession->key )[ $field ] ?? null ) === FieldState::Required;

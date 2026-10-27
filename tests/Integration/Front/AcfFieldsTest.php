@@ -7,6 +7,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration\Front;
 
+use PortalUsers\Acf\AcfFieldSource;
 use PortalUsers\Front\AcfFields;
 use PortalUsers\Tests\Integration\Support\AcfRenderRecorder;
 use WP_UnitTestCase;
@@ -38,7 +39,7 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 	}
 
 	public function test_boolean_keys_come_from_the_acf_field_definitions(): void {
-		$this->assertSame( array( 'zgoda', 'newsletter' ), ( new AcfFields( 'group_abc' ) )->booleanKeys() );
+		$this->assertSame( array( 'zgoda', 'newsletter' ), ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->booleanKeys() );
 	}
 
 	public function test_a_new_boolean_field_is_picked_up_without_touching_any_list(): void {
@@ -50,7 +51,7 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 			},
 			20
 		);
-		$this->assertSame( array( 'zgoda', 'newsletter', 'regulamin_v2' ), ( new AcfFields( 'group_abc' ) )->booleanKeys() );
+		$this->assertSame( array( 'zgoda', 'newsletter', 'regulamin_v2' ), ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->booleanKeys() );
 	}
 
 	public function test_boolean_field_beside_a_container_is_still_detected_and_the_container_is_not_a_field(): void {
@@ -62,7 +63,7 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 			},
 			20
 		);
-		$fields = new AcfFields( 'group_abc' );
+		$fields = new AcfFields( new AcfFieldSource( 'group_abc' ) );
 		// Ta asercja przechodzi także bez wykluczenia kontenerów (`sub_fields` nigdy nie są czytane),
 		// więc NIE chroni przed kontenerem. Dowodem jest asercja `fromRequest()` poniżej i testy źródła.
 		$this->assertSame( array( 'zgoda', 'newsletter' ), $fields->booleanKeys() );
@@ -78,7 +79,7 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 			},
 			20
 		);
-		$fields = new AcfFields( 'group_abc' );
+		$fields = new AcfFields( new AcfFieldSource( 'group_abc' ) );
 		$this->assertSame( array( 'zgoda', 'newsletter' ), $fields->booleanKeys() );
 		$this->assertSame( array(), $fields->fromRequest( array( AcfFields::INPUT => array( '123' => '1' ) ) ) );
 	}
@@ -86,7 +87,7 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 	public function test_boolean_keys_are_empty_when_the_group_disappeared(): void {
 		remove_all_filters( 'pusers_acf_groups' );
 		add_filter( 'pusers_acf_groups', static fn (): array => array() );
-		$this->assertSame( array(), ( new AcfFields( 'group_abc' ) )->booleanKeys() );
+		$this->assertSame( array(), ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->booleanKeys() );
 	}
 
 	public function test_values_are_read_only_for_known_fields(): void {
@@ -104,25 +105,25 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 				'pwz'   => '5425740',
 				'zgoda' => '1',
 			),
-			( new AcfFields( 'group_abc' ) )->fromRequest( $raw )
+			( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest( $raw )
 		);
 	}
 
 	public function test_request_without_the_fields_container_yields_nothing(): void {
-		$this->assertSame( array(), ( new AcfFields( 'group_abc' ) )->fromRequest( array( 'pwz' => '5425740' ) ) );
-		$this->assertSame( array(), ( new AcfFields( 'group_abc' ) )->fromRequest( array( AcfFields::INPUT => 'bzdura' ) ) );
+		$this->assertSame( array(), ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest( array( 'pwz' => '5425740' ) ) );
+		$this->assertSame( array(), ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest( array( AcfFields::INPUT => 'bzdura' ) ) );
 	}
 
 	public function test_unchecked_consent_from_the_request_is_read_as_the_zero_that_acf_sends(): void {
 		// Odznaczony `true_false` wysyła ukryte `0`; odczyt nie może go gubić ani zmieniać
 		// (normalizacja to osobny krok, który widzi tę wartość).
-		$read = ( new AcfFields( 'group_abc' ) )->fromRequest( array( AcfFields::INPUT => array( 'zgoda' => '0' ) ) );
+		$read = ( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->fromRequest( array( AcfFields::INPUT => array( 'zgoda' => '0' ) ) );
 		$this->assertSame( array( 'zgoda' => '0' ), $read );
 	}
 
 	public function test_render_hands_the_field_to_acf_with_requiredness_value_and_plugin_input_name(): void {
 		ob_start();
-		( new AcfFields( 'group_abc' ) )->render( 'zgoda', true, '1' );
+		( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->render( 'zgoda', true, '1' );
 		$html = (string) ob_get_clean();
 
 		$this->assertCount( 1, AcfRenderRecorder::$fields );
@@ -137,7 +138,7 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 
 	public function test_render_marks_an_optional_field_as_not_required(): void {
 		ob_start();
-		( new AcfFields( 'group_abc' ) )->render( 'pwz', false, null );
+		( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->render( 'pwz', false, null );
 		ob_end_clean();
 
 		$this->assertSame( 0, AcfRenderRecorder::$fields[0]['required'] );
@@ -145,7 +146,7 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 
 	public function test_render_ignores_a_field_outside_the_group(): void {
 		ob_start();
-		( new AcfFields( 'group_abc' ) )->render( 'user_pass', true, null );
+		( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->render( 'user_pass', true, null );
 		$html = (string) ob_get_clean();
 
 		$this->assertSame( array(), AcfRenderRecorder::$fields );

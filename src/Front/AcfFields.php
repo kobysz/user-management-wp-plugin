@@ -41,12 +41,13 @@ final class AcfFields {
 	/**
 	 * Konstruktor.
 	 *
-	 * @param string              $groupKey Klucz grupy ACF z polami rejestracji.
-	 * @param AcfFieldSource|null $source   Źródło współdzielone z wywołującym (jedna migawka definicji);
-	 *                                      bez niego powstaje własne.
+	 * Źródło jest wymagane i współdzielone z wywołującym (jedna migawka definicji pól): obiekt nie
+	 * buduje własnego, żeby plan i render nie mogły czytać dwóch różnych migawek.
+	 *
+	 * @param AcfFieldSource $source Źródło pól grupy rejestracji.
 	 */
-	public function __construct( string $groupKey, ?AcfFieldSource $source = null ) {
-		$this->source = $source ?? new AcfFieldSource( $groupKey );
+	public function __construct( AcfFieldSource $source ) {
+		$this->source = $source;
 	}
 
 	/**

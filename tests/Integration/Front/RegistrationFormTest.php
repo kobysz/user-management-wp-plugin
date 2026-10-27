@@ -10,6 +10,7 @@ namespace PortalUsers\Tests\Integration\Front;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
+use PortalUsers\Front\AcfFields;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
@@ -218,25 +219,59 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		$this->assertSame( array(), RegistrationForm::offered_professions() );
 	}
 
-	public function test_plan_and_availability_agree_when_the_filter_changes_between_calls(): void {
-		$this->assertNotNull( RegistrationForm::plan() );
-		$this->assertTrue( RegistrationForm::is_available() );
-
-		// Lekarz traci pole numeru, student zostaje: nadal dostępne, ale oferta się zmienia.
+	public function test_context_is_null_for_a_profession_withdrawn_from_the_offer(): void {
 		$this->professions(
 			array(
-				array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'pwz' ),
+				array( 'key' => 'lekarz', 'label' => 'Lekarz', 'credential_type' => 'physician_pwz', 'credential_field' => 'zniklo' ),
+				array( 'key' => 'student', 'label' => 'Student' ),
 			)
 		);
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'zniklo' => 'required' ), 'student' => array( 'zgoda' => 'required' ) ) ) );
+
+		$this->assertNull( RegistrationForm::context_for( 'lekarz' ) );
+		$this->assertNotNull( RegistrationForm::context_for( 'student' ) );
+	}
+
+	public function test_context_is_null_for_an_unknown_profession_and_an_unreadable_group(): void {
+		$this->assertNull( RegistrationForm::context_for( 'wrozka' ) );
+
+		remove_all_filters( 'pusers_acf_groups' );
+		add_filter( 'pusers_acf_groups', static fn (): array => array() );
+		$this->assertNull( RegistrationForm::context_for( 'lekarz' ) );
+	}
+
+	public function test_context_for_an_offered_profession_carries_the_credential_requirement_and_matching_fields(): void {
+		$context = RegistrationForm::context_for( 'lekarz' );
+
+		$this->assertNotNull( $context );
+		$this->assertSame( 'lekarz', $context->profession->key );
+		$this->assertSame( array( 'pwz', 'zgoda' ), $context->plan->requiredFor( 'lekarz' ) );
+
+		$planned = array_keys( $context->plan->fieldsFor( 'lekarz' ) );
+		$offered = array_keys( $context->fields->fromRequest( array( AcfFields::INPUT => array( 'pwz' => 'x', 'zgoda' => '1', 'newsletter' => '1', 'obce' => '1' ) ) ) );
+		$this->assertSame( $planned, $offered );
+	}
+
+	public function test_context_reads_the_field_definitions_once_across_plan_and_fields(): void {
+		$calls = 0;
 		add_filter(
 			'pusers_acf_fields',
-			static fn (): array => array( array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false' ) ),
+			static function ( array $raw ) use ( &$calls ): array {
+				++$calls;
+				return $raw;
+			},
 			30
 		);
 
-		$this->assertNull( RegistrationForm::plan() );
-		$this->assertFalse( RegistrationForm::is_available() );
-		$this->assertSame( array(), RegistrationForm::offered_professions() );
+		$context = RegistrationForm::context_for( 'lekarz' );
+		$this->assertNotNull( $context );
+		$context->plan->requiredFor( 'lekarz' );
+		$context->fields->booleanKeys();
+		ob_start();
+		$context->fields->render( 'pwz', true, null );
+		ob_end_clean();
+
+		$this->assertSame( 1, $calls );
 	}
 
 	public function test_render_reads_the_field_definitions_once(): void {
