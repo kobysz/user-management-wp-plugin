@@ -92,6 +92,15 @@ final class SpamGuardTest extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Filtr zapytań, który psuje zapis liczników (wstawienie do tabeli opcji).
+	 *
+	 * @return callable(string): string
+	 */
+	private function block_counter_writes(): callable {
+		return static fn ( string $query ): string => ( str_contains( $query, 'pusers_rl_' ) && 0 === stripos( ltrim( $query ), 'INSERT' ) ) ? 'SELECT 1 FROM dual WHERE 0' : $query;
+	}
+
+	/**
 	 * @return list<object> Wiersze logu zdarzeń.
 	 */
 	private function log_rows(): array {
@@ -144,7 +153,6 @@ final class SpamGuardTest extends WP_UnitTestCase {
 			),
 			'valid signature, future'   => array( static fn () => SpamGuard::stamp( time() + 3600 ) ),
 			'not a string'              => array( static fn () => array( SpamGuard::stamp( time() - 600 ) ) ),
-			'older than 24 hours'       => array( static fn () => SpamGuard::stamp( time() - DAY_IN_SECONDS - 60 ) ),
 			'signature in upper case'   => array( static fn () => strtoupper( SpamGuard::stamp( time() - 600 ) ) ),
 		);
 	}
@@ -337,13 +345,18 @@ final class SpamGuardTest extends WP_UnitTestCase {
 		$this->assertTrue( SpamGuard::check( $this->server(), $request, 'jan@example.test' )->passed() );
 	}
 
-	public function test_a_timestamp_older_than_a_day_is_rejected_and_a_fresh_one_is_not(): void {
-		$old = $this->request();
-		$old[ RegistrationForm::TIMESTAMP ] = SpamGuard::stamp( time() - SpamGuard::STAMP_MAX_AGE - 60 );
-		$ok  = $this->request();
-		$ok[ RegistrationForm::TIMESTAMP ]  = SpamGuard::stamp( time() - SpamGuard::STAMP_MAX_AGE + 60 );
+	public function test_a_correctly_signed_timestamp_older_than_a_day_gets_its_own_reason_and_a_forged_one_does_not(): void {
+		$age = SpamGuard::STAMP_MAX_AGE + 60;
 
-		$this->assertSame( 'too_fast', SpamGuard::check( $this->server(), $old, 'jan@example.test' )->reason() );
+		$stale = $this->request();
+		$stale[ RegistrationForm::TIMESTAMP ] = SpamGuard::stamp( time() - $age );
+		$forged = $this->request();
+		$forged[ RegistrationForm::TIMESTAMP ] = ( time() - $age ) . '.' . str_repeat( 'a', 32 );
+		$ok = $this->request();
+		$ok[ RegistrationForm::TIMESTAMP ] = SpamGuard::stamp( time() - SpamGuard::STAMP_MAX_AGE + 60 );
+
+		$this->assertSame( 'stale_form', SpamGuard::check( $this->server(), $stale, 'jan@example.test' )->reason() );
+		$this->assertSame( 'too_fast', SpamGuard::check( $this->server(), $forged, 'jan@example.test' )->reason() );
 		$this->assertTrue( SpamGuard::check( $this->server(), $ok, 'jan@example.test' )->passed() );
 	}
 
@@ -357,25 +370,91 @@ final class SpamGuardTest extends WP_UnitTestCase {
 		$this->assertSame( 'too_fast', SpamGuard::check( array(), $this->request( 0 ), 'y@example.test' )->reason() );
 	}
 
-	public function test_a_failing_counter_store_is_reported_once_per_request_without_changing_the_verdict(): void {
-		$block = static function ( string $query ): string {
-			return ( str_contains( $query, 'pusers_rl_' ) && 0 === stripos( ltrim( $query ), 'INSERT' ) ) ? 'SELECT 1 FROM dual WHERE 0' : $query;
-		};
+	public function test_the_email_threshold_still_works_when_the_address_is_unknown(): void {
+		for ( $i = 1; $i <= 3; $i++ ) {
+			$verdict = SpamGuard::check( array(), $this->request(), 'jan@example.test' );
+			$this->assertTrue( $verdict->passed() );
+			SpamGuard::record_registration( 'jan@example.test' );
+		}
+
+		$this->assertSame( 'email_limit', SpamGuard::check( array(), $this->request(), 'jan@example.test' )->reason() );
+	}
+
+	public function test_a_second_block_cycle_of_the_same_address_leaves_its_own_row(): void {
+		for ( $i = 0; $i < 3; $i++ ) {
+			$this->register( 'jan@example.test' );
+		}
+		SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' );
+		SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' );
+		$this->assertCount( 1, $this->log_rows(), 'Jedno okno, jeden wiersz.' );
+
+		// Nowe okno licznika (inny początek): kolejna blokada tego samego adresu znów zostawia ślad.
+		set_transient(
+			'pusers_rl_' . md5( 'registration_email:jan@example.test' ),
+			array(
+				'count' => 3,
+				'start' => time() - 120,
+			),
+			HOUR_IN_SECONDS
+		);
+		SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' );
+
+		$this->assertCount( 2, $this->log_rows() );
+	}
+
+	public function test_an_ongoing_counter_store_failure_leaves_one_row_not_one_per_request(): void {
+		$block = $this->block_counter_writes();
 		add_filter( 'query', $block );
 		RateLimiter::reset_failure_report();
 
 		try {
-			$first  = SpamGuard::check( $this->server(), $this->request(), 'jan@example.test' );
-			$second = SpamGuard::check( $this->server(), $this->request(), 'ola@example.test' );
+			$verdicts = array();
+			for ( $i = 1; $i <= 5; $i++ ) {
+				$verdicts[] = SpamGuard::check( $this->server(), $this->request(), "o{$i}@example.test" );
+			}
 		} finally {
 			remove_filter( 'query', $block );
 		}
 
-		$this->assertTrue( $first->passed() );
-		$this->assertTrue( $second->passed() );
+		foreach ( $verdicts as $verdict ) {
+			$this->assertTrue( $verdict->passed(), 'Zachowanie bramki bez zmian.' );
+		}
 		$rows = $this->log_rows();
 		$this->assertCount( 1, $rows );
 		$this->assertSame( RateLimiter::FAILURE_LOG_ACTION, $rows[0]->action );
+	}
+
+	public function test_a_store_that_reports_false_but_holds_the_value_is_not_an_outage(): void {
+		// Dwa równoległe żądania policzyły to samo: drugi zapis jest identyczny z zapisanym, więc
+		// set_transient() zwraca false, choć magazyn działa.
+		$key = 'pusers_rl_' . md5( 'registration_ip:10.0.0.1' );
+		$start = time();
+		set_transient(
+			$key,
+			array(
+				'count' => 1,
+				'start' => $start,
+			),
+			HOUR_IN_SECONDS
+		);
+		$stale = static function ( $pre ) use ( $start ) {
+			static $calls = 0;
+			return 1 === ++$calls ? array(
+				'count' => 0,
+				'start' => $start,
+			) : $pre;
+		};
+		add_filter( 'pre_transient_' . $key, $stale );
+		RateLimiter::reset_failure_report();
+
+		try {
+			$count = RateLimiter::hit( 'registration_ip:10.0.0.1' );
+		} finally {
+			remove_filter( 'pre_transient_' . $key, $stale );
+		}
+
+		$this->assertSame( 1, $count );
+		$this->assertSame( array(), $this->log_rows() );
 	}
 
 	public function test_extension_point_can_turn_a_pass_into_a_rejection(): void {

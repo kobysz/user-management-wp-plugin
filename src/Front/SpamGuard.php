@@ -90,6 +90,14 @@ final class SpamGuard {
 			$verdict = self::own_verdict( $settings->timeTrapSeconds, $settings->registrationLimitPerEmailPerHour, $ip, $request, $email );
 		}
 
+		/**
+		 * Punkt rozszerzenia antyspamu rejestracji (pełny opis przy stałej SpamGuard::FILTER, nazwa hooka:
+		 * pusers_registration_spam_check). Wołany także przy odmowie własnych reguł; może tylko zaostrzyć werdykt.
+		 *
+		 * @param SpamVerdict          $verdict Werdykt własnych reguł wtyczki.
+		 * @param array<string, mixed> $request Dane żądania.
+		 * @param string               $email   Adres e-mail ze zgłoszenia.
+		 */
 		$filtered = apply_filters( self::FILTER, $verdict, $request, $email ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej FILTER, która ma prefiks pusers_.
 
 		// Filtr może tylko zaostrzyć werdykt: odmowa własnych reguł zostaje, cokolwiek zwrócił.
@@ -133,9 +141,10 @@ final class SpamGuard {
 		// Białe znaki obcinamy: autouzupełnianie przeglądarki potrafi dorzucić spację uczciwemu użytkownikowi.
 		$filled = is_string( $honeypot ) ? trim( $honeypot ) : 'x';
 
-		$verdict = ( new SpamRules( $timeTrapSeconds ) )->check( $filled, self::loaded_at( $request[ RegistrationForm::TIMESTAMP ] ?? null ), time() );
+		list( $loadedAt, $stale ) = self::read_stamp( $request[ RegistrationForm::TIMESTAMP ] ?? null );
+		$verdict                  = ( new SpamRules( $timeTrapSeconds ) )->check( $filled, $loadedAt, time() );
 		if ( ! $verdict->passed() ) {
-			return $verdict;
+			return $stale && SpamVerdict::TOO_FAST === $verdict->reason() ? SpamVerdict::reject( SpamVerdict::STALE_FORM ) : $verdict;
 		}
 
 		$normalised = self::normalise( $email );
@@ -144,8 +153,8 @@ final class SpamGuard {
 		}
 
 		$verdict = SpamVerdict::reject( SpamVerdict::EMAIL_LIMIT );
-		// Licznik e-mail się tu nie zmienia, więc „pierwsze przekroczenie” znaczy pierwsza odmowa w oknie.
-		if ( 1 === RateLimiter::hit( self::BUCKET_LOGGED . $normalised ) ) {
+		// Wiersz w logu raz na okno licznika adresu (okno znacznika jest związane z oknem licznika).
+		if ( RateLimiter::once_per_window( self::BUCKET_LOGGED . $normalised, self::BUCKET_EMAIL . $normalised ) ) {
 			self::log_limit( $verdict, $ip );
 		}
 		return $verdict;
@@ -179,20 +188,24 @@ final class SpamGuard {
 	}
 
 	/**
-	 * Moment załadowania formularza z podpisanego znacznika; 0 dla znacznika nieobecnego, w złym kształcie,
-	 * z niezgodnym podpisem albo starszego niż STAMP_MAX_AGE (SpamRules traktuje 0 jak odesłanie zbyt szybkie).
+	 * Moment załadowania formularza z podpisanego znacznika. Moment 0 (SpamRules traktuje go jak odesłanie
+	 * zbyt szybkie) oznacza znacznik nieobecny, w złym kształcie, z niezgodnym podpisem albo przeterminowany.
+	 * Przeterminowanie (poprawny podpis, wiek ponad STAMP_MAX_AGE) jest zgłaszane osobno, bo ma własny powód
+	 * odmowy: uczciwy użytkownik z kartą otwartą od doby (albo ze stroną w długim cache) musi wiedzieć, że
+	 * wystarczy odświeżyć formularz, a botowi ten wiek i tak jest znany; przy podróbkach przyczynę ukrywamy.
 	 *
 	 * @param mixed $raw Wartość pola z żądania.
+	 * @return array{0: int, 1: bool} Moment załadowania i flaga przeterminowania.
 	 */
-	private static function loaded_at( mixed $raw ): int {
+	private static function read_stamp( mixed $raw ): array {
 		if ( ! is_string( $raw ) || 1 !== preg_match( '/^(\d{1,10})\.([0-9a-f]{32})$/', $raw, $m ) ) {
-			return 0;
+			return array( 0, false );
 		}
 		if ( ! hash_equals( wp_hash( self::STAMP_SCOPE . $m[1] ), $m[2] ) ) {
-			return 0;
+			return array( 0, false );
 		}
 
 		$loadedAt = (int) $m[1];
-		return $loadedAt < time() - self::STAMP_MAX_AGE ? 0 : $loadedAt;
+		return $loadedAt < time() - self::STAMP_MAX_AGE ? array( 0, true ) : array( $loadedAt, false );
 	}
 }

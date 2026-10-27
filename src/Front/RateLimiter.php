@@ -33,11 +33,10 @@ final class RateLimiter {
 	public const FAILURE_LOG_ACTION = 'rate_limiter_failed';
 
 	/**
-	 * Czy awaria zapisu została już zgłoszona w tym żądaniu.
-	 *
-	 * @var bool
+	 * Opcja z momentem ostatniego zgłoszenia awarii zapisu. Opcja, nie transient: przy awarii magazynu
+	 * transientów flaga w transiencie by nie działała i zapis w logu wróciłby na każde żądanie.
 	 */
-	private static bool $failure_reported = false;
+	public const FAILURE_OPTION = 'pusers_limiter_failure_at';
 
 	/**
 	 * Zlicza próbę.
@@ -60,11 +59,39 @@ final class RateLimiter {
 			),
 			$expiry
 		);
+		// set_transient() zwraca false także wtedy, gdy zapisywana wartość jest identyczna z zapisaną (np. dwa
+		// równoległe żądania policzyły to samo), więc przed zgłoszeniem awarii czytamy licznik z powrotem.
 		if ( ! $saved ) {
-			self::report_failure();
+			$stored = self::read( $bucket );
+			if ( null === $stored || $stored['count'] !== $count ) {
+				self::report_failure();
+			}
 		}
 
 		return $count;
+	}
+
+	/**
+	 * Czy to pierwsze wywołanie dla danego okna kubełka: zwraca true raz na okno licznika `$windowBucket`
+	 * (okno zaczyna się razem z licznikiem i razem z nim się kończy), potem false. Służy do pisania do logu
+	 * jednego wiersza na okno. Gdy okno nie istnieje, zwraca true.
+	 *
+	 * @param string $marker       Nazwa znacznika (osobny od kubełka licznika).
+	 * @param string $windowBucket Kubełek, którego okno obowiązuje.
+	 */
+	public static function once_per_window( string $marker, string $windowBucket ): bool {
+		$entry = self::read( $windowBucket );
+		if ( null === $entry ) {
+			return true;
+		}
+
+		if ( get_transient( self::key( $marker ) ) === $entry['start'] ) {
+			return false;
+		}
+
+		$remaining = max( 1, self::BLOCK_MINUTES * MINUTE_IN_SECONDS - ( time() - $entry['start'] ) );
+		set_transient( self::key( $marker ), $entry['start'], $remaining );
+		return true;
 	}
 
 	/**
@@ -88,21 +115,23 @@ final class RateLimiter {
 	}
 
 	/**
-	 * Zeruje flagę zgłoszonej awarii (nowe żądanie; używane też przez testy).
+	 * Zapomina zgłoszenie awarii zapisu (używane przez testy).
 	 */
 	public static function reset_failure_report(): void {
-		self::$failure_reported = false;
+		delete_option( self::FAILURE_OPTION );
 	}
 
 	/**
-	 * Zgłasza w logu zdarzeń nieudany zapis licznika, raz na żądanie. Nie zmienia zachowania bramki:
-	 * administrator ma się tylko dowiedzieć, że progi chwilowo nie działają.
+	 * Zgłasza w logu zdarzeń nieudany zapis licznika, najwyżej raz na godzinę, żeby trwająca awaria nie
+	 * puchła tempem ruchu. Nie zmienia zachowania bramki: administrator ma się tylko dowiedzieć, że
+	 * progi chwilowo nie działają.
 	 */
 	private static function report_failure(): void {
-		if ( self::$failure_reported ) {
+		$last = get_option( self::FAILURE_OPTION, 0 );
+		if ( is_numeric( $last ) && time() - (int) $last < HOUR_IN_SECONDS ) {
 			return;
 		}
-		self::$failure_reported = true;
+		update_option( self::FAILURE_OPTION, time(), false );
 		EventLog::write( self::FAILURE_LOG_ACTION, 0, 0, array( 'reason' => 'storage_unavailable' ) );
 	}
 

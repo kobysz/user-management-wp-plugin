@@ -17,6 +17,7 @@ final class SpamVerdict {
 
 	public const HONEYPOT    = 'honeypot';
 	public const TOO_FAST    = 'too_fast';
+	public const STALE_FORM  = 'stale_form';
 	public const IP_LIMIT    = 'ip_limit';
 	public const EMAIL_LIMIT = 'email_limit';
 
