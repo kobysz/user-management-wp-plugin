@@ -30,6 +30,7 @@ final class Settings {
 	private const DEFAULT_PURGE_DAYS  = 7;
 	private const DEFAULT_RATE_LIMIT  = 10;
 	private const DEFAULT_TIME_TRAP   = 3;
+	private const DEFAULT_EMAIL_LIMIT = 3;
 
 	/**
 	 * Konstruktor.
@@ -42,6 +43,7 @@ final class Settings {
 	 * @param int                $confirmationTokenHours Ważność tokenu potwierdzenia, w godzinach.
 	 * @param int                $unconfirmedPurgeDays   Po ilu dniach usuwać niepotwierdzone konta.
 	 * @param int                $rateLimitPerHour       Limit zgłoszeń z jednego adresu na godzinę.
+	 * @param int                $registrationLimitPerEmailPerHour Limit prób rejestracji tego samego adresu e-mail na godzinę.
 	 * @param int                $timeTrapSeconds        Minimalny czas wypełniania formularza (0 = wyłączone).
 	 * @param string             $trustedProxyHeader     Nazwa zaufanego nagłówka serwera z adresem klienta.
 	 * @param array<int, string> $rejectionReasons       Gotowe powody odrzucenia zgłoszenia.
@@ -57,6 +59,7 @@ final class Settings {
 		public readonly int $confirmationTokenHours,
 		public readonly int $unconfirmedPurgeDays,
 		public readonly int $rateLimitPerHour,
+		public readonly int $registrationLimitPerEmailPerHour,
 		public readonly int $timeTrapSeconds,
 		public readonly string $trustedProxyHeader,
 		public readonly array $rejectionReasons,
@@ -79,6 +82,7 @@ final class Settings {
 			self::DEFAULT_TOKEN_HOURS,
 			self::DEFAULT_PURGE_DAYS,
 			self::DEFAULT_RATE_LIMIT,
+			self::DEFAULT_EMAIL_LIMIT,
 			self::DEFAULT_TIME_TRAP,
 			'',
 			array(),
@@ -106,6 +110,7 @@ final class Settings {
 			self::integer( $raw, 'confirmation_token_hours', $d->confirmationTokenHours, 1 ),
 			self::integer( $raw, 'unconfirmed_purge_days', $d->unconfirmedPurgeDays, 1 ),
 			self::integer( $raw, 'rate_limit_per_hour', $d->rateLimitPerHour, 1 ),
+			self::integer( $raw, 'registration_limit_per_email_per_hour', $d->registrationLimitPerEmailPerHour, 1 ),
 			self::integer( $raw, 'time_trap_seconds', $d->timeTrapSeconds, 0 ),
 			self::headerName( self::text( $raw, 'trusted_proxy_header' ) ),
 			self::texts( $raw['rejection_reasons'] ?? array() ),
@@ -121,19 +126,20 @@ final class Settings {
 	 */
 	public function toArray(): array {
 		return array(
-			'approval_enabled'         => $this->approvalEnabled,
-			'login_page_id'            => $this->loginPageId,
-			'register_page_id'         => $this->registerPageId,
-			'reset_page_id'            => $this->resetPageId,
-			'notify_emails'            => $this->notifyEmails,
-			'confirmation_token_hours' => $this->confirmationTokenHours,
-			'unconfirmed_purge_days'   => $this->unconfirmedPurgeDays,
-			'rate_limit_per_hour'      => $this->rateLimitPerHour,
-			'time_trap_seconds'        => $this->timeTrapSeconds,
-			'trusted_proxy_header'     => $this->trustedProxyHeader,
-			'rejection_reasons'        => $this->rejectionReasons,
-			'delete_data_on_uninstall' => $this->deleteDataOnUninstall,
-			'acf_group_key'            => $this->acfGroupKey,
+			'approval_enabled'                      => $this->approvalEnabled,
+			'login_page_id'                         => $this->loginPageId,
+			'register_page_id'                      => $this->registerPageId,
+			'reset_page_id'                         => $this->resetPageId,
+			'notify_emails'                         => $this->notifyEmails,
+			'confirmation_token_hours'              => $this->confirmationTokenHours,
+			'unconfirmed_purge_days'                => $this->unconfirmedPurgeDays,
+			'rate_limit_per_hour'                   => $this->rateLimitPerHour,
+			'registration_limit_per_email_per_hour' => $this->registrationLimitPerEmailPerHour,
+			'time_trap_seconds'                     => $this->timeTrapSeconds,
+			'trusted_proxy_header'                  => $this->trustedProxyHeader,
+			'rejection_reasons'                     => $this->rejectionReasons,
+			'delete_data_on_uninstall'              => $this->deleteDataOnUninstall,
+			'acf_group_key'                         => $this->acfGroupKey,
 		);
 	}
 

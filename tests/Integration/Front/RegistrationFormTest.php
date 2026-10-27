@@ -12,6 +12,7 @@ use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Front\AcfFields;
 use PortalUsers\Front\RegistrationForm;
+use PortalUsers\Front\SpamGuard;
 use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
@@ -102,8 +103,9 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		$this->assertSame( 1, preg_match( '/name="pusers_nonce" value="([^"]+)"/', $html, $m ) );
 		$this->assertNotFalse( wp_verify_nonce( $m[1], RegistrationForm::NONCE_ACTION ) );
 		$this->assertStringContainsString( 'name="' . RegistrationForm::HONEYPOT . '"', $html );
-		$this->assertSame( 1, preg_match( '/name="' . RegistrationForm::TIMESTAMP . '" value="(\d+)"/', $html, $t ) );
-		$this->assertEqualsWithDelta( time(), (int) $t[1], 5 );
+		$this->assertSame( 1, preg_match( '/name="' . RegistrationForm::TIMESTAMP . '" value="((\d+)\.[0-9a-f]{32})"/', $html, $t ) );
+		$this->assertEqualsWithDelta( time(), (int) $t[2], 5 );
+		$this->assertSame( SpamGuard::stamp( (int) $t[2] ), $t[1], 'Znacznik jest podpisany, nie goły.' );
 	}
 
 	public function test_honeypot_is_not_visible_to_a_human(): void {

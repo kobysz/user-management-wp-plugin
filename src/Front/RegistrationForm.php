@@ -179,7 +179,7 @@ final class RegistrationForm {
 		$html .= '<label for="' . esc_attr( self::HONEYPOT ) . '">' . esc_html__( 'Strona WWW', 'portal-users' ) . '</label>';
 		$html .= '<input type="text" id="' . esc_attr( self::HONEYPOT ) . '" name="' . esc_attr( self::HONEYPOT ) . '" value="" tabindex="-1" autocomplete="off" /></div>';
 
-		$html .= '<input type="hidden" name="' . esc_attr( self::TIMESTAMP ) . '" value="' . esc_attr( (string) time() ) . '" />';
+		$html .= '<input type="hidden" name="' . esc_attr( self::TIMESTAMP ) . '" value="' . esc_attr( SpamGuard::stamp( time() ) ) . '" />';
 		$html .= wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false );
 		$html .= '<p><button type="submit">' . esc_html__( 'Zarejestruj się', 'portal-users' ) . '</button></p>';
 

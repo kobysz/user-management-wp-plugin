@@ -48,6 +48,7 @@ final class SettingsScreen {
 		'confirmation_token_hours',
 		'unconfirmed_purge_days',
 		'rate_limit_per_hour',
+		'registration_limit_per_email_per_hour',
 		'time_trap_seconds',
 		'trusted_proxy_header',
 		'acf_group_key',
@@ -263,10 +264,11 @@ final class SettingsScreen {
 	 */
 	private static function render_antispam_section( Settings $settings ): void {
 		$numbers = array(
-			'confirmation_token_hours' => array( __( 'Ważność linku potwierdzającego (godziny)', 'portal-users' ), $settings->confirmationTokenHours, 1 ),
-			'unconfirmed_purge_days'   => array( __( 'Usuwanie niepotwierdzonych kont po (dniach)', 'portal-users' ), $settings->unconfirmedPurgeDays, 1 ),
-			'rate_limit_per_hour'      => array( __( 'Limit zgłoszeń z jednego adresu na godzinę', 'portal-users' ), $settings->rateLimitPerHour, 1 ),
-			'time_trap_seconds'        => array( __( 'Minimalny czas wypełniania formularza (sekundy, 0 = wyłączone)', 'portal-users' ), $settings->timeTrapSeconds, 0 ),
+			'confirmation_token_hours'              => array( __( 'Ważność linku potwierdzającego (godziny)', 'portal-users' ), $settings->confirmationTokenHours, 1 ),
+			'unconfirmed_purge_days'                => array( __( 'Usuwanie niepotwierdzonych kont po (dniach)', 'portal-users' ), $settings->unconfirmedPurgeDays, 1 ),
+			'rate_limit_per_hour'                   => array( __( 'Limit zgłoszeń z jednego adresu na godzinę', 'portal-users' ), $settings->rateLimitPerHour, 1 ),
+			'registration_limit_per_email_per_hour' => array( __( 'Limit prób rejestracji tego samego adresu e-mail na godzinę', 'portal-users' ), $settings->registrationLimitPerEmailPerHour, 1 ),
+			'time_trap_seconds'                     => array( __( 'Minimalny czas wypełniania formularza (sekundy, 0 = wyłączone)', 'portal-users' ), $settings->timeTrapSeconds, 0 ),
 		);
 		foreach ( $numbers as $key => $number ) {
 			self::row_start( $number[0], $key );

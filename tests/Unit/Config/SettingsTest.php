@@ -21,6 +21,7 @@ final class SettingsTest extends TestCase {
 		$this->assertSame( 7, $s->unconfirmedPurgeDays );
 		$this->assertSame( 3, $s->timeTrapSeconds );
 		$this->assertSame( 10, $s->rateLimitPerHour );
+		$this->assertSame( 3, $s->registrationLimitPerEmailPerHour );
 		$this->assertFalse( $s->deleteDataOnUninstall );
 		$this->assertSame( '', $s->trustedProxyHeader );
 		$this->assertSame( array(), $s->notifyEmails );
@@ -76,12 +77,14 @@ final class SettingsTest extends TestCase {
 				'confirmation_token_hours' => 0,
 				'unconfirmed_purge_days'   => -5,
 				'rate_limit_per_hour'      => 0,
+				'registration_limit_per_email_per_hour' => 0,
 				'time_trap_seconds'        => -1,
 			)
 		);
 		$this->assertSame( 1, $s->confirmationTokenHours );
 		$this->assertSame( 1, $s->unconfirmedPurgeDays );
 		$this->assertSame( 1, $s->rateLimitPerHour );
+		$this->assertSame( 1, $s->registrationLimitPerEmailPerHour );
 		$this->assertSame( 0, $s->timeTrapSeconds );
 	}
 
@@ -119,6 +122,7 @@ final class SettingsTest extends TestCase {
 			24,
 			14,
 			20,
+			4,
 			5,
 			'HTTP_X_REAL_IP',
 			array( 'numer nieprawidłowy' ),
@@ -136,6 +140,7 @@ final class SettingsTest extends TestCase {
 				'confirmation_token_hours',
 				'unconfirmed_purge_days',
 				'rate_limit_per_hour',
+				'registration_limit_per_email_per_hour',
 				'time_trap_seconds',
 				'trusted_proxy_header',
 				'rejection_reasons',
@@ -144,6 +149,8 @@ final class SettingsTest extends TestCase {
 			),
 			array_keys( $s->toArray() )
 		);
+		$this->assertSame( 4, Settings::fromArray( $s->toArray() )->registrationLimitPerEmailPerHour );
+		$this->assertSame( 20, Settings::fromArray( $s->toArray() )->rateLimitPerHour, 'Dwa progi to dwa osobne pola.' );
 		$this->assertSame( $s->toArray(), Settings::fromArray( $s->toArray() )->toArray() );
 	}
 

@@ -172,6 +172,36 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		$this->assertSame( 9, $saved->timeTrapSeconds );
 	}
 
+	public function test_the_per_email_threshold_is_saved_without_touching_the_per_ip_one(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'rate_limit_per_hour' => 42 ) ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'registration_limit_per_email_per_hour' => '5' ) );
+		SettingsScreen::handle_save();
+
+		$saved = SettingsRepository::get();
+		$this->assertSame( 5, $saved->registrationLimitPerEmailPerHour );
+		$this->assertSame( 42, $saved->rateLimitPerHour );
+	}
+
+	public function test_a_save_that_omits_the_per_email_threshold_keeps_it(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'registration_limit_per_email_per_hour' => 7 ) ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'time_trap_seconds' => '9' ) );
+		SettingsScreen::handle_save();
+
+		$this->assertSame( 7, SettingsRepository::get()->registrationLimitPerEmailPerHour );
+	}
+
+	public function test_the_screen_shows_both_registration_thresholds_with_their_values(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'rate_limit_per_hour' => 42, 'registration_limit_per_email_per_hour' => 7 ) ) );
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+		ob_start();
+		SettingsScreen::render();
+		$html = (string) ob_get_clean();
+
+		$this->assertMatchesRegularExpression( '/name="pusers_rate_limit_per_hour" value="42"/', $html );
+		$this->assertMatchesRegularExpression( '/name="pusers_registration_limit_per_email_per_hour" value="7"/', $html );
+	}
+
 	public function test_a_get_request_is_refused_and_changes_nothing(): void {
 		SettingsRepository::save( Settings::fromArray( array( 'rate_limit_per_hour' => 42 ) ) );
 		$this->asAdminPosting( 'pusers_save_settings', array( 'rate_limit_per_hour' => '5' ) );
