@@ -59,4 +59,20 @@ final class PurgeSelectionTest extends TestCase {
 		$this->assertFalse( ( new PurgeSelection( 0 ) )->qualifies( AccountStatus::EmailUnconfirmed, self::NOW - 4000 * self::DAY, self::NOW ) );
 		$this->assertFalse( ( new PurgeSelection( -3 ) )->qualifies( AccountStatus::EmailUnconfirmed, self::NOW - 4000 * self::DAY, self::NOW ) );
 	}
+
+	public function test_account_with_an_unknown_registration_date_never_qualifies(): void {
+		// Zerowa data kolumny albo nieparsowalny napis daje 0 lub liczbę ujemną; "teraz minus zero"
+		// zawsze przekracza okno, więc bez tej reguły świeże konto z uszkodzoną datą znikałoby natychmiast.
+		$selection = new PurgeSelection( 7 );
+		$this->assertFalse( $selection->qualifies( AccountStatus::EmailUnconfirmed, 0, self::NOW ) );
+		$this->assertFalse( $selection->qualifies( AccountStatus::EmailUnconfirmed, -62169984000, self::NOW ) );
+	}
+
+	public function test_window_warnings_flag_a_window_that_is_too_long_or_shorter_than_the_link(): void {
+		$this->assertSame( array(), PurgeSelection::windowWarnings( 30, 48 ) );
+		$this->assertSame( array(), PurgeSelection::windowWarnings( PurgeSelection::MAX_REASONABLE_DAYS, 48 ) );
+		$this->assertSame( array( PurgeSelection::WARNING_WINDOW_TOO_LONG ), PurgeSelection::windowWarnings( PurgeSelection::MAX_REASONABLE_DAYS + 1, 48 ) );
+		$this->assertSame( array( PurgeSelection::WARNING_SHORTER_THAN_LINK ), PurgeSelection::windowWarnings( 1, 48 ) );
+		$this->assertSame( array(), PurgeSelection::windowWarnings( 2, 48 ), 'Okno równe ważności linku jest jeszcze poprawne.' );
+	}
 }

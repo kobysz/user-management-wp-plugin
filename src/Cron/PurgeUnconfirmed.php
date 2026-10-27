@@ -21,9 +21,9 @@ use PortalUsers\Persistence\SettingsRepository;
  * Bez czyszczenia porzucona rejestracja blokowałaby adres na zawsze.
  *
  * To jedyna operacja wtyczki, która nieodwracalnie usuwa konta. Decyzję podejmuje wyłącznie
- * PurgeSelection; run() wybiera kandydatów po dacie rejestracji, pyta domenę o każdego i kasuje.
- * Kandydatów NIE zawęża się po stanie w zapytaniu: stan czyta repozytorium i rozstrzyga domena,
- * więc konto bez stanu albo ze stanem nierozpoznanym nie ma jak się prześlizgnąć.
+ * PurgeSelection; run() przegląda konta paczkami, pyta domenę o każde i kasuje. Kandydatów NIE
+ * zawęża się w zapytaniu: stan czyta repozytorium i rozstrzyga domena, więc konto bez stanu
+ * albo ze stanem nierozpoznanym nie ma jak się prześlizgnąć.
  */
 final class PurgeUnconfirmed {
 
@@ -34,21 +34,25 @@ final class PurgeUnconfirmed {
 	 */
 	public const LOG_ACTION = 'account_purged';
 
+	private const DEFAULT_BATCH = 200;
+
 	/**
-	 * Podpina przebieg pod hook crona i dba, by harmonogram istniał także po aktualizacji
-	 * wtyczki zainstalowanej przed wprowadzeniem crona (aktualizacja nie odpala aktywacji).
+	 * Podpina przebieg pod hook crona. Harmonogram zakładają aktywacja i jednorazowa migracja
+	 * (Migrations::run), NIE to wywołanie: biegnie przy każdym żądaniu, a administrator, który
+	 * zdjął zdarzenie (np. WP Crontrol), nie może go odzyskiwać przy najbliższym wejściu na stronę.
 	 */
 	public static function register(): void {
 		add_action( self::HOOK, array( self::class, 'run' ) );
-		self::schedule();
 	}
 
 	/**
-	 * Zakłada dzienny harmonogram, o ile jeszcze go nie ma.
+	 * Zakłada dzienny harmonogram, o ile jeszcze go nie ma. Pierwszy przebieg za dobę, nie od razu:
+	 * na instalacji, która chodziła bez crona, czyszczenie jest nieodwracalne i administrator
+	 * musi zdążyć zobaczyć ustawienie okna, zanim usunie się zaległy stos.
 	 */
 	public static function schedule(): void {
 		if ( false === wp_next_scheduled( self::HOOK ) ) {
-			wp_schedule_event( time(), 'daily', self::HOOK );
+			wp_schedule_event( time() + DAY_IN_SECONDS, 'daily', self::HOOK );
 		}
 	}
 
@@ -60,37 +64,70 @@ final class PurgeUnconfirmed {
 	}
 
 	/**
+	 * Czy wtyczka działa w sieci witryn. Stała MULTISITE jest zdefiniowana w całym procesie, więc
+	 * testu pojedynczej witryny nie da się przełączyć na sieć; filtr jest szwem testowym tej jednej decyzji.
+	 */
+	public static function is_network(): bool {
+		return (bool) apply_filters( 'pusers_purge_is_multisite', is_multisite() );
+	}
+
+	/**
 	 * Usuwa konta zakwalifikowane przez domenę i zapisuje każde usunięcie w logu.
 	 */
 	public static function run(): void {
+		// Na sieci wp_delete_user() tylko odpina konto od witryny i zwraca true, więc konto zostaje,
+		// adres nadal jest zajęty, a log kłamałby o usunięciu. Multisite jest poza zakresem wtyczki.
+		if ( self::is_network() ) {
+			return;
+		}
+
 		// W kontekście crona wp_delete_user() nie jest załadowane.
-		require_once ABSPATH . 'wp-admin/includes/user.php';
+		if ( ! function_exists( 'wp_delete_user' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/user.php';
+		}
 
 		$now       = time();
 		$selection = new PurgeSelection( SettingsRepository::get()->unconfirmedPurgeDays );
+		$batch     = max( 1, (int) apply_filters( 'pusers_purge_batch_size', self::DEFAULT_BATCH ) );
+		$kept      = 0; // Konta, które zostały: o tyle przesuwamy offset, bo usunięte znikają z wyników.
 
-		$users = get_users(
-			array(
-				'fields'     => array( 'ID', 'user_registered' ),
-				'date_query' => array(
-					array(
-						'column' => 'user_registered',
-						'before' => gmdate( 'Y-m-d H:i:s', $now ),
-					),
-				),
-			)
-		);
+		do {
+			$users = get_users(
+				array(
+					'fields'  => array( 'ID', 'user_registered', 'user_email' ),
+					'orderby' => 'ID',
+					'order'   => 'ASC',
+					'number'  => $batch,
+					'offset'  => $kept,
+				)
+			);
 
-		foreach ( $users as $user ) {
-			$id           = (int) $user->ID;
-			$registeredAt = (int) strtotime( $user->user_registered . ' UTC' );
+			// Bez tego każdy get() w pętli byłby osobnym zapytaniem o metadane.
+			update_meta_cache( 'user', array_map( static fn ( $user ): int => (int) $user->ID, $users ) );
 
-			if ( ! $selection->qualifies( AccountStatusRepository::get( $id ), $registeredAt, $now ) ) {
-				continue;
+			foreach ( $users as $user ) {
+				$id           = (int) $user->ID;
+				$registeredAt = (int) strtotime( $user->user_registered . ' UTC' );
+
+				if ( ! $selection->qualifies( AccountStatusRepository::get( $id ), $registeredAt, $now ) ) {
+					++$kept;
+					continue;
+				}
+				if ( wp_delete_user( $id ) ) {
+					EventLog::write(
+						self::LOG_ACTION,
+						$id,
+						0,
+						array(
+							'registered_at' => $user->user_registered,
+							'email_hash'    => hash( 'sha256', strtolower( $user->user_email ) ),
+						)
+					);
+				} else {
+					++$kept;
+				}
 			}
-			if ( wp_delete_user( $id ) ) {
-				EventLog::write( self::LOG_ACTION, $id, 0, array( 'registered_at' => $user->user_registered ) );
-			}
-		}
+			$fetched = count( $users );
+		} while ( $fetched === $batch );
 	}
 }

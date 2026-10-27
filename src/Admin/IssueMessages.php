@@ -62,6 +62,12 @@ final class IssueMessages {
 				return sprintf( __( 'Rejestracja jest wyłączona: domyślnej roli nowych kont („%s”) nie ma na tej witrynie. Wskaż istniejącą rolę w Ustawieniach → Ogólne.', 'portal-users' ), $role );
 			case 'terms_version_not_recorded':
 				return __( 'Portal wymaga od użytkowników zgody, ale wersja regulaminu nie jest zapisywana, więc nie będzie czym wykazać, na co się zgodzili. Wpisz treść regulaminu i wskaż pole zgody (pole logiczne z wybranej grupy) w Ustawieniach → Ogólne.', 'portal-users' );
+			case 'purge_window_too_long':
+				/* translators: 1: okno w dniach, 2: największe rozsądne okno w dniach. */
+				return sprintf( __( 'Niepotwierdzone konta są usuwane po %1$s dniach. Okno dłuższe niż %2$s dni praktycznie wyłącza czyszczenie, a adres porzuconej rejestracji pozostaje zajęty. Skróć okno w Ustawieniach → Ogólne.', 'portal-users' ), $issue->context['days'] ?? '', $issue->context['max'] ?? '' );
+			case 'purge_window_shorter_than_link':
+				/* translators: 1: okno w dniach, 2: ważność linku w godzinach. */
+				return sprintf( __( 'Niepotwierdzone konta są usuwane po %1$s dniach, a link potwierdzający jest ważny %2$s godz.: użytkownik mógłby kliknąć ważny link do konta, które już usunięto. Wydłuż okno albo skróć ważność linku w Ustawieniach → Ogólne.', 'portal-users' ), $issue->context['days'] ?? '', $issue->context['hours'] ?? '' );
 			case 'page_missing':
 				/* translators: %s: nazwa ustawienia strony. */
 				return sprintf( __( '%s: wskazana strona nie istnieje.', 'portal-users' ), $page );

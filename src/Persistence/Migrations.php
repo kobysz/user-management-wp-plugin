@@ -11,15 +11,17 @@ namespace PortalUsers\Persistence;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Cron\PurgeUnconfirmed;
+
 /**
  * Tworzy i wersjonuje tabele. Niezależne od ACF Pro: baza ma się migrować zawsze.
  */
 final class Migrations {
 
 	/**
-	 * Wersja schematu bazy. Zwiększ przy każdej zmianie tabel.
+	 * Wersja schematu bazy i jednorazowych kroków aktualizacji (2: harmonogram czyszczenia kont). Zwiększ przy każdej zmianie tabel albo nowym kroku.
 	 */
-	public const DB_VERSION = 1;
+	public const DB_VERSION = 2;
 
 	/**
 	 * Nazwy tabel wtyczki bez prefiksu. Jedyne źródło dla odinstalowania i warunku zapisu wersji w run();
@@ -50,7 +52,9 @@ final class Migrations {
 	public static function run(): void {
 		global $wpdb;
 
-		require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		if ( ! function_exists( 'dbDelta' ) ) {
+			require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+		}
 
 		$charset = $wpdb->get_charset_collate();
 		$log     = self::table( 'event_log' );
@@ -91,6 +95,8 @@ final class Migrations {
 		}
 		if ( $all_exist ) {
 			update_option( self::OPTION_DB_VERSION, self::DB_VERSION );
+			// Jednorazowy krok aktualizacji: instalacje sprzed crona nie przechodzą aktywacji.
+			PurgeUnconfirmed::schedule();
 		}
 	}
 

@@ -24,6 +24,8 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 			'page_not_published',
 			'default_role_dangerous_capability',
 			'default_role_unknown',
+			'purge_window_too_long',
+			'purge_window_shorter_than_link',
 		);
 		$messages = array();
 		foreach ( $codes as $code ) {

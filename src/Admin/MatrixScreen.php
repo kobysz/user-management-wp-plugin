@@ -12,6 +12,7 @@ namespace PortalUsers\Admin;
 defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Acf\AcfFieldSource;
+use PortalUsers\Domain\Account\PurgeSelection;
 use PortalUsers\Domain\Config\ConsistencyChecker;
 use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Domain\Fields\FieldMatrix;
@@ -83,7 +84,7 @@ final class MatrixScreen {
 	 * @return array<int, SettingsIssue>
 	 */
 	public static function issues(): array {
-		$issues = array_merge( self::default_role_issues(), self::terms_issues(), self::checker()->issues() );
+		$issues = array_merge( self::default_role_issues(), self::terms_issues(), self::purge_window_issues(), self::checker()->issues() );
 
 		return array_merge(
 			array_values( array_filter( $issues, static fn ( SettingsIssue $issue ): bool => SettingsIssue::ERROR === $issue->severity ) ),
@@ -116,6 +117,26 @@ final class MatrixScreen {
 					'capability' => $state['capability'],
 				)
 			),
+		);
+	}
+
+	/**
+	 * Ostrzeżenia o oknie czyszczenia niepotwierdzonych kont. Reguły należą do domeny (PurgeSelection);
+	 * tu tylko czytamy ustawienia i opakowujemy kody w problemy.
+	 *
+	 * @return list<SettingsIssue>
+	 */
+	private static function purge_window_issues(): array {
+		$settings = SettingsRepository::get();
+		$context  = array(
+			'days'  => (string) $settings->unconfirmedPurgeDays,
+			'hours' => (string) $settings->confirmationTokenHours,
+			'max'   => (string) PurgeSelection::MAX_REASONABLE_DAYS,
+		);
+
+		return array_map(
+			static fn ( string $code ): SettingsIssue => SettingsIssue::warning( $code, $context ),
+			PurgeSelection::windowWarnings( $settings->unconfirmedPurgeDays, $settings->confirmationTokenHours )
 		);
 	}
 

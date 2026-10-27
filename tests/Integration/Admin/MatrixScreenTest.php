@@ -116,6 +116,26 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Ustawia okno czyszczenia i ważność linku, zachowując resztę ustawień (grupę pól).
+	 *
+	 * @param int $days  Okno czyszczenia w dniach.
+	 * @param int $hours Ważność linku w godzinach.
+	 */
+	private function withPurge( int $days, int $hours ): void {
+		SettingsRepository::save(
+			Settings::fromArray(
+				array_merge(
+					SettingsRepository::get()->toArray(),
+					array(
+						'unconfirmed_purge_days'   => $days,
+						'confirmation_token_hours' => $hours,
+					)
+				)
+			)
+		);
+	}
+
+	/**
 	 * Zapisuje profesje o podanych kluczach (zapis macierzy przyjmuje tylko klucze z kolekcji).
 	 *
 	 * @param string ...$keys Klucze profesji.
@@ -265,6 +285,25 @@ final class MatrixScreenTest extends WP_UnitTestCase {
 
 		update_option( 'default_role', 'subscriber' );
 		$this->assertSame( array(), MatrixScreen::issues(), 'Rola z uprawnieniami do treści nie jest problemem.' );
+	}
+
+	public function test_the_report_warns_about_a_purge_window_that_disables_purging_or_undercuts_the_link(): void {
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		$this->withProfessions( 'lekarz' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		$codes = static fn (): array => array_map( static fn ( $i ): string => $i->code, MatrixScreen::issues() );
+
+		$this->withPurge( 30, 48 );
+		$this->assertSame( array(), $codes(), 'Rozsądne okno nie daje ostrzeżenia.' );
+
+		$this->withPurge( 70000, 48 );
+		$this->assertSame( array( 'purge_window_too_long' ), $codes() );
+		$this->assertStringContainsString( '70000', $this->renderAsAdmin() );
+
+		$this->withPurge( 1, 48 );
+		$this->assertSame( array( 'purge_window_shorter_than_link' ), $codes() );
+		$issues = MatrixScreen::issues();
+		$this->assertSame( \PortalUsers\Domain\Config\SettingsIssue::WARNING, $issues[0]->severity, 'To ostrzeżenie, nie błąd: nie blokuje rejestracji.' );
 	}
 
 	public function test_rendered_screen_shows_the_consistency_report_above_the_table(): void {

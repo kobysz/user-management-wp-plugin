@@ -200,8 +200,8 @@ final class PurgeUnconfirmedTest extends WP_UnitTestCase {
 	}
 
 	public function test_schedule_does_not_duplicate_an_existing_event(): void {
-		// WordPress sam odrzuca duplikat tylko w ciągu 10 minut od istniejącego zdarzenia,
-		// więc istniejące zdarzenie stawiamy dobę dalej: tylko strażnik w schedule() ma szansę je zauważyć.
+		// Zdarzenie cykliczne o innym znaczniku czasu ma inny klucz i dodałoby się obok istniejącego;
+		// istniejące stawiamy dobę dalej, więc tylko strażnik w schedule() może zapobiec dubletowi.
 		wp_schedule_event( time() + DAY_IN_SECONDS, 'daily', PurgeUnconfirmed::HOOK );
 
 		PurgeUnconfirmed::schedule();
@@ -215,12 +215,121 @@ final class PurgeUnconfirmedTest extends WP_UnitTestCase {
 		$this->assertNotFalse( has_action( 'deactivate_' . $base, array( PurgeUnconfirmed::class, 'unschedule' ) ) );
 	}
 
-	public function test_register_hooks_the_run_and_restores_a_missing_schedule(): void {
+	public function test_register_hooks_the_run_but_does_not_schedule_on_every_request(): void {
+		// Administrator, który zdjął zdarzenie (WP Crontrol), nie może go odzyskiwać przy wejściu na stronę.
 		remove_all_actions( PurgeUnconfirmed::HOOK );
 
 		PurgeUnconfirmed::register();
 
 		$this->assertNotFalse( has_action( PurgeUnconfirmed::HOOK, array( PurgeUnconfirmed::class, 'run' ) ) );
-		$this->assertNotFalse( wp_next_scheduled( PurgeUnconfirmed::HOOK ) );
+		$this->assertFalse( wp_next_scheduled( PurgeUnconfirmed::HOOK ) );
 	}
+
+	public function test_the_first_run_is_due_a_day_from_now_not_immediately(): void {
+		PurgeUnconfirmed::schedule();
+
+		$due = wp_next_scheduled( PurgeUnconfirmed::HOOK );
+		$this->assertGreaterThanOrEqual( time() + DAY_IN_SECONDS - 60, $due );
+	}
+
+	public function test_an_update_schedules_the_hook_once_and_does_not_restore_it_later(): void {
+		// Instalacja sprzed crona: zapisana wersja jest niższa, aktualizacja nie odpala aktywacji.
+		update_option( Migrations::OPTION_DB_VERSION, 1 );
+		$this->assertFalse( wp_next_scheduled( PurgeUnconfirmed::HOOK ) );
+
+		Migrations::maybe_upgrade();
+		$this->assertNotFalse( wp_next_scheduled( PurgeUnconfirmed::HOOK ), 'Aktualizacja zakłada harmonogram.' );
+
+		wp_clear_scheduled_hook( PurgeUnconfirmed::HOOK );
+		Migrations::maybe_upgrade();
+		$this->assertFalse( wp_next_scheduled( PurgeUnconfirmed::HOOK ), 'Zdjęte zdarzenie nie wraca przy kolejnych żądaniach.' );
+	}
+
+	public function test_account_with_an_unparseable_registration_date_survives(): void {
+		global $wpdb;
+		$id = $this->account( 0, AccountStatus::EmailUnconfirmed );
+		$wpdb->update( $wpdb->users, array( 'user_registered' => '0000-00-00 00:00:00' ), array( 'ID' => $id ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery -- Fixtura: zerowa data, jak w domyślnej wartości kolumny.
+		clean_user_cache( $id );
+		$this->assertSame( '0000-00-00 00:00:00', get_userdata( $id )->user_registered );
+
+		PurgeUnconfirmed::run();
+
+		$this->assertNotFalse( get_userdata( $id ), 'Konto z nieznaną datą nie może zniknąć, choć świeże.' );
+		$this->assertSame( array(), $this->logRows( PurgeUnconfirmed::LOG_ACTION ) );
+	}
+
+	public function test_run_does_nothing_on_multisite_instead_of_logging_deletions_that_did_not_happen(): void {
+		// Na sieci wp_delete_user() zwraca true, ale konto zostaje; bez strażnika log twierdziłby co dzień, że usunął.
+		$id = $this->account( 10, AccountStatus::EmailUnconfirmed );
+		add_filter( 'pusers_purge_is_multisite', '__return_true' );
+
+		PurgeUnconfirmed::run();
+
+		$this->assertNotFalse( get_userdata( $id ) );
+		$this->assertSame( array(), $this->logRows( PurgeUnconfirmed::LOG_ACTION ) );
+	}
+
+	public function test_the_network_decision_follows_wordpress_by_default(): void {
+		$this->assertSame( is_multisite(), PurgeUnconfirmed::is_network() );
+		$this->assertFalse( PurgeUnconfirmed::is_network(), 'Zestaw działa na pojedynczej witrynie.' );
+	}
+
+	public function test_run_pages_through_all_accounts_even_when_deletions_shift_the_pages(): void {
+		add_filter( 'pusers_purge_batch_size', static fn (): int => 2 );
+		$stale = array();
+		$kept  = array();
+		// Kolejność ID: do usunięcia, zostaje, do usunięcia, do usunięcia, zostaje, do usunięcia, do usunięcia, do usunięcia.
+		foreach ( array( true, false, true, true, false, true, true, true ) as $isStale ) {
+			if ( $isStale ) {
+				$stale[] = $this->account( 10, AccountStatus::EmailUnconfirmed );
+			} else {
+				$kept[] = $this->account( 400, AccountStatus::Rejected );
+			}
+		}
+
+		PurgeUnconfirmed::run();
+
+		foreach ( $stale as $id ) {
+			$this->assertFalse( get_userdata( $id ), 'Każde kwalifikujące się konto musi zostać usunięte mimo paczek.' );
+		}
+		foreach ( $kept as $id ) {
+			$this->assertNotFalse( get_userdata( $id ) );
+		}
+		$this->assertCount( count( $stale ), $this->logRows( PurgeUnconfirmed::LOG_ACTION ) );
+	}
+
+	public function test_run_reads_the_status_of_a_batch_with_one_metadata_query_not_one_per_account(): void {
+		for ( $i = 0; $i < 8; $i++ ) {
+			$this->account( 400, AccountStatus::Rejected );
+		}
+		global $wpdb;
+		$meta_selects = 0;
+		$counter      = static function ( string $query ) use ( &$meta_selects, $wpdb ): string {
+			if ( 0 === stripos( ltrim( $query ), 'SELECT' ) && str_contains( $query, $wpdb->usermeta ) ) {
+				++$meta_selects;
+			}
+			return $query;
+		};
+		add_filter( 'query', $counter );
+
+		PurgeUnconfirmed::run();
+
+		remove_filter( 'query', $counter );
+		$this->assertLessThanOrEqual( 2, $meta_selects, 'Osiem kont w jednej paczce nie może dać ośmiu zapytań o metadane.' );
+	}
+
+	public function test_the_log_entry_carries_the_registration_date_and_a_hash_of_the_address_not_the_address(): void {
+		$id         = $this->account( 10, AccountStatus::EmailUnconfirmed, array( 'user_email' => 'Doktor.X@Example.com' ) );
+		$registered = get_userdata( $id )->user_registered;
+
+		PurgeUnconfirmed::run();
+
+		$rows = $this->logRows( PurgeUnconfirmed::LOG_ACTION );
+		$this->assertCount( 1, $rows );
+		$context = json_decode( (string) $rows[0]->context, true );
+		$this->assertSame( $registered, $context['registered_at'] );
+		$this->assertSame( hash( 'sha256', 'doktor.x@example.com' ), $context['email_hash'], 'Skrót z adresu w małych literach: administrator sprawdzi konkretny adres.' );
+		$this->assertStringNotContainsString( 'example.com', (string) $rows[0]->context, 'Adresu nie przechowujemy.' );
+	}
+
 }
