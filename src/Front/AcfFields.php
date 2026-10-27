@@ -125,6 +125,14 @@ final class AcfFields {
 	 * Mapa indeks w żądaniu => nazwa pola, z jednej migawki definicji. Indeksem jest klucz ACF,
 	 * gdy definicja go nosi, a w przeciwnym razie nazwa pola.
 	 *
+	 * O „nosi klucz” pytamy DOKŁADNIE tak, jak pyta ACF: `if ( $field['key'] )`, czyli czystą
+	 * prawdziwością. Napis `'0'` jest więc brakiem klucza (ACF nazwie input nazwą pola), a klucz
+	 * liczbowy `123` kluczem (ACF nazwie input `123`). Każde inne pytanie — `is_string()`,
+	 * `isset()` — rozjeżdża się z ACF na którymś z tych dwóch kształtów i gubi wartość po cichu,
+	 * a dla pola wymaganego czyni profesję nierejestrowalną na zawsze. Indeks bierzemy jako
+	 * `(string)`, bo ACF składa nazwę interpolacją; klucz niebędący skalarem nie ma
+	 * reprezentacji tekstowej, więc jest traktowany jak brak klucza.
+	 *
 	 * Gdy dwie definicje dają ten sam indeks (klucz jednego pola równy nazwie drugiego albo
 	 * powtórzony klucz), odrzucane są OBIE: wejście jest wtedy nierozstrzygalne, a cicha wygrana
 	 * jednej z nich byłaby tym samym rodzajem błędu co czytanie pola pod nazwą, której ACF nie
@@ -139,7 +147,7 @@ final class AcfFields {
 			$fieldKey   = (string) $fieldKey;
 			$definition = $this->source->definition( $fieldKey );
 			$key        = $definition['key'] ?? null;
-			$index      = is_string( $key ) && '' !== $key ? $key : $fieldKey;
+			$index      = is_scalar( $key ) && $key ? (string) $key : $fieldKey;
 			if ( array_key_exists( $index, $map ) ) {
 				$collided[ $index ] = true;
 				continue;

@@ -181,18 +181,34 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	}
 
 	/**
-	 * Indeks, pod którym pole wraca w żądaniu — tak, jak nazwałoby input ACF: klucz pola, gdy
-	 * definicja go nosi, a w przeciwnym razie nazwa pola. Czytamy to z tej samej definicji, którą
-	 * widzi render, żeby test podający pola po nazwie wysyłał to, co wysłałaby przeglądarka.
+	 * Indeks, pod którym pole wraca w żądaniu: nazwa inputu, którą NADAŁO ACF, bez prefiksu
+	 * kontenera. Harness pyta o nią przez render (czyli przez zaślepkę odtwarzającą
+	 * `acf_prepare_field()`), a NIE powtarza reguły nazywania u siebie: gdyby ją powtarzał, ten
+	 * sam błąd w regule po obu stronach dałby zieloną suitę nad żądaniem, którego przeglądarka
+	 * nigdy nie wyśle.
+	 *
 	 * Nazwa spoza grupy zostaje nazwą: takie wejście i tak ma być odrzucone.
 	 *
 	 * @param string $name Nazwa pola.
 	 */
 	private function requestIndex( string $name ): string {
-		$definition = ( new AcfFieldSource( SettingsRepository::get()->acfGroupKey ) )->definition( $name );
-		$key        = $definition['key'] ?? null;
+		$source = new AcfFieldSource( SettingsRepository::get()->acfGroupKey );
+		if ( null === $source->definition( $name ) ) {
+			return $name;
+		}
 
-		return is_string( $key ) && '' !== $key ? $key : $name;
+		$saved                     = AcfRenderRecorder::$fields;
+		AcfRenderRecorder::$fields = array();
+		ob_start();
+		( new AcfFields( $source ) )->render( $name, false, null );
+		ob_end_clean();
+		$rendered                  = (string) ( AcfRenderRecorder::$fields[0]['name'] ?? '' );
+		AcfRenderRecorder::$fields = $saved;
+
+		$prefix = AcfFields::INPUT . '[';
+		return str_starts_with( $rendered, $prefix ) && str_ends_with( $rendered, ']' )
+			? substr( $rendered, strlen( $prefix ), -1 )
+			: $name;
 	}
 
 	/**
@@ -896,6 +912,68 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 		$this->assertSame( $before, $this->user_ids(), 'Konto nie może powstać z pustym polem wymaganym.' );
 		$this->assertSame( 'required', $flash['errors']['notatka'] ?? '' );
+	}
+
+	/**
+	 * Kształty klucza pola i indeks, pod którym input wraca w żądaniu. Wyliczone z reguły ACF:
+	 * `if ( $field['key'] ) { $field['name'] = $field['key']; }` — CZYSTA prawdziwość, a potem
+	 * owinięcie prefiksem przez interpolację, więc klucz niebędący napisem dociera jako napis.
+	 *
+	 * @return array<string, array{0: mixed, 1: string}>
+	 */
+	public static function credential_field_keys(): array {
+		return array(
+			'napis "0" jest falsy, więc indeksem jest nazwa' => array( '0', 'pwz' ),
+			'klucz liczbowy jest truthy'                     => array( 123, '123' ),
+			'zero jest falsy'                                => array( 0, 'pwz' ),
+			'false jest falsy'                               => array( false, 'pwz' ),
+			'pusty napis jest falsy'                         => array( '', 'pwz' ),
+			'zwykły klucz ACF'                               => array( 'field_abc123', 'field_abc123' ),
+		);
+	}
+
+	/**
+	 * @dataProvider credential_field_keys
+	 *
+	 * @param mixed  $key           Klucz w definicji pola.
+	 * @param string $expectedIndex Indeks, pod którym wartość ma wrócić w żądaniu.
+	 */
+	public function test_the_request_index_follows_acfs_own_truthiness_test_of_the_field_key( mixed $key, string $expectedIndex ): void {
+		// Warunek prawdziwości klucza musi być TEN SAM w trzech miejscach: w ACF, w zaślepce
+		// i w `indexMap()`. Każdy rozjazd gubi wartość po cichu, a dla pola wymaganego czyni
+		// profesję nierejestrowalną na zawsze (żądanie stoi na `required`, którego nie da się spełnić).
+		remove_all_filters( 'pusers_acf_fields' );
+		add_filter(
+			'pusers_acf_fields',
+			static fn (): array => array(
+				array( 'name' => 'pwz', 'label' => 'Numer PWZ', 'type' => 'text', 'key' => $key ),
+				array( 'name' => 'zgoda', 'label' => 'Regulamin', 'type' => 'true_false', 'key' => 'field_zgoda01' ),
+			)
+		);
+
+		// 1. Co nazwie ACF, czyli co wyśle przeglądarka. Asercja pilnuje reguły ACF, nie zgodności
+		// harnessu z wtyczką: oczekiwanie pochodzi z dostawcy danych, wyliczonego ze źródła ACF.
+		AcfRenderRecorder::$fields = array();
+		RegistrationForm::render();
+		$names = array();
+		foreach ( AcfRenderRecorder::$fields as $field ) {
+			$names[] = (string) ( $field['name'] ?? '' );
+		}
+		$this->assertContains( AcfFields::INPUT . '[' . $expectedIndex . ']', $names, 'Input ma nazwę nadaną przez ACF.' );
+
+		// 2. Żądanie z tym właśnie indeksem musi dojechać do metadanej pod NAZWĄ pola.
+		$email = $this->email();
+		$this->post(
+			array(
+				RegistrationForm::EMAIL => $email,
+				AcfFields::INPUT        => array( $expectedIndex => '5425740', 'field_zgoda01' => '1' ),
+			)
+		);
+		$this->submit();
+
+		$id = email_exists( $email );
+		$this->assertNotFalse( $id, 'Konto powinno powstać: żądanie niesie indeks, który nadało ACF.' );
+		$this->assertSame( '5425740', get_user_meta( (int) $id, RegistrationHandler::ACF_META_PREFIX . 'pwz', true ) );
 	}
 
 	public function test_a_field_is_read_from_the_request_under_its_acf_key_and_stored_under_its_name(): void {
