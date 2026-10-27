@@ -90,6 +90,28 @@ final class RegistrationHandler {
 	 */
 	public const MIN_PASSWORD_LENGTH = 8;
 
+	/**
+	 * Uprawnienia, z którymi rola domyślna nie może być nadawana przez publiczny formularz: zarządzanie kontami,
+	 * wykonanie kodu i podmiana plików, nieprzefiltrowany HTML oraz wyprowadzenie danych.
+	 */
+	private const DANGEROUS_CAPABILITIES = array(
+		'manage_options',
+		'promote_users',
+		'edit_users',
+		'create_users',
+		'delete_users',
+		'install_plugins',
+		'activate_plugins',
+		'edit_plugins',
+		'install_themes',
+		'edit_themes',
+		'switch_themes',
+		'edit_files',
+		'unfiltered_html',
+		'import',
+		'export',
+	);
+
 	private const MAX_ITEMS        = 50;
 	private const MAX_VALUE_LENGTH = 1000;
 
@@ -260,14 +282,15 @@ final class RegistrationHandler {
 		}
 
 		// 6. Utworzenie konta. Hasło idzie wyłącznie do wp_insert_user(): ani do flash, ani do metadanych.
-		// Login jest losowy i nieodgadywalny (adres da się wywnioskować z imienia i nazwiska); do pokazania służy display_name.
+		// Login jest losowy i nieodgadywalny, a display_name (widoczny publicznie) to ten sam login: imię i nazwisko redakcja czyta z pól ACF.
+		$login  = self::random_login();
 		$userId = wp_insert_user(
 			array(
-				'user_login'   => self::random_login(),
+				'user_login'   => $login,
 				'user_email'   => $clean,
 				'user_pass'    => $password,
 				'role'         => $role,
-				'display_name' => sanitize_user( (string) strstr( $clean, '@', true ), true ),
+				'display_name' => $login,
 			)
 		);
 		if ( is_wp_error( $userId ) ) {
@@ -557,19 +580,20 @@ final class RegistrationHandler {
 	}
 
 	/**
-	 * Domyślna rola witryny albo null, gdyby rejestracja miała nadać rolę silniejszą niż `subscriber`:
-	 * zbiór uprawnień roli musi być podzbiorem uprawnień subskrybenta (zepsuta konfiguracja nie może
-	 * zamienić publicznego formularza w kreator redaktorów, a tym bardziej administratorów).
+	 * Domyślna rola witryny albo null, gdyby rejestracja miała nadać rolę z uprawnieniem niebezpiecznym
+	 * (zepsuta konfiguracja nie może zamienić publicznego formularza w kreator administratorów).
+	 * To lista zakazów: zbiór uprawnień podnoszących uprawnienia jest domknięty i znany, a uprawnienia do
+	 * treści (`edit_posts`, `publish_posts`, `upload_files`) mają przechodzić, żeby nie zamykać rejestracji
+	 * na portalu z rolą `contributor` albo `author`.
 	 */
 	private static function default_role(): ?string {
-		$name       = get_option( 'default_role' );
-		$role       = is_string( $name ) ? get_role( $name ) : null;
-		$subscriber = get_role( 'subscriber' );
-		if ( ! is_string( $name ) || null === $role || null === $subscriber ) {
+		$name = get_option( 'default_role' );
+		$role = is_string( $name ) ? get_role( $name ) : null;
+		if ( ! is_string( $name ) || null === $role ) {
 			return null;
 		}
-		foreach ( $role->capabilities as $capability => $granted ) {
-			if ( $granted && empty( $subscriber->capabilities[ $capability ] ) ) {
+		foreach ( self::DANGEROUS_CAPABILITIES as $capability ) {
+			if ( $role->has_cap( $capability ) ) {
 				return null;
 			}
 		}

@@ -297,22 +297,22 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	/**
 	 * @return array<string, array{0: array<string, bool>}>
 	 */
-	public static function stronger_roles(): array {
+	public static function dangerous_roles(): array {
 		return array(
 			'administrator'            => array( array( 'read' => true, 'manage_options' => true ) ),
 			'edit_plugins (wykonanie kodu)' => array( array( 'read' => true, 'edit_plugins' => true ) ),
 			'create_users'             => array( array( 'read' => true, 'create_users' => true ) ),
 			'unfiltered_html'          => array( array( 'read' => true, 'unfiltered_html' => true ) ),
-			'edit_posts (contributor)' => array( array( 'read' => true, 'edit_posts' => true ) ),
+			'export'                   => array( array( 'read' => true, 'export' => true ) ),
 		);
 	}
 
 	/**
-	 * @dataProvider stronger_roles
+	 * @dataProvider dangerous_roles
 	 *
 	 * @param array<string, bool> $capabilities Uprawnienia roli domyślnej.
 	 */
-	public function test_a_default_role_stronger_than_subscriber_creates_no_account( array $capabilities ): void {
+	public function test_a_default_role_with_a_dangerous_capability_creates_no_account( array $capabilities ): void {
 		add_role( 'pusers_strong', 'Mocna', $capabilities );
 		update_option( 'default_role', 'pusers_strong' );
 		$before = $this->user_ids();
@@ -322,6 +322,29 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( $before, $this->user_ids() );
 		$this->assertSame( 'registration_closed', $flash['errors']['registration'] ?? '' );
 		$this->assertStringNotContainsString( 'profesji', RegistrationHandler::message_for( 'registration_closed' ), 'Przyczyną jest rola witryny, nie profesja.' );
+	}
+
+	/**
+	 * @return array<string, array{0: string}>
+	 */
+	public static function content_roles(): array {
+		return array(
+			'subscriber'  => array( 'subscriber' ),
+			'contributor' => array( 'contributor' ),
+			'author'      => array( 'author' ),
+		);
+	}
+
+	/**
+	 * @dataProvider content_roles
+	 *
+	 * @param string $role Rola domyślna witryny.
+	 */
+	public function test_registration_works_with_content_roles_as_the_default_role( string $role ): void {
+		update_option( 'default_role', $role );
+		$id = $this->register_ok( array( RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+
+		$this->assertSame( array( $role ), get_userdata( $id )->roles );
 	}
 
 	public function test_the_login_is_random_and_does_not_contain_the_address_part(): void {
@@ -335,7 +358,8 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 			$this->assertStringNotContainsString( 'nowak', $login );
 			$this->assertDoesNotMatchRegularExpression( '/-\d+$/', $login );
 		}
-		$this->assertSame( 'anna.nowak', get_userdata( $first )->display_name, 'Nazwa do pokazania idzie w display_name.' );
+		$this->assertSame( $logins[0], get_userdata( $first )->display_name, 'Nazwa wyświetlana (publiczna) to login, nie część adresu.' );
+		$this->assertStringNotContainsString( 'anna', get_userdata( $first )->display_name );
 	}
 
 	public function test_a_logged_in_user_cannot_register_another_account(): void {
