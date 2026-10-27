@@ -1,13 +1,33 @@
 # Plan 3 (rejestracja na froncie) — decyzje podjęte bez pytania Cię
 
 Wykonanie planu nie zatrzymuje się na pytaniach do człowieka: rozstrzygam i
-zapisuję. Przez dziewięć zadań zapadło **73** takich rozstrzygnięć. Poniżej te,
+zapisuję. Przez dziewięć zadań planu i jedno dołożone po recenzji całej gałęzi
+(hasło z linku, Twoja decyzja z 2026-10-27) zapadło **118** takich
+rozstrzygnięć. Poniżej te,
 które zmieniają to, co dostajesz, albo które warto żebyś zweryfikował. Pełna
 lista z uzasadnieniami i kosztem pomyłki jest w dzienniku wykonania
 (`.superpowers/sdd/2026-10-26-portal-users-rejestracja/progress.md`, wpisy
 `Ruling:`).
 
 ## 1. Rzeczy, które zobaczysz od razu i możesz chcieć zmienić
+
+**Formularz nie pyta o hasło — lekarz ustawia je z linku potwierdzającego.**
+Twoja decyzja z 2026-10-27, wykonana jako zadanie I1 po recenzji całej gałęzi.
+Przyczyną było to, że hasło wpisane w zgłoszeniu zna osoba, która zgłoszenie
+wysłała — a wysłać je może **ktokolwiek** z cudzym adresem. Konto powstawało
+więc z hasłem znanym obcemu; brama logowania tego nie zamyka, bo kiedyś
+zostanie otwarta, a hasło zostaje. Dziś konto powstaje z hasłem **losowym,
+nigdzie nie zapisanym i nikomu nie wysłanym**, a hasło ustawia się po kliknięciu
+linku w mailu, z jednorazowego biletu ważnego godzinę. Koszt dla lekarza: jedno
+kliknięcie więcej. Ryzyko resztkowe: obcy może zająć czyjś adres bez dostępu do
+konta — zwalnia to cron czyszczący niepotwierdzone zgłoszenia.
+
+**Bilet jedzie ciasteczkiem, nie w adresie.** W odnośniku, na który odsyłamy po
+potwierdzeniu, nie ma żadnego tokenu: adresy wyciekają nagłówkiem `Referer`, do
+historii przeglądarki i do logów serwera. Ciasteczko jest `HttpOnly`,
+`SameSite=Lax`, a po HTTPS także `Secure`. Kto zgubi bilet (inna przeglądarka,
+wyczyszczone ciasteczka), ustawia hasło standardowym odzyskiwaniem hasła
+WordPressa — i tak samo brzmi komunikat, gdy bilet wygasł.
 
 **Lekarz loguje się adresem e-mail, nie loginem.** Formularz nie ma pola
 „nazwa użytkownika": `user_login` jest **losowy i nieodgadywalny**. Początkowo
@@ -73,7 +93,7 @@ Zdarzenie zdjęte przez WP Crontrol **nie wraca** samo — samonaprawa jest
 jednorazowa, przy aktualizacji, bo to jedyna nieodwracalna operacja we wtyczce
 i musi mieć wyłącznik.
 
-## 2. Osiem defektów mojego własnego planu
+## 2. Dziesięć defektów moich własnych briefów
 
 Każdy wrócił jako runda poprawek, nie jako pytanie do Ciebie:
 
@@ -103,8 +123,19 @@ Każdy wrócił jako runda poprawek, nie jako pytanie do Ciebie:
 8. **Żądając zasilenia cache metadanych w cronie, osłabiłem własność
    bezpieczeństwa**, którą poprzednia recenzja wyróżniła: stan czytany
    bezpośrednio przed usunięciem konta.
+9. **Kazałem wpisać `edit_pages` i `publish_pages` na listę uprawnień
+   groźnych** — a to uprawnienia do **własnych** treści, symetryczne do
+   świadomie dopuszczonych `edit_posts` i `publish_posts`. Portal z własną rolą
+   domyślną, która je ma, miałby **zamkniętą rejestrację dla wszystkich**, czyli
+   najważniejszy anty-cel specyfikacji. Odwrócone; dołożone zostało naprawdę
+   brakujące `delete_others_pages`.
+10. **Kazałem przypiąć losowość hasła testem jednostkowym** — czego zrobić się
+   nie da: generator woła `wp_generate_password()`, a suita jednostkowa pracuje
+   bez WordPressa, więc przypięcie tam wymagałoby zaślepki na dokładnie tę
+   funkcję, która jest przedmiotem dowodu. Dowód stoi w suicie integracyjnej
+   i mutację zabija; sprawdziłem sam.
 
-## 3. Siedem razy, gdy obrona uderzała w człowieka, nie w bota
+## 3. Dziesięć razy, gdy obrona uderzała w człowieka, nie w bota
 
 To najczęstszy tryb awarii na tej gałęzi i każdy raz powstał z **zacieśniania**
 czegoś. Specyfikacja nazywa „uczciwy użytkownik nie może się zarejestrować"
@@ -119,6 +150,18 @@ najważniejszym anty-celem, więc każdy wypadek odwracałem:
 | Licznik wysyłki rosnący przed odnalezieniem konta | to samo, powtarzalnie i z zewnątrz |
 | Reguła „podzbiór subscribera" | **wszystkich** na portalu z rolą `contributor` |
 | Brak adresu IP wrzucany do jednego kubełka | wszystkich naraz, przy niepoprawnym `REMOTE_ADDR` |
+| Adres IP brany z **lewego** wpisu `X-Forwarded-For` | nikogo — bot podstawiał sobie dowolny adres i limit nie działał |
+| Ścieżka ciasteczka z biletem zawężona do strony rejestracji | **wszystkich**: formularz wysyła się pod `admin-post.php`, więc hasła nie ustawiłby nikt |
+| Strona hasła zabierająca stronę formularzowi zgłoszenia | kogoś, kto chciał się zarejestrować, a dostał „Link wygasł" i żadnej drogi dalej |
+
+Ostatni wiersz jest jedynym złapanym **przed oddaniem** — i przez wykonawcę,
+nie recenzenta. Przedostatni jest najcięższy: zawężenie ścieżki ciasteczka nie
+chroniło przed niczym (bilet jest jednorazowy, godzinny, `HttpOnly` i
+zweryfikowany skrótem na konkretnym koncie), a odcinało **każdego** prawowitego
+właściciela konta. Suita tego nie widziała, bo test o nazwie „ścieżka
+ograniczona do strony" przypinał **dokładnie tę wartość, która była błędem**;
+dziś sprawdza relację — czy ścieżka ciasteczka pokrywa adres, pod który wysyła
+się formularz.
 
 ## 4. Co świadomie odłożone
 
@@ -131,7 +174,7 @@ komuś, kto nie zna hasła. Razem z tym trzeba zamknąć `wp/v2/users` dla
 anonimowych, bo 404 kontra 403 też zdradza istnienie konta.
 
 **Rozstrzygnięte przez recenzję całej gałęzi: szew ACF okazał się BŁĘDEM, nie
-ryzykiem — naprawiany.** `acf_prepare_field()` nadpisuje nazwę pola **kluczem**,
+ryzykiem — naprawiony.** `acf_prepare_field()` nadpisuje nazwę pola **kluczem**,
 a potem owija prefiksem, więc na żywym ACF Pro input nazywa się
 `pusers_fields[field_abc123]`, podczas gdy wtyczka filtrowała przychodzące pola
 białą listą **nazw**. Skutek: rejestracja nie działałaby **na żadnym portalu** —
@@ -147,17 +190,17 @@ kontraktu, **którego ACF nie ma**.
 renderuje ukryte zero tak, jak zakłada normalizacja — pomyłka daje odznaczoną
 zgodę spełniającą wymóg.
 
-**Rejestracja przestaje pytać o hasło (Twoja decyzja z 2026-10-27).** Osoba
-trzecia mogła wysłać zgłoszenie z adresem lekarza i **własnym** hasłem; po
-kliknięciu linku przez ofiarę i zatwierdzeniu przez redakcję miała działające
-dane logowania do zatwierdzonego konta. Brama logowania z Planu 4 tego nie
-zamyka — jej wymogi dotyczą enumeracji, a tu atakujący wchodzi legalnie
-z poprawnym hasłem. Teraz konto powstaje z hasłem losowym, a lekarz ustawia
-swoje z linku potwierdzającego; bilet na ustawienie hasła jedzie ciasteczkiem,
-nie adresem, i jest ważny godzinę. Zgubiony bilet kieruje do standardowego
-odzyskiwania hasła — drugiego mechanizmu nie budujemy. Ryzyko resztkowe: osoba
-trzecia dalej może **zająć** cudzy adres, nie mogąc się zalogować, a adres
-zwalnia cron czyszczący.
+**Osobna WARTOŚĆ progu dla ustawiania hasła.** Specyfikacja żąda liczenia per
+adres IP **i** per konto, i to jest zrobione — ale wartość progu obie ścieżki
+dzielą z rejestracją (`rate_limit_per_hour`, domyślnie 50). Przy domyślnych
+próg per konto jest dla człowieka praktycznie nieosiągalny i zaczyna działać
+dopiero u administratora, który zaciska go do kilku. Granulacja progów na
+ścieżki (rejestracja / ustawianie hasła / logowanie) stoi w backlogu.
+
+**Strona `?pusers_setpass=done` pokazuje komunikat każdemu, kto wpisze ten
+adres.** Domknięcie wymagałoby trzymania biletu żywego **po** zużyciu, czyli
+wymiany nie-wycieku na wyciek prawdziwy. Strona nie niesie danych konta, nic
+nie zmienia i nikt nie trafia tam przypadkiem.
 
 **Pięć nazw metadanych** (`STATUS`, `CONFIRM_HASH`, `CONFIRM_EXPIRES`,
 `TERMS_VERSION`, `CONSENT_AT`) nie jest przypiętych testem. Dziś nieszkodliwe,
@@ -166,10 +209,19 @@ tego nie pilnuje. Koszt naprawy: pięć asercji.
 
 ## 5. Jedna rzecz o jakości dowodów
 
-Jedenaście testów w tym planie przechodziło **bez mechanizmu, który miały
+Trzynaście testów w tym planie przechodziło **bez mechanizmu, który miały
 dowodzić** — większość z moich własnych briefów. Jedenasty znalazł wykonawca
 u **siebie**, bo mutacja przeżyła. Stąd stałe pytanie do każdego testu: padłby,
 gdyby usunąć kod, który sprawdza?
+
+Dwa najgorsze przyszły na końcu i oba dotyczyły **rdzenia** naprawy hasła.
+Podmiana generatora hasła konta na jedną stałą wartość przechodziła **całą**
+suitę integracyjną, bo asercja na skrótach w bazie nie może paść — skróty bcrypt
+różnią się solą także dla identycznego hasła, a jedno stałe hasło w kodzie
+otwiera **każde** konto na portalu. Osobno: zamiana atomowego zużycia biletu na
+„sprawdź, potem usuń" zostawiała dwadzieścia testów biletu zielonymi. Oba
+dostały właściwe przypięcie i **oba sprawdziłem własnymi mutacjami**, nie
+raportem wykonawcy.
 
 Z tego wyszedł wniosek dla całego projektu: **dowód mutacyjny wymaga
 potwierdzenia, że linia jest ZMIENIONA**, nie że wzorzec jest obecny. Dwa razy
