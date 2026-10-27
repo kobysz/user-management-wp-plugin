@@ -176,8 +176,15 @@ final class Confirmation {
 		// samego linku dostaje RESULT_INVALID i biletu nie wystawia. W adresie, na który odsyłamy,
 		// nie ma żadnego tokenu ani biletu: bilet jedzie ciasteczkiem (patrz `PasswordSetup`).
 		if ( self::RESULT_OK === $result ) {
-			self::redirect( PasswordSetup::start( $userId ) );
-			return;
+			$page = PasswordSetup::start( $userId );
+			if ( null !== $page ) {
+				self::redirect( $page );
+				return;
+			}
+			// Biletu nie udało się wystawić (zapis metadanej odmówił). Potwierdzenie SIĘ UDAŁO:
+			// stan konta jest już zmieniony, a mail do redakcji wysłany. Komunikat musi mówić
+			// prawdę o tym skutku, a nie „Link wygasł”, i musi wskazać drogę dalej do hasła.
+			// Dlatego wynik OK ma własny komunikat, a nie jest tu martwym odwzorowaniem kodu.
 		}
 
 		self::redirect( add_query_arg( self::RESULT_ARG, $result, self::base_url() ) );
@@ -247,6 +254,13 @@ final class Confirmation {
 
 		$message = '<p class="pusers-notice" role="status">' . esc_html( self::message_for( $result ) ) . '</p>';
 
+		// Wynik OK dociera tu tylko wtedy, gdy biletu na ustawienie hasła nie udało się wystawić,
+		// więc razem z komunikatem idzie odnośnik do odzyskiwania hasła: inaczej człowiek czyta,
+		// że ma ustawić hasło, i nie ma gdzie kliknąć.
+		if ( self::RESULT_OK === $result ) {
+			return $message . '<p class="pusers-recovery"><a href="' . esc_url( wp_lostpassword_url() ) . '">' . esc_html__( 'Odzyskaj hasło', 'portal-users' ) . '</a></p>';
+		}
+
 		return in_array( $result, array( self::RESULT_EXPIRED, self::RESULT_INVALID ), true ) ? $message . self::resend_form() : $message;
 	}
 
@@ -269,10 +283,13 @@ final class Confirmation {
 	 */
 	public static function message_for( string $code ): string {
 		switch ( $code ) {
+			// Ten komunikat widzi człowiek, któremu potwierdzenie się udało, ale biletu na
+			// ustawienie hasła nie udało się wystawić. Mówi prawdę o skutku i wskazuje drogę
+			// dalej, bo hasła nie da się już ustawić z tego linku.
 			case self::RESULT_OK:
 				return SettingsRepository::get()->approvalEnabled
-					? __( 'Adres e-mail został potwierdzony. Redakcja rozpatrzy zgłoszenie; dostaniesz informację o decyzji.', 'portal-users' )
-					: __( 'Adres e-mail został potwierdzony. Konto jest aktywne.', 'portal-users' );
+					? __( 'Adres e-mail został potwierdzony. Redakcja rozpatrzy zgłoszenie; dostaniesz informację o decyzji. Hasło do konta ustawisz przez odzyskiwanie hasła.', 'portal-users' )
+					: __( 'Adres e-mail został potwierdzony. Konto jest aktywne. Hasło do konta ustawisz przez odzyskiwanie hasła.', 'portal-users' );
 			case self::RESULT_EXPIRED:
 				return __( 'Link potwierdzający wygasł. Poproś o nowy.', 'portal-users' );
 			case self::RESULT_ALREADY:

@@ -376,6 +376,47 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( PasswordSetup::PAGE_ARG, $this->redirected );
 	}
 
+	public function test_a_confirmation_whose_ticket_could_not_be_issued_tells_the_truth_about_the_confirmation(): void {
+		// Potwierdzenie się UDAŁO: stan konta zmieniony, mail do redakcji wysłany. Jeżeli zapis
+		// biletu odmówi, człowiek nie może przeczytać „Link wygasł” o operacji, która się udała.
+		$block = static fn ( $check, $object_id, $meta_key ) => UserMeta::PASSWORD_TICKET_HASH === $meta_key ? false : $check;
+		add_filter( 'update_user_metadata', $block, 10, 3 );
+		$id    = $this->account();
+		$token = Confirmation::issue( $id );
+		$_GET  = array(
+			Confirmation::QUERY_USER  => (string) $id,
+			Confirmation::QUERY_TOKEN => $token,
+		);
+		Confirmation::handle();
+		remove_filter( 'update_user_metadata', $block, 10 );
+
+		$this->assertSame( AccountStatus::Pending, AccountStatusRepository::get( $id ), 'Potwierdzenie się udało.' );
+		$this->assertSame( '', (string) get_user_meta( $id, UserMeta::PASSWORD_TICKET_HASH, true ), 'Fixtura nie zadziałała: bilet jednak się zapisał.' );
+		$this->assertStringContainsString( Confirmation::RESULT_ARG . '=' . Confirmation::RESULT_OK, $this->redirected );
+		$this->assertStringNotContainsString( PasswordSetup::PAGE_ARG, $this->redirected, 'Bez biletu strona hasła nie ma czego pokazać.' );
+		$this->assertSame( array(), $this->cookies, 'Bez biletu nie ma po co wysyłać ciasteczka.' );
+
+		$_GET = array( Confirmation::RESULT_ARG => Confirmation::RESULT_OK );
+		$html = Confirmation::notice_html();
+		$this->assertStringContainsString( 'potwierdzony', $html, 'Komunikat mówi prawdę o skutku.' );
+		$this->assertStringNotContainsString( 'wygasł', $html );
+		$this->assertStringContainsString( wp_lostpassword_url(), $html, 'I wskazuje drogę dalej do hasła.' );
+		$this->assertStringContainsString( 'odzyskiwanie hasła', Confirmation::message_for( Confirmation::RESULT_OK ) );
+	}
+
+	public function test_a_ticket_without_an_expiry_is_not_issued_at_all(): void {
+		// Bilet bez terminu ważności byłby biletem bezterminowym, więc skrót nie może zostać.
+		$block = static fn ( $check, $object_id, $meta_key ) => UserMeta::PASSWORD_TICKET_EXPIRES === $meta_key ? false : $check;
+		add_filter( 'update_user_metadata', $block, 10, 3 );
+		$id = $this->account();
+
+		$token = PasswordSetup::issue( $id );
+
+		remove_filter( 'update_user_metadata', $block, 10 );
+		$this->assertSame( '', $token );
+		$this->assertSame( '', (string) get_user_meta( $id, UserMeta::PASSWORD_TICKET_HASH, true ), 'Skrót bez terminu ważności jest sprzątany.' );
+	}
+
 	public function test_a_valid_ticket_sets_the_password_exactly_as_typed_and_clears_the_cookie(): void {
 		list( $id, $ticket ) = $this->confirmed();
 

@@ -106,12 +106,17 @@ final class PasswordSetup {
 	}
 
 	/**
-	 * Wystawia bilet, wysyła ciasteczko i zwraca adres strony ustawienia hasła (bez biletu w adresie).
+	 * Wystawia bilet, wysyła ciasteczko i zwraca adres strony ustawienia hasła (bez biletu
+	 * w adresie). Null znaczy: biletu NIE udało się wystawić — wołający musi wtedy powiedzieć
+	 * prawdę o operacji, która się udała (adres jest potwierdzony), i wskazać drogę dalej.
 	 *
 	 * @param int $userId Identyfikator użytkownika, który właśnie potwierdził adres.
 	 */
-	public static function start( int $userId ): string {
+	public static function start( int $userId ): ?string {
 		$token = self::issue( $userId );
+		if ( '' === $token ) {
+			return null;
+		}
 		self::send_cookie( $userId . '.' . $token, time() + self::TICKET_HOURS * HOUR_IN_SECONDS );
 
 		return add_query_arg( self::PAGE_ARG, self::RESULT_FORM, Confirmation::base_url() );
@@ -121,13 +126,24 @@ final class PasswordSetup {
 	 * Wystawia bilet: zwraca jawny (do ciasteczka), zapisuje wyłącznie skrót i termin ważności.
 	 * Kolejne wywołanie nadpisuje poprzedni skrót, więc poprzedni bilet przestaje działać.
 	 *
+	 * Zwraca `''`, gdy zapisu NIE udało się wykonać. Ignorowanie wyniku `update_user_meta()`
+	 * dawało bilet, którego nie ma w bazie, a człowiekowi — komunikat „Link wygasł” po
+	 * potwierdzeniu, które się UDAŁO (stan konta zmieniony, mail do redakcji wysłany).
+	 * `false` nie może tu znaczyć „wartość bez zmian”: skrót jest losowy.
+	 *
 	 * @param int $userId Identyfikator użytkownika.
 	 */
 	public static function issue( int $userId ): string {
 		$token = bin2hex( random_bytes( 32 ) );
 
-		update_user_meta( $userId, UserMeta::PASSWORD_TICKET_HASH, self::hash( $token ) );
-		update_user_meta( $userId, UserMeta::PASSWORD_TICKET_EXPIRES, time() + self::TICKET_HOURS * HOUR_IN_SECONDS );
+		if ( false === update_user_meta( $userId, UserMeta::PASSWORD_TICKET_HASH, self::hash( $token ) ) ) {
+			return '';
+		}
+		if ( false === update_user_meta( $userId, UserMeta::PASSWORD_TICKET_EXPIRES, time() + self::TICKET_HOURS * HOUR_IN_SECONDS ) ) {
+			// Bilet bez terminu ważności byłby biletem bezterminowym, więc skrót sprzątamy.
+			delete_user_meta( $userId, UserMeta::PASSWORD_TICKET_HASH );
+			return '';
+		}
 
 		return $token;
 	}
