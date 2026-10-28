@@ -135,12 +135,22 @@ final class PlaceholderFactoryTest extends WP_UnitTestCase {
 		$this->assertSame( 'niepoprawny', PlaceholderFactory::for_user( $id )->get( 'wynik_walidacji' ) );
 	}
 
-	public function test_a_profession_without_a_credential_yields_empty_credential_variables(): void {
+	public function test_a_profession_without_a_credential_says_the_verdict_does_not_apply(): void {
+		// Werdykt nie może zwijać dwóch różnych faktów do pustki: redakcja czyta go w mailu i musi
+		// widzieć różnicę między „ta profesja numeru nie ma" a „numeru nie podano".
 		$values = PlaceholderFactory::for_user( $this->account( 'pielegniarka' ) );
 
 		$this->assertSame( '', $values->get( 'numer_uprawnien' ) );
-		$this->assertSame( '', $values->get( 'wynik_walidacji' ) );
+		$this->assertSame( 'nie dotyczy', $values->get( 'wynik_walidacji' ) );
 		$this->assertSame( 'Pielęgniarka', $values->get( 'profesja' ) );
+	}
+
+	public function test_a_profession_with_a_credential_but_no_stored_number_says_the_number_is_missing(): void {
+		// To jest wniosek, który redakcja musi odrzucić albo dopytać: inny przypadek niż brak numeru w profesji.
+		$values = PlaceholderFactory::for_user( $this->account( 'lekarz', '' ) );
+
+		$this->assertSame( '', $values->get( 'numer_uprawnien' ) );
+		$this->assertSame( 'brak numeru', $values->get( 'wynik_walidacji' ) );
 	}
 
 	public function test_a_withdrawn_profession_falls_back_to_its_key(): void {
@@ -148,6 +158,7 @@ final class PlaceholderFactoryTest extends WP_UnitTestCase {
 
 		$this->assertSame( 'wycofana', $values->get( 'profesja' ) );
 		$this->assertSame( '', $values->get( 'numer_uprawnien' ) );
+		$this->assertSame( 'nie dotyczy', $values->get( 'wynik_walidacji' ), 'Po wycofaniu profesji nie wiadomo już, czego konto miało dowodzić.' );
 	}
 
 	public function test_extras_override_and_add(): void {

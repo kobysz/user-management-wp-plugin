@@ -65,8 +65,8 @@ final class MailerTest extends WP_UnitTestCase {
 		);
 	}
 
-	private function account( string $profession, string $pwz = '' ): int {
-		$id = (int) self::factory()->user->create( array( 'user_email' => 'osoba@example.test' ) );
+	private function account( string $profession, string $pwz = '', string $email = 'osoba@example.test' ): int {
+		$id = (int) self::factory()->user->create( array( 'user_email' => $email ) );
 		update_user_meta( $id, UserMeta::PROFESSION, $profession );
 		if ( '' !== $pwz ) {
 			update_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'pwz', $pwz );
@@ -123,6 +123,7 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '- pwz: 5425740', $body );
 		$this->assertStringContainsString( '- notatka: Pierwsza linia Druga linia', $body, 'Wartość w jednej linii.' );
 		$this->assertStringContainsString( 'Numer uprawnień: 5425740', $body );
+		$this->assertStringContainsString( 'Wynik walidacji: poprawny', $body );
 		$this->assertStringContainsString( 'user_id=' . $id, $body );
 		$this->assertSame( MailKind::Editorial->value, $this->mails()[0]['kind'] );
 	}
@@ -146,12 +147,25 @@ final class MailerTest extends WP_UnitTestCase {
 
 		$body = $this->first_body();
 		$this->assertStringContainsString( 'Numer uprawnień: 5425740', $body );
+		$this->assertStringContainsString( 'Wynik walidacji: poprawny', $body );
 		$this->assertStringNotContainsString( '- pwz:', $body, 'Pole ukryte nie należy do zgłoszenia.' );
 	}
 
-	public function test_the_editorial_mail_marks_a_valid_credential_where_the_template_asks_for_it(): void {
-		// Szablon domyślny wypisuje sam numer, a znacznik poprawności jest osobną zmienną rodzaju.
-		// Asercja z Planu 3 („wynik walidacji dochodzi do redakcji") pilnuje więc zmiennej w szablonie.
+	public function test_the_editorial_mail_marks_an_invalid_credential(): void {
+		// Treść DOMYŚLNA, bez nadpisania: tak wygląda mail, który dostaje redakcja portalu. Sam numer
+		// bez werdyktu zostawiałby człowieka bez odpowiedzi na pytanie, po które ten mail do niego idzie.
+		// Surowego kodu walidatora tu nie ma celowo — patrz komentarz w PlaceholderFactory.
+		$id = $this->account( 'lekarz', '1234567' );
+
+		Mailer::editorial( $id );
+
+		$body = $this->first_body();
+		$this->assertStringContainsString( 'Numer uprawnień: 1234567', $body );
+		$this->assertStringContainsString( 'Wynik walidacji: niepoprawny', $body );
+	}
+
+	public function test_the_editorial_mail_substitutes_the_verdict_into_a_custom_template_too(): void {
+		// Redakcja, która przepisze szablon po swojemu, nadal dostaje te same dwie zmienne.
 		MailTemplateRepository::save( MailKind::Editorial, new MailTemplate( '', '{numer_uprawnien} (wynik walidacji: {wynik_walidacji})' ) );
 		$id = $this->account( 'lekarz', '5425740' );
 
@@ -160,23 +174,18 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '5425740 (wynik walidacji: poprawny)', $this->first_body() );
 	}
 
-	public function test_the_editorial_mail_marks_an_invalid_credential(): void {
-		// Plan 4 zostawił w zmiennej sam werdykt (bez kodu błędu walidatora), więc asercja pilnuje werdyktu.
-		MailTemplateRepository::save( MailKind::Editorial, new MailTemplate( '', '{numer_uprawnien} (wynik walidacji: {wynik_walidacji})' ) );
-		$id = $this->account( 'lekarz', '1234567' );
+	public function test_the_editorial_mail_distinguishes_a_profession_without_a_credential_from_a_missing_number(): void {
+		// Dwa różne wnioski: pielęgniarka numeru nie ma, a lekarz bez numeru ma wniosek do odrzucenia.
+		// Pusty werdykt zwijał oba przypadki w jedno i redakcja nie widziała między nimi różnicy.
+		$nurse = $this->account( 'pielegniarka' );
+		Mailer::editorial( $nurse );
+		$this->assertStringContainsString( 'Wynik walidacji: nie dotyczy', $this->first_body() );
 
-		Mailer::editorial( $id );
-
-		$this->assertStringContainsString( '1234567 (wynik walidacji: niepoprawny)', $this->first_body() );
-	}
-
-	public function test_the_editorial_mail_for_a_profession_without_a_credential_leaves_the_number_empty(): void {
-		// Plan 4 zastąpił „nie dotyczy" pustą zmienną: redakcja widzi puste miejsce, nigdy cudzego numeru.
-		$id = $this->account( 'pielegniarka' );
-
-		Mailer::editorial( $id );
-
-		$this->assertStringContainsString( "Numer uprawnień: \n", $this->first_body() );
+		$this->forget_mails();
+		$doctor = $this->account( 'lekarz', '', 'druga-osoba@example.test' );
+		Mailer::editorial( $doctor );
+		$this->assertStringContainsString( 'Wynik walidacji: brak numeru', $this->first_body() );
+		$this->assertStringContainsString( "Numer uprawnień: \n", $this->first_body(), 'Sam numer zostaje pusty.' );
 	}
 
 	public function test_an_approved_account_gets_the_informational_editorial_mail(): void {

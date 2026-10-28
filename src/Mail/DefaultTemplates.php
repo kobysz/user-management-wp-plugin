@@ -85,6 +85,9 @@ final class DefaultTemplates {
 					__( 'Profesja:', 'portal-users' ) . ' {profesja}',
 					__( 'Adres e-mail:', 'portal-users' ) . ' {email}',
 					__( 'Numer uprawnień:', 'portal-users' ) . ' {numer_uprawnien}',
+					// Werdykt pod numerem: mail do redakcji istnieje po to, żeby człowiek miał przed sobą
+					// to, co ma zweryfikować ręcznie. Sam numer zostawiał go bez odpowiedzi.
+					__( 'Wynik walidacji:', 'portal-users' ) . ' {wynik_walidacji}',
 					'',
 					__( 'Pola zgłoszenia:', 'portal-users' ),
 					'{pola_zgloszenia}',
@@ -108,6 +111,8 @@ final class DefaultTemplates {
 					__( 'Profesja:', 'portal-users' ) . ' {profesja}',
 					__( 'Adres e-mail:', 'portal-users' ) . ' {email}',
 					__( 'Numer uprawnień:', 'portal-users' ) . ' {numer_uprawnien}',
+					// Werdykt pod numerem z tego samego powodu co w editorial().
+					__( 'Wynik walidacji:', 'portal-users' ) . ' {wynik_walidacji}',
 					'',
 					__( 'Pola zgłoszenia:', 'portal-users' ),
 					'{pola_zgloszenia}',

@@ -128,18 +128,30 @@ final class PlaceholderFactory {
 	/**
 	 * Wynik walidacji liczony ponownie: walidator mógł się zmienić po rejestracji, więc zapisanemu wtedy wynikowi nie ufamy.
 	 *
+	 * Cztery wartości, nigdy pustka: redakcja czyta ten werdykt w mailu i musi widzieć różnicę między
+	 * „ta profesja numeru nie ma" (wniosek w porządku) a „numeru nie podano" (wniosek do odrzucenia).
+	 * Jedna pustka na oba przypadki zwijała dwa różne fakty w jeden i nie odpowiadała na żadne pytanie.
+	 *
 	 * @param Profession|null $profession Profesja konta.
 	 * @param string          $number     Zapisany numer.
 	 */
 	private static function validation_result( ?Profession $profession, string $number ): string {
-		if ( null === $profession || '' === $number ) {
-			return '';
+		// Profesja wycofana z ustawień: nie wiadomo już, czego konto miało dowodzić, więc nie orzekamy.
+		if ( null === $profession || CredentialType::None === $profession->credentialType || '' === $profession->credentialField ) {
+			return __( 'nie dotyczy', 'portal-users' );
+		}
+		if ( '' === $number ) {
+			return __( 'brak numeru', 'portal-users' );
 		}
 		$validator = ( new ValidatorRegistry() )->for( $profession->credentialType );
 		if ( null === $validator ) {
-			return '';
+			return __( 'nie dotyczy', 'portal-users' );
 		}
 
+		// Surowy kod walidatora (`invalid_format`, `invalid_checksum`) zostaje tu CELOWO poza treścią:
+		// to maszynowy żargon po angielsku w polskim mailu do człowieka, a jego następny ruch jest ten
+		// sam bez względu na to, do czego walidator się przyczepił — sprawdzić numer w rejestrze.
+		// Szczegółowy powód należy do ekranu wniosków, obok odnośnika do rejestru. Nie przywracać.
 		return $validator->validate( $number )->isValid()
 			? __( 'poprawny', 'portal-users' )
 			: __( 'niepoprawny', 'portal-users' );

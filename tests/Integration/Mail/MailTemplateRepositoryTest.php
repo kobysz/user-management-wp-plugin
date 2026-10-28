@@ -89,8 +89,10 @@ final class MailTemplateRepositoryTest extends WP_UnitTestCase {
 	public function test_the_defaults_carry_the_placeholders_their_purpose_needs(): void {
 		$needs = array(
 			'confirmation'         => array( 'link_potwierdzenia' ),
-			'editorial'            => array( 'pola_zgloszenia', 'link_wniosku' ),
-			'editorial_auto'       => array( 'pola_zgloszenia' ),
+			// Numer uprawnień I jego werdykt: mail do redakcji istnieje po to, żeby człowiek miał
+			// przed sobą to, co ma zweryfikować ręcznie. Sam numer bez werdyktu zostawia go bez odpowiedzi.
+			'editorial'            => array( 'pola_zgloszenia', 'link_wniosku', 'numer_uprawnien', 'wynik_walidacji' ),
+			'editorial_auto'       => array( 'pola_zgloszenia', 'numer_uprawnien', 'wynik_walidacji' ),
 			'application_received' => array( 'link_logowania' ),
 			'approved'             => array( 'link_logowania' ),
 			'rejected'             => array( 'powod_odrzucenia' ),
