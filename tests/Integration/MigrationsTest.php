@@ -16,7 +16,7 @@ use WP_UnitTestCase;
 
 final class MigrationsTest extends WP_UnitTestCase {
 
-	private const TABLES = array( 'event_log', 'terms_versions' );
+	private const TABLES = array( 'event_log', 'terms_versions', 'mail_queue' );
 
 	public function tear_down(): void {
 		// DDL nie cofa się z transakcją testu: baza musi zostać z tabelami dla innych testów.
@@ -29,7 +29,7 @@ final class MigrationsTest extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_creates_both_tables(): void {
+	public function test_creates_every_table(): void {
 		$this->fresh_install();
 		foreach ( self::TABLES as $name ) {
 			$this->assertFalse( $this->table_exists( Migrations::table( $name ) ), 'Stan wyjściowy: tabeli nie ma.' );
@@ -125,6 +125,34 @@ final class MigrationsTest extends WP_UnitTestCase {
 		$rows = $wpdb->get_results( "SHOW INDEX FROM {$table} WHERE Key_name = 'version_hash'" );
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '0', (string) $rows[0]->Non_unique );
+	}
+
+	public function test_mail_queue_schema(): void {
+		global $wpdb;
+		$this->fresh_install();
+		Migrations::run();
+		$table = Migrations::table( 'mail_queue' );
+
+		$this->assertSame( 'InnoDB', $this->engine( $table ) );
+		$rows = $wpdb->get_results( "SHOW INDEX FROM {$table} WHERE Key_name = 'dedupe_key'" );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0', (string) $rows[0]->Non_unique );
+		$indexes = $this->index_names( $table );
+		$this->assertContains( 'dispatch', $indexes );
+		$this->assertContains( 'user_id', $indexes );
+		$this->assertNotEmpty( $wpdb->get_results( "SHOW COLUMNS FROM {$table} LIKE 'anonymized'" ) );
+	}
+
+	public function test_the_mail_queue_table_exists_after_migration(): void {
+		// Aktualizacja wtyczki nie odpala aktywacji: tabela musi powstać z maybe_upgrade() na starej wersji.
+		$this->fresh_install();
+		update_option( 'pusers_db_version', 2 );
+
+		Migrations::maybe_upgrade();
+
+		$this->assertTrue( $this->table_exists( Migrations::table( 'mail_queue' ) ) );
+		$this->assertSame( 3, Migrations::DB_VERSION );
+		$this->assertSame( 3, (int) get_option( 'pusers_db_version' ) );
 	}
 
 	public function test_terms_version_hash_is_unique(): void {

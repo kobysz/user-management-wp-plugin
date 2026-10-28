@@ -19,9 +19,9 @@ use PortalUsers\Cron\PurgeUnconfirmed;
 final class Migrations {
 
 	/**
-	 * Wersja schematu bazy i jednorazowych kroków aktualizacji (2: harmonogram czyszczenia kont). Zwiększ przy każdej zmianie tabel albo nowym kroku.
+	 * Wersja schematu bazy i jednorazowych kroków aktualizacji (2: harmonogram czyszczenia kont, 3: tabela kolejki maili). Zwiększ przy każdej zmianie tabel albo nowym kroku.
 	 */
-	public const DB_VERSION = 2;
+	public const DB_VERSION = 3;
 
 	/**
 	 * Nazwy tabel wtyczki bez prefiksu. Jedyne źródło dla odinstalowania i warunku zapisu wersji w run();
@@ -29,7 +29,7 @@ final class Migrations {
 	 *
 	 * @var array<int, string>
 	 */
-	public const TABLES = array( 'event_log', 'terms_versions' );
+	public const TABLES = array( 'event_log', 'terms_versions', 'mail_queue' );
 
 	/**
 	 * Nazwa opcji z zapisaną wersją schematu.
@@ -59,6 +59,7 @@ final class Migrations {
 		$charset = $wpdb->get_charset_collate();
 		$log     = self::table( 'event_log' );
 		$terms   = self::table( 'terms_versions' );
+		$queue   = self::table( 'mail_queue' );
 
 		// Kolumna `anonymized`: żądanie usunięcia danych anonimizuje log, nie kasuje go.
 		dbDelta(
@@ -84,6 +85,32 @@ final class Migrations {
   created_at DATETIME NOT NULL,
   PRIMARY KEY  (id),
   UNIQUE KEY version_hash (version_hash)
+) ENGINE=InnoDB {$charset};"
+		);
+
+		// Kolejka jest też logiem wysyłek, więc wiersz zostaje po wysłaniu. `user_id` i `anonymized` istnieją od początku:
+		// anonimizacja logu wysyłek potrzebuje po czym szukać wierszy konta (adres się zmienia, identyfikator nie).
+		// VARCHAR(191), nie 255: indeks na 255 znakach utf8mb4 przekracza limit 767 bajtów na starszych konfiguracjach.
+		dbDelta(
+			"CREATE TABLE {$queue} (
+  id BIGINT(20) UNSIGNED NOT NULL AUTO_INCREMENT,
+  created_at DATETIME NOT NULL,
+  scheduled_at DATETIME NOT NULL,
+  sent_at DATETIME NULL,
+  kind VARCHAR(40) NOT NULL,
+  dedupe_key VARCHAR(191) NOT NULL,
+  user_id BIGINT(20) UNSIGNED NOT NULL DEFAULT 0,
+  recipient VARCHAR(191) NOT NULL,
+  subject TEXT NOT NULL,
+  body LONGTEXT NOT NULL,
+  status VARCHAR(20) NOT NULL,
+  attempts TINYINT(3) UNSIGNED NOT NULL DEFAULT 0,
+  last_error TEXT NULL,
+  anonymized TINYINT(1) NOT NULL DEFAULT 0,
+  PRIMARY KEY  (id),
+  UNIQUE KEY dedupe_key (dedupe_key),
+  KEY dispatch (status, scheduled_at),
+  KEY user_id (user_id)
 ) ENGINE=InnoDB {$charset};"
 		);
 
