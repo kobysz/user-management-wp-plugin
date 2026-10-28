@@ -28,11 +28,6 @@ final class LoginForm {
 	public const NONCE_ACTION = 'pusers_login';
 	public const NONCE_FIELD  = 'pusers_login_nonce';
 
-	/**
-	 * Nazwa akcji `admin-post.php`, na którą wysyła się formularz; obsługuje ją kolejny krok.
-	 */
-	public const ACTION = 'pusers_login';
-
 	public const IDENTITY = 'pusers_login_identity';
 	public const PASSWORD = 'pusers_login_password';
 	public const REMEMBER = 'pusers_login_remember';
@@ -47,7 +42,7 @@ final class LoginForm {
 
 	/**
 	 * Argument adresu z wynikiem logowania po przekierowaniu. Kody wyniku i ich komunikaty należą
-	 * do obsługi żądania; widok nazwy jeszcze nie czyta.
+	 * do obsługi żądania (`LoginHandler::message_for()`); widok zna tylko nazwę argumentu.
 	 */
 	public const RESULT_ARG = 'pusers_login_result';
 
@@ -100,8 +95,9 @@ final class LoginForm {
 
 		$redirect = self::requested_redirect();
 
-		$html  = '<form class="pusers-login" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
-		$html .= '<input type="hidden" name="action" value="' . esc_attr( self::ACTION ) . '" />';
+		$html  = self::result_notice();
+		$html .= '<form class="pusers-login" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+		$html .= '<input type="hidden" name="action" value="' . esc_attr( LoginHandler::ACTION ) . '" />';
 
 		$html .= '<p class="pusers-field-identity"><label for="' . esc_attr( self::IDENTITY ) . '">' . esc_html__( 'Adres e-mail lub nazwa użytkownika', 'portal-users' ) . '</label> ';
 		$html .= '<input type="text" id="' . esc_attr( self::IDENTITY ) . '" name="' . esc_attr( self::IDENTITY ) . '" value="" autocomplete="username" required="required" /></p>';
@@ -121,7 +117,7 @@ final class LoginForm {
 		}
 
 		ob_start();
-		do_action( 'pusers_login_form_fields' );
+		do_action( self::EXTRA_FIELDS_ACTION ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej EXTRA_FIELDS_ACTION, która ma prefiks pusers_.
 		$html .= (string) ob_get_clean();
 
 		$html .= wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false );
@@ -145,6 +141,27 @@ final class LoginForm {
 		$html .= '<a href="' . esc_url( wp_logout_url() ) . '">' . esc_html__( 'Wyloguj się', 'portal-users' ) . '</a></p>';
 
 		return $html;
+	}
+
+	/**
+	 * Komunikat o wyniku poprzedniej próby logowania (PRG) albo pusty łańcuch.
+	 *
+	 * Treści komunikatów należą do `LoginHandler::message_for()`, a stany konta — do
+	 * `LoginGateway::message_for()`, który tamta metoda pyta o wszystko poza własnymi kodami. Widok
+	 * nie ma drugiej mapy: rozjechałaby się z pierwszą przy pierwszej zmianie tekstu. Kod, którego
+	 * nie zna ani obsługa, ani brama, daje pusty komunikat i wtedy nie rysujemy NICZEGO: puste
+	 * okienko alertu to awaria najtrudniejsza do zgłoszenia.
+	 */
+	private static function result_notice(): string {
+		// Odczyt wyniku po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje.
+		$code = isset( $_GET[ self::RESULT_ARG ] ) && is_string( $_GET[ self::RESULT_ARG ] ) ? sanitize_key( wp_unslash( $_GET[ self::RESULT_ARG ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+		if ( '' === $code ) {
+			return '';
+		}
+
+		$message = LoginHandler::message_for( $code );
+
+		return '' === $message ? '' : '<p class="pusers-notice" role="alert">' . esc_html( $message ) . '</p>';
 	}
 
 	/**
