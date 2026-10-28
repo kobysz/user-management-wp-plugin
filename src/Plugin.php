@@ -23,6 +23,7 @@ use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\Redirects;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
+use PortalUsers\Front\RestUsers;
 use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
 
@@ -72,6 +73,11 @@ final class Plugin {
 		// stanu odpala akcję zmiany stanu niezależnie od ACF, więc strażnik za sprawdzeniem
 		// zależności przestawałby niszczyć sesje odrzuconych kont, gdy tylko ACF Pro zniknie.
 		SessionGuard::register();
+
+		// Zamknięcie tras użytkowników REST dla obcych też stoi poza hookiem zależnym od ACF Pro:
+		// to kontrola ujawniania (czy konto istnieje), więc znikając razem z zależnością otwierałaby
+		// dokładnie tę furtkę, którą brama logowania zamknęła. Nie potrzebuje ACF do niczego.
+		RestUsers::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.

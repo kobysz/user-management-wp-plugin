@@ -25,6 +25,7 @@ use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\Redirects;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
+use PortalUsers\Front\RestUsers;
 use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
 use PortalUsers\Domain\Profession\ProfessionCollection;
@@ -254,6 +255,24 @@ final class WiringTest extends WP_UnitTestCase {
 			'Strażnik nie może jechać przez hook zależny od ACF Pro.'
 		);
 		$this->assertSame( 10, has_action( 'pusers_account_status_changed', array( SessionGuard::class, 'on_status_changed' ) ) );
+	}
+
+	public function test_boot_registers_the_users_route_closure_even_when_acf_pro_is_missing(): void {
+		// To kontrola ujawniania (czy konto istnieje). Za sprawdzeniem zależności znikałaby razem
+		// z ACF Pro i otwierała furtkę, którą brama logowania właśnie zamknęła.
+		add_filter( 'pusers_acf_pro_loaded', '__return_false' );
+		remove_filter( 'rest_endpoints', array( RestUsers::class, 'restrict' ) );
+		$this->assertFalse( Dependencies::satisfied(), 'Test ma działać przy NIEspełnionych zależnościach.' );
+		$this->assertFalse( has_filter( 'rest_endpoints', array( RestUsers::class, 'restrict' ) ), 'Zamknięcie miało być zdjęte przed próbą.' );
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		$this->assertFalse(
+			has_action( 'pusers_register_features', array( RestUsers::class, 'register' ) ),
+			'Zamknięcie tras nie może jechać przez hook zależny od ACF Pro.'
+		);
+		$this->assertNotFalse( has_filter( 'rest_endpoints', array( RestUsers::class, 'restrict' ) ) );
 	}
 
 	public function test_the_resend_form_posts_to_the_registered_action(): void {
