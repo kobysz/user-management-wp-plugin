@@ -13,6 +13,7 @@ use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
+use PortalUsers\Cron\DispatchMail;
 use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\LoginForm;
@@ -78,6 +79,13 @@ final class Plugin {
 		// to kontrola ujawniania (czy konto istnieje), więc znikając razem z zależnością otwierałaby
 		// dokładnie tę furtkę, którą brama logowania zamknęła. Nie potrzebuje ACF do niczego.
 		RestUsers::register();
+
+		// Z tego samego powodu poza hookiem zależnym od ACF Pro stoi cron opróżniający kolejkę maili:
+		// wyłączone (albo zepsute aktualizacją) ACF Pro zatrzymałoby wysyłkę maili, które JUŻ SĄ
+		// w kolejce — w tym linku potwierdzającego, bez którego lekarz nie wejdzie na konto.
+		// Dispatcher nie potrzebuje ACF do niczego: czyta wiersz i woła wp_mail(). Ekrany panelu
+		// z logiem wysyłek zostają za zależnością.
+		DispatchMail::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.

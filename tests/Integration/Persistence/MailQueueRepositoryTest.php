@@ -51,6 +51,29 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		$this->assertSame( 1, (int) MailQueueRepository::find( $id )['attempts'] );
 	}
 
+	public function test_a_claim_whose_read_back_fails_is_reported_as_lost(): void {
+		// Nieudany albo pusty odczyt numeru próby dawał po rzutowaniu 0 — wartość nieodróżnialną
+		// dla wołającego od wygranego zajęcia, a przy tym taką, której straż w mark_sent() nigdy nie
+		// przepuści: wiersz zostałby w `sending` do odzysku, a mail wyszedłby drugi raz.
+		MailQueueRepository::insert( $this->row( 'klucz-readback' ) );
+		$id = (int) MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 )[0]['id'];
+		add_filter( 'query', array( $this, 'break_attempts_read_back' ) );
+
+		$attempt = MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) );
+
+		remove_filter( 'query', array( $this, 'break_attempts_read_back' ) );
+		$this->assertNull( $attempt );
+	}
+
+	/**
+	 * Filtr zapytań: odczyt numeru próby oddaje NULL (np. połączenie padło po UPDATE).
+	 *
+	 * @param string $query Zapytanie SQL.
+	 */
+	public function break_attempts_read_back( $query ): string {
+		return false !== strpos( (string) $query, 'SELECT attempts FROM' ) ? 'SELECT NULL' : (string) $query;
+	}
+
 	public function test_a_row_scheduled_in_the_future_is_not_due(): void {
 		MailQueueRepository::insert( $this->row( 'klucz-c', gmdate( 'Y-m-d H:i:s', time() + 600 ) ) );
 		$this->assertSame( array(), MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 ) );

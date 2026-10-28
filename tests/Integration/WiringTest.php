@@ -13,6 +13,7 @@ use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
+use PortalUsers\Cron\DispatchMail;
 use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Dependencies;
 use PortalUsers\Domain\Config\Settings;
@@ -28,6 +29,8 @@ use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\RestUsers;
 use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
+use PortalUsers\Mail\Dispatcher;
+use PortalUsers\Mail\MailQueue;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
@@ -281,6 +284,27 @@ final class WiringTest extends WP_UnitTestCase {
 			'Zamknięcie tras nie może jechać przez hook zależny od ACF Pro.'
 		);
 		$this->assertNotFalse( has_filter( 'rest_endpoints', array( RestUsers::class, 'restrict' ) ) );
+	}
+
+	public function test_the_dispatcher_is_registered_without_acf(): void {
+		// Kolejka musi się opróżniać także wtedy, gdy ACF Pro jest wyłączone — inaczej link
+		// potwierdzający zostaje w bazie, a lekarz nie ma jak wejść na konto. Dispatcher nie
+		// potrzebuje ACF do niczego: czyta wiersz i woła wp_mail().
+		add_filter( 'pusers_acf_pro_loaded', '__return_false' );
+		remove_action( DispatchMail::HOOK, array( Dispatcher::class, 'run' ) );
+		remove_action( MailQueue::DISPATCH_HOOK, array( Dispatcher::class, 'run' ) );
+		$this->assertFalse( Dependencies::satisfied(), 'Test ma działać przy NIEspełnionych zależnościach.' );
+		$this->assertFalse( has_action( DispatchMail::HOOK, array( Dispatcher::class, 'run' ) ), 'Dispatcher miał być zdjęty przed próbą.' );
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		$this->assertFalse(
+			has_action( 'pusers_register_features', array( DispatchMail::class, 'register' ) ),
+			'Dispatcher nie może jechać przez hook zależny od ACF Pro.'
+		);
+		$this->assertNotFalse( has_action( DispatchMail::HOOK, array( Dispatcher::class, 'run' ) ) );
+		$this->assertNotFalse( has_action( MailQueue::DISPATCH_HOOK, array( Dispatcher::class, 'run' ) ) );
 	}
 
 	public function test_the_resend_form_posts_to_the_registered_action(): void {

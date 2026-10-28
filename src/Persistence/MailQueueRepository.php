@@ -124,7 +124,7 @@ final class MailQueueRepository {
 	 * @param int    $id     Identyfikator wiersza.
 	 * @param string $nowUtc Moment zajęcia (UTC).
 	 * @return int|null Numer próby, który identyfikuje właściciela wiersza (do `mark_*` i `reschedule`),
-	 *                  albo null, gdy zajęcie przegrano.
+	 *                  albo null, gdy zajęcie przegrano albo nie udało się odczytać numeru próby.
 	 */
 	public static function claim( int $id, string $nowUtc ): ?int {
 		global $wpdb;
@@ -149,6 +149,14 @@ final class MailQueueRepository {
 		$attempts = $wpdb->get_var(
 			$wpdb->prepare( 'SELECT attempts FROM %i WHERE id = %d', Migrations::table( self::TABLE ), $id )
 		);
+
+		// Zajęcie jest wygrane tylko wtedy, gdy WIEMY, którą próbą władamy. Rzutowanie nieudanego
+		// albo pustego odczytu dałoby 0: wartość nieodróżnialną dla wołającego od wygranego zajęcia,
+		// a przy tym taką, której straż w `finish()` nigdy nie przepuści. Wiersz zostałby w `sending`
+		// do odzysku i mail wyszedłby drugi raz.
+		if ( ! is_numeric( $attempts ) || (int) $attempts < 1 ) {
+			return null;
+		}
 
 		return (int) $attempts;
 	}

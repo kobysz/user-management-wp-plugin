@@ -11,6 +11,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration;
 
+use PortalUsers\Cron\DispatchMail;
 use PortalUsers\Persistence\Migrations;
 use WP_UnitTestCase;
 
@@ -153,6 +154,17 @@ final class MigrationsTest extends WP_UnitTestCase {
 		$this->assertTrue( $this->table_exists( Migrations::table( 'mail_queue' ) ) );
 		$this->assertGreaterThan( 2, Migrations::DB_VERSION );
 		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
+	}
+
+	public function test_run_schedules_the_mail_dispatcher(): void {
+		// Instalacja, która przeszła już migrację tabeli kolejki, nie przechodzi hooka aktywacji:
+		// bez tego kroku cron nigdy by nie powstał, a zakolejkowane maile nie wyszłyby nigdy.
+		$this->fresh_install();
+		wp_clear_scheduled_hook( DispatchMail::HOOK );
+
+		Migrations::run();
+
+		$this->assertNotFalse( wp_next_scheduled( DispatchMail::HOOK ) );
 	}
 
 	public function test_terms_version_hash_is_unique(): void {
