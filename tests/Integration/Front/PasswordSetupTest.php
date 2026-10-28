@@ -8,6 +8,7 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration\Front;
 
 use PortalUsers\Domain\Account\AccountStatus;
+use PortalUsers\Domain\Account\PasswordPolicy;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
@@ -527,21 +528,21 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 	public function test_a_password_shorter_than_the_minimum_is_refused_and_the_account_keeps_its_random_password(): void {
 		list( $id, $ticket ) = $this->confirmed();
 		$before              = get_userdata( $id )->user_pass;
-		$short               = str_repeat( 'a', PasswordSetup::MIN_LENGTH - 1 );
+		$short               = str_repeat( 'a', PasswordPolicy::MIN_LENGTH - 1 );
 
 		$this->assertSame( PasswordSetup::RESULT_SHORT, $this->submit( $short, $ticket ) );
 
 		$this->assertSame( $before, get_userdata( $id )->user_pass, 'Konto zachowuje hasło losowe.' );
 		$this->assertFalse( wp_check_password( $short, get_userdata( $id )->user_pass, $id ) );
 		$this->assertNotSame( '', (string) get_user_meta( $id, UserMeta::PASSWORD_TICKET_HASH, true ), 'Odrzucone hasło nie zużywa biletu.' );
-		$this->assertStringContainsString( (string) PasswordSetup::MIN_LENGTH, PasswordSetup::message_for( PasswordSetup::RESULT_SHORT ) );
+		$this->assertStringContainsString( (string) PasswordPolicy::MIN_LENGTH, PasswordSetup::message_for( PasswordSetup::RESULT_SHORT ) );
 	}
 
 	public function test_a_password_equal_to_the_email_is_refused_regardless_of_letter_case(): void {
 		list( $id, $ticket ) = $this->confirmed();
 		$before              = get_userdata( $id )->user_pass;
 		$email               = (string) get_userdata( $id )->user_email;
-		$this->assertGreaterThanOrEqual( PasswordSetup::MIN_LENGTH, mb_strlen( $email ), 'Adres musi przejść próg długości, inaczej test dowodziłby czegoś innego.' );
+		$this->assertGreaterThanOrEqual( PasswordPolicy::MIN_LENGTH, mb_strlen( $email ), 'Adres musi przejść próg długości, inaczej test dowodziłby czegoś innego.' );
 
 		$this->assertSame( PasswordSetup::RESULT_EMAIL, $this->submit( $email, $ticket ) );
 		$this->assertSame( PasswordSetup::RESULT_EMAIL, $this->submit( strtoupper( $email ), $ticket ), 'Porównanie bez względu na wielkość liter.' );

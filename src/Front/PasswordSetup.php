@@ -11,6 +11,7 @@ namespace PortalUsers\Front;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Domain\Account\PasswordPolicy;
 use PortalUsers\Domain\Spam\IpAddress;
 use PortalUsers\Persistence\EventLog;
 use PortalUsers\Persistence\SettingsRepository;
@@ -74,11 +75,6 @@ final class PasswordSetup {
 	 * NIE niesie biletu ani żadnego innego sekretu.
 	 */
 	public const PAGE_ARG = 'pusers_setpass';
-
-	/**
-	 * Minimalna długość hasła (znaków).
-	 */
-	public const MIN_LENGTH = 12;
 
 	/**
 	 * Ważność biletu, w godzinach.
@@ -236,13 +232,13 @@ final class PasswordSetup {
 			? (string) wp_unslash( $_POST[ self::PASSWORD_FIELD ] ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing -- hasło nie podlega sanityzacji (patrz komentarz wyżej).
 			: '';
 
-		if ( mb_strlen( $password ) < self::MIN_LENGTH ) {
+		// Reguły hasła (długość, zakaz hasła równego adresowi) żyją w domenie: wspólne z odzyskiwaniem hasła.
+		$violation = PasswordPolicy::check( $password, $user->user_email );
+		if ( PasswordPolicy::ERROR_SHORT === $violation ) {
 			self::redirect( self::RESULT_SHORT );
 			return;
 		}
-		// Hasło równe adresowi e-mail jest publicznie znane każdemu, kto widział zgłoszenie.
-		// Porównanie bez względu na wielkość liter: `Jan@Szpital.pl` jest tym samym hasłem.
-		if ( strtolower( $password ) === strtolower( $user->user_email ) ) {
+		if ( PasswordPolicy::ERROR_EMAIL === $violation ) {
 			self::redirect( self::RESULT_EMAIL );
 			return;
 		}
@@ -339,7 +335,7 @@ final class PasswordSetup {
 				return sprintf(
 					/* translators: %d: minimalna liczba znaków hasła. */
 					__( 'Hasło musi mieć co najmniej %d znaków.', 'portal-users' ),
-					self::MIN_LENGTH
+					PasswordPolicy::MIN_LENGTH
 				);
 			case self::RESULT_EMAIL:
 				return __( 'Hasło nie może być takie samo jak adres e-mail.', 'portal-users' );
@@ -361,7 +357,7 @@ final class PasswordSetup {
 			. '<input type="hidden" name="action" value="' . esc_attr( self::ACTION ) . '" />'
 			. wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false )
 			. '<p><label for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Hasło', 'portal-users' ) . '</label> '
-			. '<input type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) self::MIN_LENGTH ) . '" required="required" /></p>'
+			. '<input type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" /></p>'
 			. '<p><button type="submit">' . esc_html__( 'Ustaw hasło', 'portal-users' ) . '</button></p>'
 			. '</form>';
 	}
