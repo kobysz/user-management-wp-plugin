@@ -64,6 +64,33 @@ final class SessionGuardTest extends WP_UnitTestCase {
 		$this->assertSame( $id, (int) $rows[0]->subject_user_id );
 	}
 
+	public function test_entering_a_non_approved_state_destroys_sessions_even_for_an_account_with_no_status(): void {
+		// Przejście `null -> rejected` i `null -> pending`: konto BEZ zapisanego stanu, które stan
+		// dostaje. Dokładnie to zrobi backfill Planu 7 każdemu kontu, którego stara wtyczka
+		// członkowska nie zatwierdziła — te osoby są dziś zalogowane i przy warunku „był
+		// zatwierdzony i przestał” zostawałyby zalogowane. Brama odmawia wejścia KAŻDEMU kontu bez
+		// zatwierdzenia, więc wylogowanie takiego konta nie odbiera niczego, co brama by mu dała.
+		foreach ( array( AccountStatus::Rejected, AccountStatus::Pending ) as $target ) {
+			$id     = self::factory()->user->create();
+			$tokens = WP_Session_Tokens::get_instance( $id );
+			$tokens->create( time() + HOUR_IN_SECONDS );
+			$tokens->create( time() + HOUR_IN_SECONDS );
+			$this->assertNull( AccountStatusRepository::get( $id ), 'Konto testowe musi być bez zapisanego stanu.' );
+			$this->assertSame( 2, $this->session_count( $id ) );
+
+			AccountStatusRepository::set( $id, $target );
+
+			$this->assertSame( 0, $this->session_count( $id ), 'Konto bez stanu wchodzące w stan ' . $target->value . ' zachowało sesje.' );
+		}
+
+		$rows = $this->log_rows();
+		$this->assertCount( 2, $rows, 'Każde zniszczenie sesji zostawia wiersz w logu.' );
+		$context = json_decode( (string) $rows[0]->context, true );
+		$this->assertIsArray( $context );
+		$this->assertSame( AccountStatus::Rejected->value, $context['to'] ?? null );
+		$this->assertSame( '', $context['from'] ?? null, 'Brak poprzedniego stanu zapisuje się pustą wartością, nie nazwą stanu.' );
+	}
+
 	public function test_gaining_the_approved_status_destroys_nothing(): void {
 		// email_unconfirmed -> approved w jednym przebiegu (akceptacja wyłączona w ustawieniach).
 		$id = $this->account_with_sessions( AccountStatus::EmailUnconfirmed );
