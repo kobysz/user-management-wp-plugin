@@ -27,6 +27,7 @@ use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\RestUsers;
 use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
+use PortalUsers\Mail\CoreCapture;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -86,6 +87,13 @@ final class Plugin {
 		// Dispatcher nie potrzebuje ACF do niczego: czyta wiersz i woła wp_mail(). Ekrany panelu
 		// z logiem wysyłek zostają za zależnością.
 		DispatchMail::register();
+
+		// I z tego samego powodu poza hookiem zależnym od ACF Pro stoi przechwytywanie maila
+		// rdzeniowego: odzyskiwanie hasła stoi na mechanizmie rdzenia i musi działać także wtedy,
+		// gdy ACF Pro jest wyłączone albo zepsute aktualizacją. Przechwytywanie nie potrzebuje ACF
+		// do niczego: rozbrojone przepuszcza każdą wiadomość nietkniętą, a uzbraja je filtr treści
+		// z `PasswordReset`, który sam jedzie już za sprawdzeniem zależności.
+		CoreCapture::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.

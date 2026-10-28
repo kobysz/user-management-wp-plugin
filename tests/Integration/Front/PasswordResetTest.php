@@ -9,10 +9,14 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration\Front;
 
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Domain\Mail\MailKind;
+use PortalUsers\Front\Mailer;
 use PortalUsers\Front\PasswordReset;
 use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\RateLimiter;
 use PortalUsers\Front\RegistrationHandler;
+use PortalUsers\Mail\CoreCapture;
+use PortalUsers\Persistence\MailQueueRepository;
 use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\SettingsRepository;
 use ReflectionClass;
@@ -96,7 +100,14 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		};
 		add_filter( 'wp_redirect', $this->cancelRedirect );
 
+		// Szew testowy stoi za naszym przechwytywaniem (`CoreCapture` rejestruje się w `Plugin::boot()`,
+		// czyli wcześniej, a `pre_wp_mail` woła WSZYSTKIE callbacki) i notuje tylko wiadomości, których
+		// nikt nie przejął: inaczej „mail wyszedł" znaczyłoby to samo przy wysyłce rdzenia i przy
+		// przechwyceniu do kolejki.
 		$this->captureMail = function ( $short, $atts ) {
+			if ( null !== $short ) {
+				return $short;
+			}
 			$this->mails[] = (array) $atts;
 			return true;
 		};
@@ -116,6 +127,12 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		remove_all_actions( 'litespeed_control_set_nocache' );
 		remove_all_filters( 'password_reset_expiration' );
 		remove_all_filters( PasswordSetup::COOKIE_FILTER );
+		remove_all_filters( Mailer::FILTER_SUBJECT );
+		remove_all_filters( Mailer::FILTER_BODY );
+		// Test wołający filtr treści WPROST (bez `retrieve_password()`) uzbraja przechwytywanie
+		// i nie ma `finally`, które by je rozbroiło. Uzbrojenie żyje jedno żądanie, a cała suita
+		// jest JEDNYM żądaniem: zostawione przechwyciłoby mail następnego testu.
+		CoreCapture::disarm();
 		$_POST                     = array();
 		$_GET                      = array();
 		$_COOKIE                   = array();
@@ -172,6 +189,28 @@ final class PasswordResetTest extends WP_UnitTestCase {
 			'login' => $login,
 			'email' => $email,
 		);
+	}
+
+	/**
+	 * Wiersze kolejki maili, najstarszy naprzód. Mail odzyskiwania hasła jedzie od Planu 5 przez
+	 * kolejkę (przechwycony na `pre_wp_mail`), więc dowodem wysłania jest wiersz, nie `$this->mails`.
+	 *
+	 * @return list<array<string, mixed>>
+	 */
+	private function queuedMails(): array {
+		return MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 20 );
+	}
+
+	/**
+	 * Stwierdza, że żadnego maila nie wysłano ŻADNĄ z dwóch dróg: ani wprost do transportu poczty,
+	 * ani przez kolejkę. Sprawdzenie samego transportu przestało być dowodem, gdy mail odzyskiwania
+	 * przeszedł na kolejkę.
+	 *
+	 * @param string $why Komunikat dla nieudanej asercji.
+	 */
+	private function assertNoMailAtAll( string $why ): void {
+		$this->assertSame( array(), $this->mails, $why );
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ), $why );
 	}
 
 	/**
@@ -388,13 +427,18 @@ final class PasswordResetTest extends WP_UnitTestCase {
 
 		$this->assertSame( PasswordReset::RESULT_SENT, $this->request( $account['email'] ) );
 
-		$this->assertCount( 1, $this->mails, 'Znany adres dostaje dokładnie jedną wiadomość.' );
-		$mail = $this->mails[0];
-		$this->assertSame( $account['email'], $mail['to'] );
+		// Mail jedzie od Planu 5 przez kolejkę: wiersz jest dowodem wysłania, a transport poczty
+		// wiadomości rdzenia nie widzi, bo przechwycenie wyszło z `wp_mail()` przed nim.
+		$this->assertSame( array(), $this->mails, 'Mail rdzenia nie może dojść do transportu poczty.' );
+		$queued = $this->queuedMails();
+		$this->assertCount( 1, $queued, 'Znany adres dostaje dokładnie jedną wiadomość.' );
+		$mail = $queued[0];
+		$this->assertSame( $account['email'], $mail['recipient'] );
+		$this->assertSame( MailKind::PasswordReset->value, $mail['kind'] );
 
-		$link = $this->linkFrom( (string) $mail['message'] );
+		$link = $this->linkFrom( (string) $mail['body'] );
 		$this->assertNotSame( '', $link, 'W mailu nie ma odnośnika z kluczem.' );
-		$this->assertStringNotContainsString( 'wp-login.php', (string) $mail['message'], 'Mail niesie odnośnik rdzenia, a nie strony wtyczki.' );
+		$this->assertStringNotContainsString( 'wp-login.php', (string) $mail['body'], 'Mail niesie odnośnik rdzenia, a nie strony wtyczki.' );
 
 		$args = $this->argsOf( $link );
 		$this->assertArrayHasKey( PasswordReset::KEY_ARG, $args, 'Odnośnik nie niesie klucza.' );
@@ -440,13 +484,20 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		// Temat też zostaje rdzeniowy: nasz temat nad treścią rdzenia byłby wiadomością złożoną
 		// z dwóch różnych maili.
 		$this->assertStringContainsString( 'Password Reset', (string) $this->mails[0]['subject'] );
+		// Bez strony odzyskiwania NIC się nie uzbraja, więc do kolejki nie trafia żaden wiersz:
+		// mail rdzenia idzie drogą rdzenia i w logu wysyłek wtyczki go nie ma.
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ), 'Mail rdzenia nie może trafić do kolejki.' );
+		$this->assertNull(
+			CoreCapture::capture( null, array( 'to' => $account['email'] ) ),
+			'Bez strony odzyskiwania przechwytywanie nie może zostać uzbrojone.'
+		);
 	}
 
 	public function test_an_unknown_address_sends_no_mail(): void {
 		// Ta sama ODPOWIEDŹ nie znaczy ta sama praca.
 		$this->assertSame( PasswordReset::RESULT_SENT, $this->request( 'nikogo@przyklad.test' ) );
 
-		$this->assertSame( array(), $this->mails, 'Maila do nikogo nie wysyłamy.' );
+		$this->assertNoMailAtAll( 'Maila do nikogo nie wysyłamy.' );
 	}
 
 	public function test_exhausting_the_email_threshold_does_not_block_another_address_from_the_same_ip(): void {
@@ -458,9 +509,10 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		}
 		$this->assertSame( PasswordReset::RESULT_TOO_MANY, $this->request( $one['email'] ), 'Żądanie poza progiem per adres musi dostać odmowę.' );
 
-		$this->mails = array();
+		$queuedBefore = MailQueueRepository::count_by_status( '' );
 		$this->assertSame( PasswordReset::RESULT_SENT, $this->request( $two['email'] ), 'Próg jednego adresu zamknął drugi adres z tego samego IP.' );
-		$this->assertCount( 1, $this->mails, 'Drugi adres nie dostał maila.' );
+		$this->assertSame( $queuedBefore + 1, MailQueueRepository::count_by_status( '' ), 'Drugi adres nie dostał maila.' );
+		$this->assertSame( $two['email'], $this->queuedMails()[ $queuedBefore ]['recipient'] );
 	}
 
 	public function test_exhausting_the_ip_threshold_refuses_before_any_mail_is_sent(): void {
@@ -471,7 +523,7 @@ final class PasswordResetTest extends WP_UnitTestCase {
 
 		$this->assertSame( PasswordReset::RESULT_TOO_MANY, $this->request( $account['email'] ) );
 
-		$this->assertSame( array(), $this->mails, 'Przy wyczerpanym progu per IP mail nie może wyjść.' );
+		$this->assertNoMailAtAll( 'Przy wyczerpanym progu per IP mail nie może wyjść.' );
 		// Odmowa progu per IP stoi PRZED progiem per adres, więc budżet adresu jest nietknięty:
 		// inaczej obcy ruch z jednego IP zabierałby właścicielowi adresu jego własne żądania.
 		$this->assertSame( 0, RateLimiter::count( PasswordReset::BUCKET_EMAIL . wp_hash( strtolower( $account['email'] ) ) ) );
@@ -507,7 +559,7 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		);
 
 		$this->assertSame( PasswordReset::RESULT_SENT, $result, 'Bot dostaje tę samą odpowiedź, co człowiek.' );
-		$this->assertSame( array(), $this->mails, 'Wypełniona pułapka nie wysyła maila.' );
+		$this->assertNoMailAtAll( 'Wypełniona pułapka nie wysyła maila.' );
 		// Pułapka stoi PRZED progami: odmowa nic nie kosztuje, więc bot nie zabiera budżetu nikomu.
 		// Jedyny licznik, który odmowa rusza, to WŁASNY budżet wierszy w logu — a dwa nazwane
 		// liczniki przy dwóch istniejących znaczą, że żadnego trzeciego nie ma.
@@ -523,7 +575,7 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		$this->assertSame( PasswordReset::RESULT_STALE, $this->submit( array( PasswordReset::EMAIL_FIELD => $account['email'] ), 'przedawniony' ), 'Nonce o złej wartości.' );
 
 		$this->assertNotSame( '', PasswordReset::message_for( PasswordReset::RESULT_STALE ), 'Odmowa bez komunikatu to pusta strona.' );
-		$this->assertSame( array(), $this->mails, 'Odmowa nonce\'a nie wysyła maila.' );
+		$this->assertNoMailAtAll( 'Odmowa nonce\'a nie wysyła maila.' );
 		// Odmowa nonce'a nie zużywa PROGU; własny budżet wierszy w logu zużywa (patrz reguła 4),
 		// a dwa nazwane liczniki przy jednym istniejącym znaczą, że innego nie ma.
 		$this->assertSame( 0, RateLimiter::count( PasswordReset::BUCKET_IP . self::IP ), 'Odmowa nonce\'a zużyła próg per IP.' );
@@ -549,7 +601,7 @@ final class PasswordResetTest extends WP_UnitTestCase {
 			$this->assertStringContainsString( 'POST', $e->getMessage() );
 		}
 
-		$this->assertSame( array(), $this->mails, 'Żądanie GET nie może wysłać maila.' );
+		$this->assertNoMailAtAll( 'Żądanie GET nie może wysłać maila.' );
 	}
 
 	public function test_the_log_entry_carries_no_address_in_the_clear(): void {
@@ -763,6 +815,49 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		// wejścia, którego nie rozumiemy.
 		$account = $this->account();
 		$this->assertNotSame( $core, apply_filters( 'retrieve_password_message', $core, $this->keyFor( $account['id'] ), $account['login'] ) );
+	}
+
+	public function test_an_empty_rendered_template_does_not_reach_core(): void {
+		// Pusta treść po renderze nie może dojechać do rdzenia: `retrieve_password()` sprawdza
+		// `! $message` i przy pustej treści KOŃCZY z wynikiem „wysłano", nie wysyłając nic — czyli
+		// żądanie raportuje sukces, a lekarz nie dostaje maila. Lepsza treść rdzenia niż żadna.
+		add_filter( Mailer::FILTER_BODY, static fn () => '   ' );
+		$account = $this->account();
+		$core    = 'Treść rdzenia.';
+
+		$this->assertSame( $core, PasswordReset::mail_message( $core, $this->keyFor( $account['id'] ), $account['login'] ) );
+		$this->assertNull(
+			CoreCapture::capture( null, array( 'to' => $account['email'] ) ),
+			'Przy pustym renderze nic nie wolno uzbroić: mail rdzenia idzie drogą rdzenia.'
+		);
+	}
+
+	public function test_an_empty_rendered_subject_does_not_reach_core(): void {
+		// O każdym polu rozstrzygamy OSOBNO, tak jak repozytorium szablonów odwraca się do treści
+		// domyślnej per pole. Pusty temat rdzeń wysłałby: wiadomość bez tematu to dla odbiorcy
+		// zagadka, a dla filtrów antyspamowych sygnał.
+		add_filter( Mailer::FILTER_SUBJECT, static fn () => '   ' );
+		$core = 'Temat rdzenia 123';
+
+		$this->assertSame( $core, PasswordReset::mail_title( $core ) );
+	}
+
+	public function test_an_arming_does_not_survive_a_request_without_a_send(): void {
+		// Rdzeń przy pustej treści wychodzi z `retrieve_password()` PRZED `wp_mail()`, więc
+		// przechwytywanie nie rozbroi się samo. Uzbrojenie, które zostaje, przechwyciłoby następny
+		// mail WordPressa w tym żądaniu — dlatego rozbrojenie jedzie w `finally`.
+		$account = $this->account();
+		$silence = static fn () => '';
+		add_filter( 'retrieve_password_message', $silence, 11 );
+
+		$this->assertSame( PasswordReset::RESULT_SENT, $this->request( $account['email'] ) );
+
+		remove_filter( 'retrieve_password_message', $silence, 11 );
+		$this->assertNoMailAtAll( 'Przy pustej treści rdzeń nie wysyła nic.' );
+		$this->assertNull(
+			CoreCapture::capture( null, array( 'to' => $account['email'] ) ),
+			'Uzbrojenie przeżyło żądanie, w którym rdzeń nie doszedł do wp_mail().'
+		);
 	}
 
 	public function test_a_live_link_gets_the_form_for_the_new_password(): void {
