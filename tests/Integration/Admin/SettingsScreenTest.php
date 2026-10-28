@@ -202,6 +202,70 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		$this->assertMatchesRegularExpression( '/name="pusers_registration_limit_per_email_per_hour" value="7"/', $html );
 	}
 
+	public function test_the_five_login_and_recovery_settings_are_saved(): void {
+		$page = self::factory()->post->create( array( 'post_type' => 'page', 'post_status' => 'publish' ) );
+		$this->asAdminPosting( 'pusers_save_settings', array(
+			'login_limit_per_hour'             => '301',
+			'login_limit_per_account_per_hour' => '11',
+			'reset_limit_per_hour'             => '61',
+			'reset_limit_per_email_per_hour'   => '6',
+			'after_login_page_id'              => (string) $page,
+		) );
+		SettingsScreen::handle_save();
+
+		$saved = SettingsRepository::get();
+		$this->assertSame( array( 301, 11, 61, 6, $page ), array( $saved->loginLimitPerHour, $saved->loginLimitPerAccountPerHour, $saved->resetLimitPerHour, $saved->resetLimitPerEmailPerHour, $saved->afterLoginPageId ) );
+	}
+
+	public function test_an_empty_form_does_not_zero_the_new_thresholds(): void {
+		SettingsRepository::save( Settings::fromArray( array(
+			'login_limit_per_hour'             => 301,
+			'login_limit_per_account_per_hour' => 11,
+			'reset_limit_per_hour'             => 61,
+			'reset_limit_per_email_per_hour'   => 6,
+			'after_login_page_id'              => 14,
+		) ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'time_trap_seconds' => '9' ) );
+		SettingsScreen::handle_save();
+
+		$saved = SettingsRepository::get();
+		$this->assertSame( array( 301, 11, 61, 6, 14 ), array( $saved->loginLimitPerHour, $saved->loginLimitPerAccountPerHour, $saved->resetLimitPerHour, $saved->resetLimitPerEmailPerHour, $saved->afterLoginPageId ) );
+	}
+
+	public function test_a_zero_threshold_posted_from_the_form_keeps_the_default_not_a_closed_gate(): void {
+		$this->asAdminPosting( 'pusers_save_settings', array( 'login_limit_per_hour' => '0', 'reset_limit_per_email_per_hour' => '' ) );
+		SettingsScreen::handle_save();
+
+		$saved = SettingsRepository::get();
+		$this->assertSame( 200, $saved->loginLimitPerHour );
+		$this->assertSame( 3, $saved->resetLimitPerEmailPerHour );
+	}
+
+	public function test_the_screen_shows_the_five_new_fields_and_the_lockout_warning(): void {
+		SettingsRepository::save( Settings::fromArray( array(
+			'login_limit_per_hour'             => 301,
+			'login_limit_per_account_per_hour' => 11,
+			'reset_limit_per_hour'             => 61,
+			'reset_limit_per_email_per_hour'   => 6,
+		) ) );
+		self::factory()->post->create( array( 'post_type' => 'page', 'post_status' => 'publish', 'post_title' => 'Panel' ) );
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+		ob_start();
+		SettingsScreen::render();
+		$html = (string) ob_get_clean();
+
+		$this->assertMatchesRegularExpression( '/name="pusers_login_limit_per_hour" value="301"/', $html );
+		$this->assertMatchesRegularExpression( '/name="pusers_login_limit_per_account_per_hour" value="11"/', $html );
+		$this->assertMatchesRegularExpression( '/name="pusers_reset_limit_per_hour" value="61"/', $html );
+		$this->assertMatchesRegularExpression( '/name="pusers_reset_limit_per_email_per_hour" value="6"/', $html );
+		$this->assertStringContainsString( "name='pusers_after_login_page_id'", $html );
+		foreach ( array( 'Limit nieudanych logowań z jednego adresu na godzinę', 'Limit nieudanych logowań na jedno konto na godzinę', 'Limit żądań odzyskania hasła z jednego adresu na godzinę', 'Limit żądań odzyskania hasła na jeden adres e-mail na godzinę', 'Strona po zalogowaniu' ) as $label ) {
+			$this->assertStringContainsString( $label, $html );
+		}
+		$this->assertStringContainsString( 'Blokada jest czasowa (60 minut) i redakcja może ją zdjąć.', $html );
+	}
+
 	public function test_the_screen_tells_the_administrator_which_proxy_header_not_to_name(): void {
 		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
 

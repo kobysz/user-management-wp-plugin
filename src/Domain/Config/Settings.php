@@ -32,6 +32,13 @@ final class Settings {
 	private const DEFAULT_TIME_TRAP   = 3;
 	private const DEFAULT_EMAIL_LIMIT = 3;
 
+	// Progi logowania i odzyskiwania hasła są wysokie świadomie: szpital za jednym adresem
+	// wyjściowym nie może zostać odcięty przy domyślnej konfiguracji.
+	private const DEFAULT_LOGIN_LIMIT         = 200;
+	private const DEFAULT_LOGIN_ACCOUNT_LIMIT = 10;
+	private const DEFAULT_RESET_LIMIT         = 50;
+	private const DEFAULT_RESET_EMAIL_LIMIT   = 3;
+
 	/**
 	 * Konstruktor.
 	 *
@@ -39,11 +46,16 @@ final class Settings {
 	 * @param int                $loginPageId            Identyfikator strony logowania (0 = brak).
 	 * @param int                $registerPageId         Identyfikator strony rejestracji (0 = brak).
 	 * @param int                $resetPageId            Identyfikator strony resetu hasła (0 = brak).
+	 * @param int                $afterLoginPageId       Strona po zalogowaniu konta bez uprawnień redakcyjnych (0 = strona główna).
 	 * @param array<int, string> $notifyEmails           Adresy redakcji powiadamiane o zgłoszeniach.
 	 * @param int                $confirmationTokenHours Ważność tokenu potwierdzenia, w godzinach.
 	 * @param int                $unconfirmedPurgeDays   Po ilu dniach usuwać niepotwierdzone konta.
 	 * @param int                $rateLimitPerHour       Limit zgłoszeń z jednego adresu na godzinę.
 	 * @param int                $registrationLimitPerEmailPerHour Limit prób rejestracji tego samego adresu e-mail na godzinę.
+	 * @param int                $loginLimitPerHour      Limit nieudanych logowań z jednego adresu IP na godzinę.
+	 * @param int                $loginLimitPerAccountPerHour Limit nieudanych logowań na jedno konto na godzinę.
+	 * @param int                $resetLimitPerHour      Limit żądań odzyskania hasła z jednego adresu IP na godzinę.
+	 * @param int                $resetLimitPerEmailPerHour Limit żądań odzyskania hasła na jeden adres e-mail na godzinę.
 	 * @param int                $timeTrapSeconds        Minimalny czas wypełniania formularza (0 = wyłączone).
 	 * @param string             $trustedProxyHeader     Nazwa zaufanego nagłówka serwera z adresem klienta.
 	 * @param array<int, string> $rejectionReasons       Gotowe powody odrzucenia zgłoszenia.
@@ -57,11 +69,16 @@ final class Settings {
 		public readonly int $loginPageId,
 		public readonly int $registerPageId,
 		public readonly int $resetPageId,
+		public readonly int $afterLoginPageId,
 		public readonly array $notifyEmails,
 		public readonly int $confirmationTokenHours,
 		public readonly int $unconfirmedPurgeDays,
 		public readonly int $rateLimitPerHour,
 		public readonly int $registrationLimitPerEmailPerHour,
+		public readonly int $loginLimitPerHour,
+		public readonly int $loginLimitPerAccountPerHour,
+		public readonly int $resetLimitPerHour,
+		public readonly int $resetLimitPerEmailPerHour,
 		public readonly int $timeTrapSeconds,
 		public readonly string $trustedProxyHeader,
 		public readonly array $rejectionReasons,
@@ -82,11 +99,16 @@ final class Settings {
 			0,
 			0,
 			0,
+			0,
 			array(),
 			self::DEFAULT_TOKEN_HOURS,
 			self::DEFAULT_PURGE_DAYS,
 			self::DEFAULT_RATE_LIMIT,
 			self::DEFAULT_EMAIL_LIMIT,
+			self::DEFAULT_LOGIN_LIMIT,
+			self::DEFAULT_LOGIN_ACCOUNT_LIMIT,
+			self::DEFAULT_RESET_LIMIT,
+			self::DEFAULT_RESET_EMAIL_LIMIT,
 			self::DEFAULT_TIME_TRAP,
 			'',
 			array(),
@@ -112,11 +134,16 @@ final class Settings {
 			self::integer( $raw, 'login_page_id', $d->loginPageId, 0 ),
 			self::integer( $raw, 'register_page_id', $d->registerPageId, 0 ),
 			self::integer( $raw, 'reset_page_id', $d->resetPageId, 0 ),
+			self::integer( $raw, 'after_login_page_id', $d->afterLoginPageId, 0 ),
 			self::emails( $raw['notify_emails'] ?? array() ),
 			self::integer( $raw, 'confirmation_token_hours', $d->confirmationTokenHours, 1 ),
 			self::integer( $raw, 'unconfirmed_purge_days', $d->unconfirmedPurgeDays, 1 ),
 			self::integer( $raw, 'rate_limit_per_hour', $d->rateLimitPerHour, 1 ),
 			self::integer( $raw, 'registration_limit_per_email_per_hour', $d->registrationLimitPerEmailPerHour, 1 ),
+			self::positive( $raw, 'login_limit_per_hour', $d->loginLimitPerHour ),
+			self::positive( $raw, 'login_limit_per_account_per_hour', $d->loginLimitPerAccountPerHour ),
+			self::positive( $raw, 'reset_limit_per_hour', $d->resetLimitPerHour ),
+			self::positive( $raw, 'reset_limit_per_email_per_hour', $d->resetLimitPerEmailPerHour ),
 			self::integer( $raw, 'time_trap_seconds', $d->timeTrapSeconds, 0 ),
 			self::headerName( self::text( $raw, 'trusted_proxy_header' ) ),
 			self::texts( $raw['rejection_reasons'] ?? array() ),
@@ -138,11 +165,16 @@ final class Settings {
 			'login_page_id'                         => $this->loginPageId,
 			'register_page_id'                      => $this->registerPageId,
 			'reset_page_id'                         => $this->resetPageId,
+			'after_login_page_id'                   => $this->afterLoginPageId,
 			'notify_emails'                         => $this->notifyEmails,
 			'confirmation_token_hours'              => $this->confirmationTokenHours,
 			'unconfirmed_purge_days'                => $this->unconfirmedPurgeDays,
 			'rate_limit_per_hour'                   => $this->rateLimitPerHour,
 			'registration_limit_per_email_per_hour' => $this->registrationLimitPerEmailPerHour,
+			'login_limit_per_hour'                  => $this->loginLimitPerHour,
+			'login_limit_per_account_per_hour'      => $this->loginLimitPerAccountPerHour,
+			'reset_limit_per_hour'                  => $this->resetLimitPerHour,
+			'reset_limit_per_email_per_hour'        => $this->resetLimitPerEmailPerHour,
 			'time_trap_seconds'                     => $this->timeTrapSeconds,
 			'trusted_proxy_header'                  => $this->trustedProxyHeader,
 			'rejection_reasons'                     => $this->rejectionReasons,
@@ -194,6 +226,23 @@ final class Settings {
 			return $fallback;
 		}
 		return max( $min, (int) $value );
+	}
+
+	/**
+	 * Czyta liczbę całkowitą dodatnią; zero, wartość ujemna i nienumeryczna dają wartość
+	 * domyślną. Próg 0 zamknąłby logowanie dla wszystkich, więc nie jest dopuszczalny.
+	 *
+	 * @param array<string, mixed> $raw      Zapisane ustawienia.
+	 * @param string               $name     Nazwa pola.
+	 * @param int                  $fallback Wartość domyślna.
+	 * @return int
+	 */
+	private static function positive( array $raw, string $name, int $fallback ): int {
+		$value = $raw[ $name ] ?? null;
+		if ( ! is_numeric( $value ) || (int) $value < 1 ) {
+			return $fallback;
+		}
+		return (int) $value;
 	}
 
 	/**

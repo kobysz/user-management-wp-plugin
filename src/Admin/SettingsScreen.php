@@ -45,10 +45,15 @@ final class SettingsScreen {
 		'login_page_id',
 		'register_page_id',
 		'reset_page_id',
+		'after_login_page_id',
 		'confirmation_token_hours',
 		'unconfirmed_purge_days',
 		'rate_limit_per_hour',
 		'registration_limit_per_email_per_hour',
+		'login_limit_per_hour',
+		'login_limit_per_account_per_hour',
+		'reset_limit_per_hour',
+		'reset_limit_per_email_per_hour',
 		'time_trap_seconds',
 		'trusted_proxy_header',
 		'acf_group_key',
@@ -228,9 +233,10 @@ final class SettingsScreen {
 	 */
 	private static function render_pages_section( Settings $settings ): void {
 		$pages = array(
-			'login_page_id'    => array( __( 'Strona logowania', 'portal-users' ), $settings->loginPageId ),
-			'register_page_id' => array( __( 'Strona rejestracji', 'portal-users' ), $settings->registerPageId ),
-			'reset_page_id'    => array( __( 'Strona resetu hasła', 'portal-users' ), $settings->resetPageId ),
+			'login_page_id'       => array( __( 'Strona logowania', 'portal-users' ), $settings->loginPageId ),
+			'register_page_id'    => array( __( 'Strona rejestracji', 'portal-users' ), $settings->registerPageId ),
+			'reset_page_id'       => array( __( 'Strona resetu hasła', 'portal-users' ), $settings->resetPageId ),
+			'after_login_page_id' => array( __( 'Strona po zalogowaniu', 'portal-users' ), $settings->afterLoginPageId ),
 		);
 		foreach ( $pages as $key => $page ) {
 			self::row_start( $page[0], $key );
@@ -278,6 +284,10 @@ final class SettingsScreen {
 			'unconfirmed_purge_days'                => array( __( 'Usuwanie niepotwierdzonych kont po (dniach)', 'portal-users' ), $settings->unconfirmedPurgeDays, 1 ),
 			'rate_limit_per_hour'                   => array( __( 'Limit zgłoszeń z jednego adresu na godzinę', 'portal-users' ), $settings->rateLimitPerHour, 1 ),
 			'registration_limit_per_email_per_hour' => array( __( 'Limit rejestracji tego samego adresu e-mail na godzinę', 'portal-users' ), $settings->registrationLimitPerEmailPerHour, 1 ),
+			'login_limit_per_hour'                  => array( __( 'Limit nieudanych logowań z jednego adresu na godzinę', 'portal-users' ), $settings->loginLimitPerHour, 1 ),
+			'login_limit_per_account_per_hour'      => array( __( 'Limit nieudanych logowań na jedno konto na godzinę', 'portal-users' ), $settings->loginLimitPerAccountPerHour, 1 ),
+			'reset_limit_per_hour'                  => array( __( 'Limit żądań odzyskania hasła z jednego adresu na godzinę', 'portal-users' ), $settings->resetLimitPerHour, 1 ),
+			'reset_limit_per_email_per_hour'        => array( __( 'Limit żądań odzyskania hasła na jeden adres e-mail na godzinę', 'portal-users' ), $settings->resetLimitPerEmailPerHour, 1 ),
 			'time_trap_seconds'                     => array( __( 'Minimalny czas wypełniania formularza (sekundy, 0 = wyłączone)', 'portal-users' ), $settings->timeTrapSeconds, 0 ),
 		);
 		foreach ( $numbers as $key => $number ) {
@@ -290,6 +300,10 @@ final class SettingsScreen {
 			);
 			if ( 'rate_limit_per_hour' === $key ) {
 				self::description( __( 'Liczą się wszystkie próby wysłania formularza z jednego adresu IP, także błędne. Jeśli użytkownicy portalu wychodzą do internetu przez wspólny adres (np. szpital, uczelnia), wartość należy podnieść.', 'portal-users' ) );
+			}
+			if ( 'login_limit_per_account_per_hour' === $key ) {
+				// Ten próg daje się wykorzystać do czasowego zablokowania znanego konta: to świadomy koszt wymogu specyfikacji.
+				self::description( __( 'Blokada jest czasowa (60 minut) i redakcja może ją zdjąć.', 'portal-users' ) );
 			}
 			self::row_end();
 		}

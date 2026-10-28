@@ -112,17 +112,67 @@ final class SettingsTest extends TestCase {
 		$this->assertSame( 'HTTP_X_FORWARDED_FOR', Settings::fromArray( array( 'trusted_proxy_header' => ' x-forwarded-for ' ) )->trustedProxyHeader );
 	}
 
+	public function test_new_keys_fall_back_to_defaults_when_absent(): void {
+		// Zapisane konfiguracje nie znają nowych kluczy; dopełnienie musi zadziałać, inaczej
+		// aktualizacja wtyczki zeruje progi i odcina ludzi.
+		$settings = Settings::fromArray( array() );
+
+		$this->assertSame( 200, $settings->loginLimitPerHour );
+		$this->assertSame( 10, $settings->loginLimitPerAccountPerHour );
+		$this->assertSame( 50, $settings->resetLimitPerHour );
+		$this->assertSame( 3, $settings->resetLimitPerEmailPerHour );
+		$this->assertSame( 0, $settings->afterLoginPageId );
+		$this->assertEquals( $settings, Settings::defaults() );
+	}
+
+	public function test_a_threshold_of_zero_or_below_falls_back_to_the_default(): void {
+		// Próg 0 znaczyłby „nikt nigdy", czyli zamknięte logowanie dla wszystkich.
+		$this->assertSame( 200, Settings::fromArray( array( 'login_limit_per_hour' => 0 ) )->loginLimitPerHour );
+		$this->assertSame( 200, Settings::fromArray( array( 'login_limit_per_hour' => -5 ) )->loginLimitPerHour );
+		$this->assertSame( 10, Settings::fromArray( array( 'login_limit_per_account_per_hour' => 0 ) )->loginLimitPerAccountPerHour );
+		$this->assertSame( 50, Settings::fromArray( array( 'reset_limit_per_hour' => -1 ) )->resetLimitPerHour );
+		$this->assertSame( 3, Settings::fromArray( array( 'reset_limit_per_email_per_hour' => 'bzdura' ) )->resetLimitPerEmailPerHour );
+	}
+
+	public function test_the_after_login_page_is_never_negative(): void {
+		$this->assertSame( 0, Settings::fromArray( array( 'after_login_page_id' => -3 ) )->afterLoginPageId );
+	}
+
+	public function test_the_round_trip_through_to_array_preserves_new_keys(): void {
+		$settings = Settings::fromArray(
+			array(
+				'login_limit_per_hour'             => 77,
+				'login_limit_per_account_per_hour' => 21,
+				'reset_limit_per_hour'             => 33,
+				'reset_limit_per_email_per_hour'   => 8,
+				'after_login_page_id'              => 12,
+			)
+		);
+		$again    = Settings::fromArray( $settings->toArray() );
+
+		$this->assertSame( 77, $again->loginLimitPerHour );
+		$this->assertSame( 21, $again->loginLimitPerAccountPerHour );
+		$this->assertSame( 33, $again->resetLimitPerHour );
+		$this->assertSame( 8, $again->resetLimitPerEmailPerHour );
+		$this->assertSame( 12, $again->afterLoginPageId );
+	}
+
 	public function test_round_trip_preserves_non_default_values_in_every_field(): void {
 		$s = new Settings(
 			false,
 			11,
 			12,
 			13,
+			15,
 			array( 'redakcja@example.test' ),
 			24,
 			14,
 			20,
 			4,
+			301,
+			11,
+			61,
+			6,
 			5,
 			'HTTP_X_REAL_IP',
 			array( 'numer nieprawidłowy' ),
@@ -138,11 +188,16 @@ final class SettingsTest extends TestCase {
 				'login_page_id',
 				'register_page_id',
 				'reset_page_id',
+				'after_login_page_id',
 				'notify_emails',
 				'confirmation_token_hours',
 				'unconfirmed_purge_days',
 				'rate_limit_per_hour',
 				'registration_limit_per_email_per_hour',
+				'login_limit_per_hour',
+				'login_limit_per_account_per_hour',
+				'reset_limit_per_hour',
+				'reset_limit_per_email_per_hour',
 				'time_trap_seconds',
 				'trusted_proxy_header',
 				'rejection_reasons',
@@ -154,6 +209,8 @@ final class SettingsTest extends TestCase {
 			array_keys( $s->toArray() )
 		);
 		$this->assertSame( 4, Settings::fromArray( $s->toArray() )->registrationLimitPerEmailPerHour );
+		$again = Settings::fromArray( $s->toArray() );
+		$this->assertSame( array( 301, 11, 61, 6, 15 ), array( $again->loginLimitPerHour, $again->loginLimitPerAccountPerHour, $again->resetLimitPerHour, $again->resetLimitPerEmailPerHour, $again->afterLoginPageId ) );
 		$this->assertSame( 20, Settings::fromArray( $s->toArray() )->rateLimitPerHour, 'Dwa progi to dwa osobne pola.' );
 		$this->assertSame( $s->toArray(), Settings::fromArray( $s->toArray() )->toArray() );
 	}
