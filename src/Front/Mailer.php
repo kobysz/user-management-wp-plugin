@@ -28,9 +28,9 @@ use PortalUsers\Persistence\UserMeta;
  * użytkownika nie czeka na serwer poczty, a na pytanie „czy ten mail wyszedł" odpowiada log wysyłek.
  *
  * Temat i treść bierze `MailQueue` z szablonu rodzaju i przepuszcza przez `FILTER_SUBJECT` / `FILTER_BODY`.
- * Stałe `KIND_*` zostają literałami równymi wartościom `MailKind`: PHP 8.1 nie przyjmuje
- * `MailKind::Confirmation->value` w wyrażeniu stałej, a wyrzucenie stałych zepsułoby kontrakt filtrów
- * z Planu 3. Zgodność literałów z enumem pilnuje test jednostkowy.
+ * Rodzaj `$kind` w tych filtrach to od Planu 5 CAŁA domena `MailKind`, nie trzy wartości, które znał
+ * Plan 3: dochodzą `editorial_auto`, `application_received`, `approved`, `rejected` i `password_reset`.
+ * Każdy ma tu swoją stałą `KIND_*`, bo obcy kod rozgałęzia się po stałych, a nie po enumie.
  *
  * Odbiorcy redakcji pochodzą WYŁĄCZNIE z ustawień wtyczki (lista globalna, nadpisana adresem profesji).
  * Adres administratora witryny nie jest tu nigdy źródłem: nie zawsze główny administrator odpowiada za akceptację.
@@ -47,9 +47,20 @@ final class Mailer {
 	 */
 	public const FILTER_SUBJECT = 'pusers_mail_subject';
 
-	public const KIND_CONFIRMATION = 'confirmation';
-	public const KIND_EDITORIAL    = 'editorial';
-	public const KIND_EXISTING     = 'existing_account';
+	/**
+	 * Rodzaje wiadomości dla filtrów: jedna stała na każdy `MailKind`. Rodzaj bez stałej to gałąź,
+	 * której nikt w obcym kodzie nie napisze — tak `editorial_auto` cicho omijałby filtr pisany pod
+	 * `KIND_EDITORIAL`. Literały, bo PHP 8.1 nie przyjmuje `MailKind::Case->value` w wyrażeniu stałej;
+	 * kompletność i zgodność z enumem pilnuje test iterujący po `MailKind::cases()`.
+	 */
+	public const KIND_CONFIRMATION         = 'confirmation';
+	public const KIND_EDITORIAL            = 'editorial';
+	public const KIND_EDITORIAL_AUTO       = 'editorial_auto';
+	public const KIND_EXISTING             = 'existing_account';
+	public const KIND_APPLICATION_RECEIVED = 'application_received';
+	public const KIND_APPROVED             = 'approved';
+	public const KIND_REJECTED             = 'rejected';
+	public const KIND_PASSWORD_RESET       = 'password_reset';
 
 	/**
 	 * Zdarzenie w logu: powiadomienie redakcji nie miało komu iść.
@@ -138,8 +149,12 @@ final class Mailer {
 	/**
 	 * Informuje właściciela istniejącego konta, że ktoś próbował zarejestrować jego adres. Konto się nie zmienia.
 	 *
-	 * Klucz odporności niesie bieżącą godzinę UTC: najwyżej jeden taki mail na godzinę, zgodnie z progiem
-	 * `may_send_to()`. Osoba trzecia zgłaszająca cudzy adres nie zasypie właściciela.
+	 * Klucz odporności niesie bieżącą godzinę UTC, więc jest ŚCIŚLEJSZY niż próg `may_send_to()` (ten
+	 * przepuszcza kilka prób na godzinę) i taki ma być: właściciel adresu nie prosił o żadną z tych
+	 * wiadomości, a osoba trzecia zgłaszająca cudzy adres nie ma go czym zasypać. Skutek, świadomy:
+	 * w logu zostaje jeden wiersz na adres na godzinę, nie jeden na próbę. Zliczanie prób jest zadaniem
+	 * licznika w `may_send_to()`; `event_log` jest logiem DECYZJI, a nie dziennikiem cudzych żądań —
+	 * poszerzanie nieuwierzytelnionego zapisu do tabeli audytu ten projekt już raz przepłacił.
 	 *
 	 * @param int $userId Identyfikator istniejącego użytkownika.
 	 */

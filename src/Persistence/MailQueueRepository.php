@@ -31,11 +31,24 @@ final class MailQueueRepository {
 	private const TABLE = 'mail_queue';
 
 	/**
+	 * Szerokość kolumny `dedupe_key`. Publiczna, bo wołający musi odmówić PRZED zapisem: wpdb zdejmuje
+	 * tryby ścisłe SQL, więc dłuższa wartość nie daje błędu, tylko ciche obcięcie (patrz `insert()`).
+	 */
+	public const DEDUPE_KEY_MAX = 191;
+
+	/**
+	 * Szerokość kolumny `recipient`. Publiczna z tego samego powodu: `is_email()` przyjmuje adres do
+	 * 254 znaków, więc legalny długi adres zapisałby się obcięty i mail poszedłby na adres, którego nikt nie ma.
+	 */
+	public const RECIPIENT_MAX = 191;
+
+	/**
 	 * Wstawia wiersz w stanie queued. Duplikat `dedupe_key` jest po cichu pomijany.
 	 *
-	 * Klucz `dedupe_key` ma co najwyżej 191 znaków. wpdb zdejmuje tryby ścisłe SQL, więc dłuższy
-	 * MySQL obcina bez błędu: dwa różne klucze o wspólnych 191 znakach zderzyłyby się na indeksie,
+	 * Klucz `dedupe_key` ma co najwyżej DEDUPE_KEY_MAX znaków. wpdb zdejmuje tryby ścisłe SQL, więc dłuższy
+	 * MySQL obcina bez błędu: dwa różne klucze o wspólnym przedrostku zderzyłyby się na indeksie,
 	 * insert() zwróciłby false, a wywołujący odczytałby to jako "już w kolejce" i mail by nie wyszedł.
+	 * To samo dotyczy `recipient` i RECIPIENT_MAX, tylko skutkiem jest mail na obcięty adres.
 	 *
 	 * @param array{created_at:string,scheduled_at:string,kind:string,dedupe_key:string,user_id:int,recipient:string,subject:string,body:string} $row Dane wiersza.
 	 * @return bool True tylko gdy wiersz POWSTAŁ.

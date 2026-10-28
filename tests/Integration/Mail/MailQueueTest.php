@@ -196,14 +196,42 @@ final class MailQueueTest extends WP_UnitTestCase {
 	}
 
 	public function test_a_dedupe_key_longer_than_the_index_is_refused_without_a_row(): void {
-		// Kolumna `dedupe_key` ma 191 znaków i UNIQUE, a wpdb pracuje bez trybów ścisłych: dłuższy klucz
-		// MySQL obciąłby po cichu, dwa różne klucze o wspólnym przedrostku zderzyłyby się na indeksie,
+		// Kolumna `dedupe_key` ma UNIQUE, a wpdb pracuje bez trybów ścisłych: dłuższy klucz MySQL
+		// obciąłby po cichu, dwa różne klucze o wspólnym przedrostku zderzyłyby się na indeksie,
 		// insert() zwrócił false, a wołający odczytał to jako „już w kolejce" — mail by nie wyszedł.
 		$userId = $this->account();
 
 		$this->assertFalse(
 			MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), str_repeat( 'x', 200 ) )
 		);
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_a_dedupe_key_that_exactly_fills_the_index_is_accepted(): void {
+		// Granica liczy się w obie strony: pomyłka na „>=" odrzuciłaby klucz mieszczący się co do znaku
+		// i zgubiła mail. Klucz końcowy to baza plus dwukropek plus 16 znaków skrótu odbiorcy.
+		$userId = $this->account();
+		$base   = str_repeat( 'x', MailQueueRepository::DEDUPE_KEY_MAX - 17 );
+
+		$this->assertTrue( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), $base ) );
+		$this->assertFalse(
+			MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), $base . 'x' ),
+			'Jeden znak za dużo już się nie mieści.'
+		);
+		$this->assertSame( MailQueueRepository::DEDUPE_KEY_MAX, strlen( (string) $this->queued()[0]['dedupe_key'] ) );
+		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_a_recipient_longer_than_its_column_is_refused_without_a_row(): void {
+		// `is_email()` przyjmuje adres do 254 znaków (limit RFC), a kolumna `recipient` jest krótsza.
+		// Obcięty adres jest niewidoczny: klucz odporności powstaje z adresu PEŁNEGO, więc pozostaje
+		// spójny, wiersz wygląda normalnie, a mail idzie na adres, którego nikt nie ma.
+		$userId = $this->account();
+		$long   = str_repeat( 'a', 60 ) . '@' . str_repeat( 'b', 60 ) . '.' . str_repeat( 'c', 60 ) . '.przyklad.pl';
+
+		$this->assertGreaterThan( MailQueueRepository::RECIPIENT_MAX, strlen( $long ), 'Adres musi przekraczać kolumnę.' );
+		$this->assertNotFalse( is_email( $long ), 'Adres jest formalnie poprawny: to nie jest test walidacji.' );
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, $long, PlaceholderFactory::for_user( $userId ), 'k' ) );
 		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
 	}
 

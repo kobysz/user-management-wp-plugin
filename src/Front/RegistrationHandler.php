@@ -509,6 +509,11 @@ final class RegistrationHandler {
 	 * Obsługa zgłoszenia na adres, który ma już konto: mail do właściciela o próbie, pod własnym progiem godzinnym
 	 * (osobny kubełek niż ponowna wysyłka) i z naliczeniem licznika rejestracji adresu jak przy adresie wolnym. Nic w koncie się nie zmienia. Do logu trafia tylko wysłana wiadomość.
 	 *
+	 * Od kolejki maili „wysłana" znaczy „zakolejkowana", a klucz odporności tego rodzaju jest ściślejszy
+	 * niż próg `Mailer::may_send_to()` (jeden mail na adres na godzinę, patrz `Mailer::existing_account()`).
+	 * Skutek jest świadomy: kilka prób w tej samej godzinie daje JEDEN wiersz w logu, nie jeden na próbę.
+	 * Zliczanie prób należy do licznika limitu, a `event_log` jest logiem decyzji.
+	 *
 	 * @param int    $existingId Identyfikator istniejącego użytkownika.
 	 * @param string $email      Adres ze zgłoszenia.
 	 */

@@ -601,9 +601,12 @@ final class ConfirmationTest extends WP_UnitTestCase {
 	 */
 	public static function kinds(): array {
 		return array(
-			'confirmation' => array( Mailer::KIND_CONFIRMATION ),
-			'editorial'    => array( Mailer::KIND_EDITORIAL ),
-			'existing'     => array( Mailer::KIND_EXISTING ),
+			'confirmation'   => array( Mailer::KIND_CONFIRMATION ),
+			'editorial'      => array( Mailer::KIND_EDITORIAL ),
+			// Wariant informacyjny jest osobnym rodzajem, więc musi dojść do filtru pod WŁASNĄ nazwą:
+			// bez swojej stałej cicho omijał gałąź pisaną pod KIND_EDITORIAL.
+			'editorial_auto' => array( Mailer::KIND_EDITORIAL_AUTO ),
+			'existing'       => array( Mailer::KIND_EXISTING ),
 		);
 	}
 
@@ -630,9 +633,9 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		}
 
 		match ( $kind ) {
-			Mailer::KIND_CONFIRMATION => Mailer::confirmation( $id, 'https://example.test/?x=1' ),
-			Mailer::KIND_EDITORIAL    => Mailer::editorial( $id ),
-			default                   => Mailer::existing_account( $id ),
+			Mailer::KIND_CONFIRMATION                           => Mailer::confirmation( $id, 'https://example.test/?x=1' ),
+			Mailer::KIND_EDITORIAL, Mailer::KIND_EDITORIAL_AUTO => Mailer::editorial( $id ),
+			default                                             => Mailer::existing_account( $id ),
 		};
 
 		$this->assertCount( 1, $this->mails() );

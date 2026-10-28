@@ -78,6 +78,18 @@ final class MailerTest extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Czyści adres konta wprost w bazie: rdzeń nie pozwala zapisać pustego adresu, a guard
+	 * „konto bez adresu e-mail" trzeba sprawdzić na koncie, które istnieje.
+	 *
+	 * @param int $userId Identyfikator użytkownika.
+	 */
+	private function clear_email( int $userId ): void {
+		global $wpdb;
+		$wpdb->update( $wpdb->users, array( 'user_email' => '' ), array( 'ID' => $userId ) );
+		clean_user_cache( $userId );
+	}
+
+	/**
 	 * Treść pierwszego zakolejkowanego maila.
 	 */
 	private function first_body(): string {
@@ -104,9 +116,24 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
 	}
 
-	public function test_the_public_kind_constants_match_the_enum_values(): void {
-		// Stałe są kontraktem filtrów z Planu 3, a rodzaj w filtrze pochodzi od Planu 5 z enuma:
-		// rozjazd literału z wartością enuma zepsułby cudzy kod bez żadnego śladu.
+	public function test_every_mail_kind_has_a_public_constant_on_the_mailer(): void {
+		// Rodzaj w filtrach pusers_mail_body / pusers_mail_subject pochodzi z enuma, a obcy kod
+		// rozgałęzia się po stałych Mailera. Rodzaj bez stałej to gałąź, której nikt nie napisze:
+		// tak było z `editorial_auto`, który cicho omijał filtr pisany pod `KIND_EDITORIAL`.
+		// Dlatego iterujemy po WSZYSTKICH rodzajach, zamiast wymieniać trzy z nich.
+		$kinds = array();
+		foreach ( ( new \ReflectionClass( Mailer::class ) )->getConstants() as $name => $value ) {
+			if ( str_starts_with( (string) $name, 'KIND_' ) ) {
+				$kinds[ (string) $name ] = $value;
+			}
+		}
+
+		foreach ( MailKind::cases() as $case ) {
+			$this->assertContains( $case->value, $kinds, 'Brak publicznej stałej KIND_* dla rodzaju ' . $case->value );
+		}
+		$this->assertCount( count( MailKind::cases() ), $kinds, 'Stała KIND_* bez odpowiadającego rodzaju maila.' );
+
+		// Trzy nazwy, które Plan 3 wystawił publicznie, zostają dosłownie: są w cudzym kodzie.
 		$this->assertSame( MailKind::Confirmation->value, Mailer::KIND_CONFIRMATION );
 		$this->assertSame( MailKind::Editorial->value, Mailer::KIND_EDITORIAL );
 		$this->assertSame( MailKind::ExistingAccount->value, Mailer::KIND_EXISTING );
@@ -277,9 +304,17 @@ final class MailerTest extends WP_UnitTestCase {
 	}
 
 	public function test_an_account_without_an_address_queues_nothing(): void {
+		// Dwa osobne guardy: konta nie ma wcale, i konto jest, ale bez adresu. Drugi broni przed
+		// wierszem z pustym odbiorcą, a identyfikator 0 nigdy do niego nie dochodzi.
 		$this->assertFalse( Mailer::confirmation( 0, 'https://example.test/?pusers_token=abc' ) );
 		$this->assertFalse( Mailer::existing_account( 0 ) );
 		$this->assertFalse( Mailer::editorial( 0 ) );
+
+		$id = $this->account( 'lekarz' );
+		$this->clear_email( $id );
+
+		$this->assertFalse( Mailer::confirmation( $id, 'https://example.test/?pusers_token=abc' ) );
+		$this->assertFalse( Mailer::existing_account( $id ) );
 		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
 	}
 

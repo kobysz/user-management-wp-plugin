@@ -38,13 +38,6 @@ final class MailQueue {
 	public const DISPATCH_HOOK = 'pusers_dispatch_mail_now';
 
 	/**
-	 * Limit długości klucza odporności, równy szerokości kolumny `dedupe_key` (patrz docblok
-	 * `MailQueueRepository::insert()`). Dłuższy klucz MySQL obciąłby po cichu, bo wpdb zdejmuje tryby
-	 * ścisłe, i dwa różne klucze o wspólnych 191 znakach zderzyłyby się na indeksie UNIQUE.
-	 */
-	private const DEDUPE_KEY_MAX = 191;
-
-	/**
 	 * Renderuje szablon rodzaju, przepuszcza temat i treść przez filtry i kolejkuje wiersz.
 	 *
 	 * @param MailKind     $kind      Rodzaj maila (wskazuje szablon i zmienne).
@@ -67,6 +60,10 @@ final class MailQueue {
 		/**
 		 * Temat wiadomości.
 		 *
+		 * Kontekst zmienił kształt wobec Planu 3: dawne `needs_decision` zastąpił sam `$kind`
+		 * (`editorial` kontra `editorial_auto`), a dawne `link` leży teraz w `values` pod nazwą
+		 * zmiennej szablonu (`link_potwierdzenia` dla potwierdzenia, `link_wniosku` dla redakcji).
+		 *
 		 * @param string               $subject Temat po renderze szablonu.
 		 * @param string               $kind    Rodzaj wiadomości (MailKind::value).
 		 * @param array<string, mixed> $context Kontekst: `user_id` i zmienne szablonu pod `values`.
@@ -74,6 +71,10 @@ final class MailQueue {
 		$filteredSubject = apply_filters( Mailer::FILTER_SUBJECT, $subject, $kind->value, $context ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej FILTER_SUBJECT, która ma prefiks pusers_.
 		/**
 		 * Treść wiadomości.
+		 *
+		 * Kontekst zmienił kształt wobec Planu 3: dawne `needs_decision` zastąpił sam `$kind`
+		 * (`editorial` kontra `editorial_auto`), a dawne `link` leży teraz w `values` pod nazwą
+		 * zmiennej szablonu (`link_potwierdzenia` dla potwierdzenia, `link_wniosku` dla redakcji).
 		 *
 		 * @param string               $body    Treść po renderze szablonu.
 		 * @param string               $kind    Rodzaj wiadomości (MailKind::value).
@@ -112,6 +113,12 @@ final class MailQueue {
 		if ( '' === $address || ! is_email( $address ) ) {
 			return false;
 		}
+		if ( strlen( $address ) > MailQueueRepository::RECIPIENT_MAX ) {
+			// `is_email()` przyjmuje adres do 254 znaków (limit RFC), a kolumna jest krótsza i wpdb
+			// pracuje bez trybów ścisłych. Obcięcie byłoby niewidoczne: klucz odporności powstaje z
+			// adresu pełnego, więc wiersz wyglądałby spójnie, a mail poszedłby na adres, którego nikt nie ma.
+			return false;
+		}
 
 		$subject = self::single_line( $subject );
 		if ( '' === $subject && '' === trim( $body ) ) {
@@ -120,7 +127,7 @@ final class MailQueue {
 		}
 
 		$key = $dedupeKey . ':' . substr( wp_hash( strtolower( $address ) ), 0, 16 );
-		if ( strlen( $key ) > self::DEDUPE_KEY_MAX ) {
+		if ( strlen( $key ) > MailQueueRepository::DEDUPE_KEY_MAX ) {
 			// Obcięty klucz zderzyłby się na indeksie z innym o tym samym przedrostku, `insert()`
 			// oddałby false, a wołający odczytałby to jako „już w kolejce" i mail nigdy by nie wyszedł.
 			// Odmowa tutaj jest widoczna w wyniku; cicha kolizja nie byłaby widoczna nigdzie.

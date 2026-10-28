@@ -25,6 +25,12 @@ trait QueuedMailsTrait {
 	/**
 	 * Zakolejkowane maile, najstarszy naprzód, od ostatniego `forget_mails()`.
 	 *
+	 * UWAGA przy czytaniu asercji: `to` jest tu SKŁADANE z kolumny `recipient`, więc zawsze ma jeden
+	 * element. Asercja „każdy redaktor dostaje osobną wiadomość i nie widzi adresów pozostałych" nie
+	 * może już paść przez wielu odbiorców w jednym `To:` — ten defekt objawiłby się brakującym
+	 * WIERSZEM, nie dłuższą tablicą. Łapią go `MailerTest::test_editorial_queues_a_separate_row_for_every_recipient`
+	 * i `ConfirmationTest::test_all_configured_global_recipients_are_notified`, które liczą wiersze.
+	 *
 	 * @return list<array{to: list<string>, subject: string, message: string, kind: string}>
 	 */
 	private function mails(): array {
