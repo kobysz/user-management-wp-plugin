@@ -17,8 +17,11 @@ use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Dependencies;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Front\Confirmation;
+use PortalUsers\Front\LoginForm;
 use PortalUsers\Front\LoginGateway;
+use PortalUsers\Front\LoginHandler;
 use PortalUsers\Front\PasswordSetup;
+use PortalUsers\Front\Redirects;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\SessionGuard;
@@ -53,6 +56,7 @@ final class WiringTest extends WP_UnitTestCase {
 			MatrixScreen::ACTION_SAVE,
 			MatrixScreen::ACTION_DELETE_FIELD,
 			RegistrationHandler::ACTION,
+			LoginHandler::ACTION,
 			Confirmation::ACTION_RESEND,
 			PasswordSetup::ACTION,
 		);
@@ -69,6 +73,9 @@ final class WiringTest extends WP_UnitTestCase {
 			'matrix'      => array( MatrixScreen::class ),
 			'registration' => array( RegistrationForm::class ),
 			'registration handler' => array( RegistrationHandler::class ),
+			'login form' => array( LoginForm::class ),
+			'login handler' => array( LoginHandler::class ),
+			'redirects' => array( Redirects::class ),
 			'confirmation' => array( Confirmation::class ),
 			'password setup' => array( PasswordSetup::class ),
 			'terms binding' => array( TermsBinding::class ),

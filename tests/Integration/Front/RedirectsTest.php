@@ -8,11 +8,13 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration\Front;
 
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Front\LoginForm;
 use PortalUsers\Front\LoginHandler;
 use PortalUsers\Front\Redirects;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Plugin;
 use RuntimeException;
+use WP_Error;
 use WP_UnitTestCase;
 use WP_User;
 
@@ -152,7 +154,9 @@ final class RedirectsTest extends WP_UnitTestCase {
 				++$ran;
 			}
 		);
-		$GLOBALS['pagenow']        = 'admin-post.php';
+		$GLOBALS['pagenow'] = 'admin-post.php';
+		// Metoda żądania odwzorowuje tylko realne wysłanie formularza; `block_admin()` jej NIE
+		// czyta i nie jest ona częścią wyjątku — wyjątek rozstrzyga sam `$pagenow`.
 		$_SERVER['REQUEST_METHOD'] = 'POST';
 
 		// Przekierowanie z `block_admin()` rzuca tu wyjątkiem (szew odtwarza `exit`), więc
@@ -187,6 +191,9 @@ final class RedirectsTest extends WP_UnitTestCase {
 
 		$this->assertSame( '', $this->openAdmin(), 'Redakcja musi wejść w panel.' );
 		$this->assertTrue( apply_filters( 'show_admin_bar', true ), 'Redakcja musi zachować pasek administracyjny.' );
+		// Decyzja rdzenia albo motywu zostaje NIETKNIĘTA, a nie podmieniona na „pokaż": motyw,
+		// który pasek wyłączył, ma go mieć wyłączonego także redaktorowi.
+		$this->assertFalse( apply_filters( 'show_admin_bar', false ), 'Wyłączony pasek zostaje wyłączony.' );
 	}
 
 	/**
@@ -292,6 +299,50 @@ final class RedirectsTest extends WP_UnitTestCase {
 		$this->assertSame( $inside, Redirects::after_login( $inside, $inside, $user ) );
 	}
 
+	public function test_a_requested_destination_pointing_at_the_login_page_is_dropped(): void {
+		// Pętli by nie było (widok pokazuje zalogowanemu notkę), ale lekarz dostawałby „jesteś
+		// zalogowany" zamiast portalu. Adres z dodatkowym argumentem liczy się tak samo: porównanie
+		// idzie po STRONIE, nie po łańcuchu.
+		$ids   = $this->configure();
+		$user  = $this->logIn( 'subscriber' );
+		$login = (string) get_permalink( $ids['login_page_id'] );
+		$after = (string) get_permalink( $ids['after_login_page_id'] );
+
+		$this->assertSame( $after, Redirects::after_login( $login, $login, $user ) );
+		$this->assertSame( $after, Redirects::after_login( $login, add_query_arg( 'cokolwiek', '1', $login ), $user ) );
+	}
+
+	public function test_the_fallback_is_left_alone_when_the_login_page_is_the_front_page(): void {
+		// Druga połowa reguły: gwardia dotyczy WYŁĄCZNIE adresu z żądania. Gdy stroną logowania
+		// jest strona główna, a strony po zalogowaniu nie wskazano, nie ma gdzie indziej pójść —
+		// odwrót z `PageUrl::for()` musi przejść nietknięty, a nie zdegenerować się do pustego.
+		$ids = $this->configure( array( 'after_login_page_id' => 0 ) );
+		update_option( 'show_on_front', 'page' );
+		update_option( 'page_on_front', $ids['login_page_id'] );
+		$user = $this->logIn( 'subscriber' );
+
+		$target = Redirects::after_login( admin_url( 'profile.php' ), '', $user );
+
+		$this->assertNotSame( '', $target, 'Odwrót nie może wyjść pusty.' );
+		$this->assertSame( home_url( '/' ), $target );
+	}
+
+	public function test_a_login_refusal_and_a_destination_that_is_not_a_string_pass_through_untouched(): void {
+		// Pod `login_redirect` stoją też wtyczki obce: wartość, której nie rozumiemy, oddajemy
+		// nietkniętą. Sygnatura z `string` zamieniałaby tablicę w `TypeError`, czyli błąd
+		// krytyczny NA ŚCIEŻCE LOGOWANIA.
+		$this->configure();
+		$user  = $this->logIn( 'subscriber' );
+		$array = array( 'nie-lancuch' );
+
+		$this->assertSame( $array, Redirects::after_login( $array, '', $user ) );
+
+		// Odmowa rdzenia (nie konto): nie wiadomo, czyje to logowanie, więc adres zostaje bez zmian.
+		$dashboard = admin_url();
+		$this->assertSame( $dashboard, Redirects::after_login( $dashboard, '', new WP_Error( 'zle_haslo' ) ) );
+		$this->assertSame( $dashboard, Redirects::after_login( $dashboard, '', null ) );
+	}
+
 	public function test_the_core_login_and_lostpassword_urls_point_at_the_plugin_pages(): void {
 		$ids = $this->configure();
 
@@ -311,6 +362,34 @@ final class RedirectsTest extends WP_UnitTestCase {
 			$this->assertNotSame( '', $url, $case . ': pusty adres to martwy odnośnik.' );
 			$this->assertStringContainsString( 'wp-login.php', $url, $case . ': adres rdzenia zostaje nietknięty.' );
 		}
+
+		// Strona WSKAZANA, ale usunięta z panelu, liczy się jak brak wskazania: zostaje adres
+		// rdzenia. Odwrót na stronę główną (reguła `PageUrl::for()`) dałby tu mail odzyskiwania
+		// hasła prowadzący na stronę główną, czyli odnośnik, który nie robi tego, co obiecuje.
+		$ids = $this->configure();
+		wp_delete_post( $ids['reset_page_id'], true );
+		$this->assertStringContainsString( 'wp-login.php', wp_lostpassword_url(), 'Usunięta strona resetu = adres rdzenia.' );
+		$this->assertNotSame( home_url( '/' ), wp_lostpassword_url() );
+	}
+
+	public function test_the_core_login_url_carries_the_destination_to_the_login_page(): void {
+		// Bez tego redaktor wylogowany, który otworzył ekran panelu, trafia przez `auth_redirect()`
+		// na stronę logowania bez celu i po zalogowaniu ląduje nie tam, gdzie prosił.
+		$ids    = $this->configure();
+		$page   = (string) get_permalink( $ids['login_page_id'] );
+		$wanted = admin_url( 'edit.php' );
+
+		$url   = wp_login_url( $wanted );
+		$query = array();
+		parse_str( (string) wp_parse_url( $url, PHP_URL_QUERY ), $query );
+
+		$this->assertStringStartsWith( $page, $url, 'Adres prowadzi na stronę logowania wtyczki.' );
+		$this->assertSame( $wanted, $query[ LoginForm::REDIRECT ] ?? '', 'Adres docelowy jedzie w argumencie, który czyta LoginForm.' );
+
+		// Bez adresu docelowego argument nie powstaje, a adres wskazujący inny serwis odpada tutaj,
+		// a nie dopiero u odbiorcy: `auth_redirect()` składa go z REQUEST_URI, czyli z żądania.
+		$this->assertSame( $page, wp_login_url(), 'Brak adresu docelowego = goły adres strony.' );
+		$this->assertSame( $page, wp_login_url( 'https://zupelnie-inny-serwis.test/dalej' ), 'Adres z innego serwisu odpada.' );
 	}
 
 	public function test_register_hooks_the_destination_the_panel_the_bar_and_the_core_urls(): void {

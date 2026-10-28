@@ -74,24 +74,56 @@ final class Redirects {
 	 * Adres z żądania to DANE Z ŻĄDANIA, więc przechodzi przez `wp_validate_redirect()`; adres
 	 * wskazujący inny serwis odpada i zostaje strona z ustawień. Adres z tej witryny zostaje —
 	 * bez tego pole adresu docelowego formularza logowania przestałoby działać dla lekarzy.
+	 * Odpada też adres z żądania wskazujący STRONĘ LOGOWANIA: świeżo zalogowany lekarz dostawałby
+	 * tam notkę „jesteś zalogowany" zamiast portalu. Pętli by nie było, ale wejścia też nie.
+	 * Ta reguła dotyczy WYŁĄCZNIE adresu z żądania — odwrotu z `PageUrl::for()` nie rusza: gdy
+	 * stroną logowania jest strona główna, a strony po zalogowaniu nie wskazano, nie ma gdzie
+	 * indziej pójść i notka jest wtedy właściwą treścią.
 	 *
 	 * O uprawnieniach pytamy PODANE konto, nie `current_user_can()`: filtr odpala się w trakcie
 	 * logowania i rdzeń podaje konto właśnie dlatego, że bieżącego użytkownika może jeszcze nie być.
 	 * Wejście, które nie jest kontem (odmowa rdzenia), oddajemy bez zmian — nie wiadomo, czyje to
 	 * logowanie, a zgadywanie na rzecz „nie-redaktora" odcinałoby redakcję.
 	 *
-	 * @param string $redirectTo Adres, który ustalił rdzeń.
+	 * Adres wejściowy jest `mixed`, choć filtr rdzenia niesie łańcuch: pod `login_redirect` stoją
+	 * też wtyczki obce i wartość, którą oddała poprzednia z nich, może nie być łańcuchem.
+	 * Sygnatura z `string` zamieniałaby to w `TypeError`, czyli w błąd krytyczny NA ŚCIEŻCE
+	 * LOGOWANIA. Wartości, której nie rozumiemy, nie tykamy — oddajemy ją dalej nietkniętą, tak
+	 * jakby tego filtra nie było (tę samą ostrożność ma `LoginHandler::succeed()`, które sprawdza
+	 * `is_string()` na wyniku filtra).
+	 *
+	 * @param mixed  $redirectTo Adres, który ustalił rdzeń (albo wartość od wtyczki obcej).
 	 * @param string $requested  Adres z żądania (`''` = brak).
 	 * @param mixed  $user       Zalogowane konto (`WP_User`) albo odmowa rdzenia.
+	 * @return mixed Adres docelowy albo wejście nietknięte.
 	 */
-	public static function after_login( string $redirectTo, string $requested, mixed $user ): string {
-		if ( ! $user instanceof WP_User || $user->has_cap( self::CAPABILITY ) ) {
+	public static function after_login( mixed $redirectTo, string $requested, mixed $user ): mixed {
+		if ( ! is_string( $redirectTo ) || ! $user instanceof WP_User || $user->has_cap( self::CAPABILITY ) ) {
 			return $redirectTo;
 		}
 
 		$wanted = '' === $requested ? '' : wp_validate_redirect( $requested, '' );
+		if ( self::is_login_page( $wanted ) ) {
+			$wanted = '';
+		}
 
 		return '' === $wanted ? self::after_login_url() : $wanted;
+	}
+
+	/**
+	 * Czy adres wskazuje stronę logowania z ustawień.
+	 *
+	 * Porównujemy STRONĘ, nie łańcuch (`url_to_postid()`), więc adres z dodatkowym argumentem —
+	 * choćby ze znacznikiem wyniku logowania — też się liczy. Statyczna strona główna jest tu
+	 * martwym polem (`url_to_postid()` oddaje dla niej 0), ale wtedy odwrót i tak prowadzi na tę
+	 * samą stronę, więc odpowiedź nie zależy od tego porównania.
+	 *
+	 * @param string $url Adres po kontroli hosta (`''` = brak).
+	 */
+	private static function is_login_page( string $url ): bool {
+		$pageId = SettingsRepository::get()->loginPageId;
+
+		return '' !== $url && $pageId > 0 && url_to_postid( $url ) === $pageId;
 	}
 
 	/**
@@ -116,7 +148,9 @@ final class Redirects {
 		}
 
 		// Przekierowanie wyłącznie przez `wp_safe_redirect()`; adres pochodzi z ustawień, nie z
-		// żądania. Anulowane przekierowanie nie kończy żądania (szew testowy), więc wracamy.
+		// żądania. `exit` dopiero po udanym przekierowaniu: `wp_redirect()` oddaje fałsz dla
+		// adresu pustego i dla przekierowania zdjętego filtrem, a `exit` po takim wyniku kończyłby
+		// żądanie pustą stroną, zamiast kogokolwiek przenieść (wzór z `LoginHandler::redirect()`).
 		if ( wp_safe_redirect( self::after_login_url() ) ) {
 			exit;
 		}
@@ -137,17 +171,29 @@ final class Redirects {
 	/**
 	 * Adres strony logowania dla odnośników rdzenia (filtr `login_url`).
 	 *
-	 * Adresu docelowego NIE przenosimy do argumentu: dla konta bez uprawnień redakcyjnych
-	 * prowadziłby z powrotem do panelu, z którego `block_admin()` je odsyła, a o miejscu po
-	 * zalogowaniu rozstrzyga `after_login()`. Redakcja wchodzi przez `wp-login.php`, czyli
-	 * wejście zapasowe, które zostaje otwarte.
+	 * Adres docelowy JEDZIE dalej, w argumencie `LoginForm::REDIRECT`, bo bez niego redaktor
+	 * wylogowany, który otworzył `wp-admin/edit.php`, trafia przez `auth_redirect()` na stronę
+	 * logowania bez celu i po zalogowaniu ląduje na stronie po zalogowaniu, a nie na ekranie,
+	 * o który poprosił. Mechanizm już istnieje: `LoginForm` czyta ten argument, a `LoginHandler`
+	 * oddaje go filtrowi `login_redirect` jako adres z żądania.
+	 *
+	 * `auth_redirect()` składa ten adres z `$_SERVER['REQUEST_URI']`, więc jest to adres Z ŻĄDANIA
+	 * i przechodzi przez `wp_validate_redirect()` tutaj, a nie dopiero u odbiorcy: adres do innego
+	 * serwisu odpada od razu, zamiast jechać dalej jako argument, który i tak nic nie wykona.
 	 *
 	 * @param string $url         Adres ustalony przez rdzeń.
 	 * @param string $redirect    Adres docelowy po zalogowaniu (`''` = brak).
 	 * @param bool   $forceReauth Czy rdzeń wymusza ponowne uwierzytelnienie.
 	 */
-	public static function login_url( string $url, string $redirect, bool $forceReauth ): string { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- sygnatura filtra rdzenia; oba argumenty zostają świadomie nieużyte (patrz opis metody).
-		return self::page_url_or( SettingsRepository::get()->loginPageId, $url );
+	public static function login_url( string $url, string $redirect, bool $forceReauth ): string { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- sygnatura filtra rdzenia; ponownego uwierzytelnienia strona wtyczki nie wymusza (pokazuje zalogowanemu notkę, nie formularz).
+		$page = self::page_url_or( SettingsRepository::get()->loginPageId, $url );
+		if ( '' === $redirect ) {
+			return $page;
+		}
+
+		$wanted = wp_validate_redirect( $redirect, '' );
+
+		return '' === $wanted ? $page : add_query_arg( LoginForm::REDIRECT, $wanted, $page );
 	}
 
 	/**
@@ -191,10 +237,17 @@ final class Redirects {
 	 * Wartość wejściowa, nie pusty łańcuch: pusty adres logowania w mailu rdzenia jest martwym
 	 * odnośnikiem, a portal bez wskazanej strony ma po prostu zostać przy adresach rdzenia.
 	 *
+	 * Strona wskazana, ale USUNIĘTA z panelu, liczy się tu jako brak wskazania, więc zostaje adres
+	 * rdzenia. Tu NIE wolno użyć `PageUrl::for()`: jego odwrót prowadzi na stronę główną, a mail
+	 * odzyskiwania hasła kierujący na stronę główną jest odnośnikiem, który nie robi tego, co
+	 * obiecuje. `wp-login.php` zostaje otwarte, więc adres rdzenia nadal działa.
+	 *
 	 * @param int    $pageId Identyfikator strony z ustawień (0 = brak wskazania).
 	 * @param string $url    Adres ustalony przez rdzeń.
 	 */
 	private static function page_url_or( int $pageId, string $url ): string {
-		return $pageId > 0 ? PageUrl::for( $pageId ) : $url;
+		$link = $pageId > 0 ? get_permalink( $pageId ) : false;
+
+		return false === $link ? $url : $link;
 	}
 }
