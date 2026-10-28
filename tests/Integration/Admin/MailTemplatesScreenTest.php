@@ -179,18 +179,40 @@ final class MailTemplatesScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_the_screen_and_its_save_handler_are_registered(): void {
-		global $submenu;
-		$saved = $submenu;
-		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
-		MailTemplatesScreen::register();
-		do_action( 'admin_menu' );
+		$post_hook  = 'admin_post_' . MailTemplatesScreen::ACTION;
+		$saved_menu = isset( $GLOBALS['wp_filter']['admin_menu'] ) ? clone $GLOBALS['wp_filter']['admin_menu'] : null;
+		$saved_post = isset( $GLOBALS['wp_filter'][ $post_hook ] ) ? clone $GLOBALS['wp_filter'][ $post_hook ] : null;
+		$saved_sub  = $GLOBALS['submenu'] ?? null;
 
-		$slugs = array_column( $submenu[ Menu::PARENT ] ?? array(), 2 );
-		$this->assertContains( Menu::SLUG_MAIL_TEMPLATES, $slugs );
-		$this->assertNotFalse( has_action( 'admin_post_' . MailTemplatesScreen::ACTION, array( MailTemplatesScreen::class, 'handle_save' ) ) );
+		try {
+			// Rozruch wtyczki mógł już podpiąć oba haki: bez czyszczenia test przeszedłby nawet
+			// przy pustym register().
+			remove_all_actions( 'admin_menu' );
+			remove_all_actions( $post_hook );
+			$GLOBALS['submenu'] = array();
+			wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
 
-		$submenu = $saved;
-		remove_action( 'admin_menu', array( MailTemplatesScreen::class, 'add_page' ) );
-		remove_action( 'admin_post_' . MailTemplatesScreen::ACTION, array( MailTemplatesScreen::class, 'handle_save' ) );
+			MailTemplatesScreen::register();
+			do_action( 'admin_menu' );
+
+			$slugs = array_column( $GLOBALS['submenu'][ Menu::PARENT ] ?? array(), 2 );
+			$this->assertContains( Menu::SLUG_MAIL_TEMPLATES, $slugs );
+			$this->assertNotFalse( has_action( $post_hook, array( MailTemplatesScreen::class, 'handle_save' ) ) );
+		} finally {
+			// $submenu jest globalem, którego teardown testu nie przywraca.
+			remove_all_actions( 'admin_menu' );
+			remove_all_actions( $post_hook );
+			if ( null !== $saved_menu ) {
+				$GLOBALS['wp_filter']['admin_menu'] = $saved_menu;
+			}
+			if ( null !== $saved_post ) {
+				$GLOBALS['wp_filter'][ $post_hook ] = $saved_post;
+			}
+			if ( null === $saved_sub ) {
+				unset( $GLOBALS['submenu'] );
+			} else {
+				$GLOBALS['submenu'] = $saved_sub;
+			}
+		}
 	}
 }
