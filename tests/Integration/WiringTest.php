@@ -61,6 +61,7 @@ final class WiringTest extends WP_UnitTestCase {
 			Confirmation::ACTION_RESEND,
 			PasswordSetup::ACTION,
 			PasswordReset::ACTION_REQUEST,
+			PasswordReset::ACTION_SET,
 		);
 	}
 
@@ -189,6 +190,11 @@ final class WiringTest extends WP_UnitTestCase {
 		PasswordReset::register();
 		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . PasswordReset::ACTION_REQUEST, array( PasswordReset::class, 'handle_request' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_' . PasswordReset::ACTION_REQUEST, array( PasswordReset::class, 'handle_request' ) ) );
+		// Drugi formularz tej strony: ustawienie nowego hasła z klucza z maila.
+		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . PasswordReset::ACTION_SET, array( PasswordReset::class, 'handle_set' ) ) );
+		$this->assertNotFalse( has_action( 'admin_post_' . PasswordReset::ACTION_SET, array( PasswordReset::class, 'handle_set' ) ) );
+		// Zakaz cache musi pojechać PRZED renderem: z `the_content` nagłówki wychodzą za późno.
+		$this->assertNotFalse( has_action( 'template_redirect', array( PasswordReset::class, 'on_template_redirect' ) ) );
 		$this->assertTrue( shortcode_exists( PasswordReset::SHORTCODE ) );
 		$this->assertNotFalse( has_filter( 'retrieve_password_title', array( PasswordReset::class, 'mail_title' ) ) );
 		$this->assertNotFalse( has_filter( 'retrieve_password_message', array( PasswordReset::class, 'mail_message' ) ) );

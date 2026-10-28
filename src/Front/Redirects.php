@@ -238,16 +238,17 @@ final class Redirects {
 	 * odnośnikiem, a portal bez wskazanej strony ma po prostu zostać przy adresach rdzenia.
 	 *
 	 * Strona wskazana, ale USUNIĘTA z panelu, liczy się tu jako brak wskazania, więc zostaje adres
-	 * rdzenia. Tu NIE wolno użyć `PageUrl::for()`: jego odwrót prowadzi na stronę główną, a mail
-	 * odzyskiwania hasła kierujący na stronę główną jest odnośnikiem, który nie robi tego, co
-	 * obiecuje. `wp-login.php` zostaje otwarte, więc adres rdzenia nadal działa.
+	 * rdzenia — i dlatego reguła „strony może nie być” jedzie z `PageUrl::existing()`, czyli
+	 * z jednego miejsca dla całej wtyczki. Tu NIE wolno użyć `PageUrl::for()`: jego odwrót prowadzi
+	 * na stronę główną, a mail odzyskiwania hasła kierujący na stronę główną jest odnośnikiem,
+	 * który nie robi tego, co obiecuje. `wp-login.php` zostaje otwarte, więc adres rdzenia działa.
 	 *
 	 * @param int    $pageId Identyfikator strony z ustawień (0 = brak wskazania).
 	 * @param string $url    Adres ustalony przez rdzeń.
 	 */
 	private static function page_url_or( int $pageId, string $url ): string {
-		$link = $pageId > 0 ? get_permalink( $pageId ) : false;
+		$link = PageUrl::existing( $pageId );
 
-		return false === $link ? $url : $link;
+		return '' === $link ? $url : $link;
 	}
 }

@@ -1,6 +1,6 @@
 <?php
 /**
- * Odzyskiwanie hasła: formularz adresu, progi i wysłanie linku.
+ * Odzyskiwanie hasła: formularz adresu, wysłanie linku i ustawienie nowego hasła z klucza.
  *
  * @package PortalUsers
  */
@@ -11,6 +11,7 @@ namespace PortalUsers\Front;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Domain\Account\PasswordPolicy;
 use PortalUsers\Domain\Spam\IpAddress;
 use PortalUsers\Persistence\EventLog;
 use PortalUsers\Persistence\SettingsRepository;
@@ -24,7 +25,7 @@ use WP_Post;
  * odnośniki rdzenia na stronę wtyczki. Drugiego magazynu tokenów ta klasa NIE buduje — jest jeden
  * mechanizm, nie dwa (ta sama zasada, którą `PasswordSetup` zapisał przy zgubionym bilecie).
  *
- * Trzy reguły są powodem istnienia tej klasy:
+ * Cztery reguły są powodem istnienia tej klasy:
  *
  * 1. ODPOWIEDŹ JEST TA SAMA, NIEZALEŻNIE OD ISTNIENIA ADRESU. `RESULT_SENT` wychodzi zawsze, a
  *    `WP_Error` z rdzenia (`invalid_email`, gdy adresu nie zna) jest POCHŁANIANY. Rozróżnienie
@@ -43,8 +44,17 @@ use WP_Post;
  *    stoi PRZED progiem per adres e-mail, żeby obcy ruch z jednego adresu wyjściowego nie zabierał
  *    właścicielowi skrzynki jego własnych żądań.
  *
- * Kolejność bramek jest nienaruszalna: nonce, metoda POST, pułapka na boty, próg per adres IP,
- * próg per adres e-mail, akcja rdzenia, przekierowanie (PRG).
+ * 4. ODMOWA ŻĄDANIA O LINK ZOSTAWIA WIERSZ W LOGU, z powodem odmowy. Odpowiedź tej strony jest
+ *    ZAWSZE ta sama (reguła 1), więc wiersz w logu jest JEDYNYM śladem: bez niego człowiek,
+ *    któremu menedżer haseł wypełnił pułapkę, słyszy „wysłaliśmy link”, maila nie dostaje i nie
+ *    zostawia po sobie niczego, po czym administrator by go znalazł. Adres klienta ustalamy
+ *    dlatego PRZED bramkami — nie jest bramką, nic nie zmienia, a wiersz ma go nieść także przy
+ *    odmowie z nonce'a. Higiena z reguły 2 obowiązuje ten wiersz tak samo.
+ *
+ * Kolejność bramek jest nienaruszalna. Żądanie o link: nonce, metoda POST, pułapka na boty, próg
+ * per adres IP, próg per adres e-mail, akcja rdzenia, przekierowanie (PRG). Ustawienie hasła:
+ * nonce, metoda POST, próg per adres IP, klucz rdzenia, próg per konto, reguły hasła, zapis
+ * (patrz `handle_set()`).
  *
  * Pułapki CZASOWEJ ten formularz nie ma świadomie, dokładnie jak formularz logowania: pole adresu
  * wypełnia menedżer haseł i wysyła w ułamku sekundy, więc pułapka odcinałaby człowieka, nie bota.
@@ -58,13 +68,13 @@ use WP_Post;
  * jest: gdy wtyczka bezczynnie czeka na ACF Pro, strona się nie renderuje, a odzyskiwanie hasła
  * działa dalej przez `wp-login.php` (świadomie zostawione otwarte) z treścią rdzenia.
  *
- * ROZDZIELENIE WIDOKÓW: strona oddaje formularz adresu. Widok ustawienia nowego hasła z klucza
- * należy do kolejnego kroku i razem z nim przyjdą stałe jego formularza. Do tego czasu także ktoś
- * z ŻYWYM kluczem w adresie dostaje formularz adresu — to stan przejściowy. Co jest już tutaj i co
- * tutaj zostanie: człowiek z kluczem pustym, martwym, przeterminowanym albo należącym do innego
- * konta dostaje formularz adresu I KOMUNIKAT. Argument adresu jest NIESEKRETNY, więc na tę stronę
- * trafia się z podrzuconego odnośnika, zakładki i starego maila; widok, który zabiera stronę i mówi
- * tylko „link wygasł”, jest ślepym zaułkiem (lekcja z Planu 3).
+ * ROZDZIELENIE WIDOKÓW: strona oddaje JEDEN z dwóch formularzy. Przy ŻYWYM kluczu w adresie —
+ * formularz nowego hasła; w KAŻDYM innym przypadku — formularz adresu. Człowiek z kluczem pustym,
+ * martwym, przeterminowanym albo należącym do innego konta dostaje formularz adresu I KOMUNIKAT.
+ * Argument adresu jest NIESEKRETNY, więc na tę stronę trafia się z podrzuconego odnośnika, zakładki
+ * i starego maila; widok, który zabiera stronę i mówi tylko „link wygasł”, jest ślepym zaułkiem
+ * (lekcja z Planu 3). O ważność klucza pyta `check_password_reset_key()`, czyli TEN SAM mechanizm
+ * rdzenia, który klucz wystawił — drugiej reguły ważności tu nie ma.
  */
 final class PasswordReset {
 
@@ -78,6 +88,16 @@ final class PasswordReset {
 	public const NONCE_REQUEST  = 'pusers_reset_request';
 
 	public const EMAIL_FIELD = 'pusers_reset_email';
+
+	/**
+	 * Akcja formularza nowego hasła (admin-post) i zarazem akcja nonce'a. OSOBNA od akcji
+	 * formularza adresu: to dwa różne formularze na jednej stronie i jeden handler nie mógłby
+	 * rozstrzygnąć, który z nich przyszedł.
+	 */
+	public const ACTION_SET = 'pusers_reset_set';
+	public const NONCE_SET  = 'pusers_reset_set';
+
+	public const PASSWORD_FIELD = 'pusers_reset_password';
 
 	/**
 	 * Nazwa pułapki na boty, odmagnesowana tak jak w `LoginForm::HONEYPOT`: żadnego `website`,
@@ -115,9 +135,34 @@ final class PasswordReset {
 	public const RESULT_STALE = 'stale';
 
 	/**
+	 * Wynik: hasło zostało ustawione.
+	 */
+	public const RESULT_DONE = 'done';
+
+	/**
+	 * Wynik: klucz z odnośnika nie działa — nie ma go, jest zużyty, przeterminowany albo należy do
+	 * innego konta. JEDEN kod dla wszystkich tych przypadków: rozróżnienie nie dałoby człowiekowi
+	 * nic, czego nie wie (odnośnik ma poprosić o nowy), a zdradzałoby, czy login z adresu istnieje.
+	 */
+	public const RESULT_INVALID = 'invalid';
+
+	/**
+	 * Wyniki z reguł hasła. Wartości są TE SAME, co `PasswordPolicy::ERROR_*` i `PasswordSetup`:
+	 * kod odmowy jedzie z domeny do argumentu adresu bez tłumaczenia, a trzecia wartość dla tej
+	 * samej odmowy znaczyłaby trzecią mapę komunikatów.
+	 */
+	public const RESULT_SHORT = 'short';
+	public const RESULT_EMAIL = 'email';
+
+	/**
 	 * Zdarzenie w logu: ktoś poprosił o link do ustawienia hasła.
 	 */
 	public const LOG_ACTION_REQUEST = 'password_reset_requested';
+
+	/**
+	 * Zdarzenie w logu: hasło zostało ustawione z klucza odzyskiwania.
+	 */
+	public const LOG_ACTION_SET = 'password_reset';
 
 	/**
 	 * Kubełek progu żądań per adres IP. OSOBNY od kubełków rejestracji, logowania, ponownej wysyłki
@@ -131,9 +176,29 @@ final class PasswordReset {
 	public const BUCKET_EMAIL = 'reset_email:';
 
 	/**
-	 * Podpina shortcode, zakaz cache przed renderem, obsługę wysłanego formularza i treść maila.
+	 * Kubełek progu prób ustawienia hasła per adres IP, OSOBNY od kubełka żądań o link: wspólny
+	 * pozwalałby jednym przebiegiem wyczerpać budżet drugiego kroku i mieszałby dwa niezależne
+	 * progi. WARTOŚĆ progu jest ta sama, `resetLimitPerHour` — rozdzielenie wartości na kroki stoi
+	 * w backlogu jako granulacja progów i tu go nie ruszamy.
+	 */
+	public const BUCKET_SET_IP = 'resetset_ip:';
+
+	/**
+	 * Kubełek progu prób per KONTO, kluczowany identyfikatorem konta USTALONEGO Z KLUCZA (patrz
+	 * `handle_set()`).
 	 *
-	 * Oba warianty akcji admin-post: zalogowany też wyśle ten formularz, a `admin_post_nopriv_`
+	 * Wartość progu to `resetLimitPerHour`, a NIE `resetLimitPerEmailPerHour`: ta druga jest
+	 * skalibrowana na WYSYŁANIE maila — akcję wychodzącą, kosztowną i nadającą się do zasypania
+	 * cudzej skrzynki — a nie na wpisanie hasła przez człowieka, który trzyma w ręku ważny klucz.
+	 * Przy jej domyślnych trzech próbach dwie pomyłki w nowym haśle zamykałyby lekarzowi godzinę
+	 * z działającym odnośnikiem w ręku, czyli byłaby to kolejna obrona trafiająca w człowieka.
+	 */
+	public const BUCKET_SET_USER = 'resetset_user:';
+
+	/**
+	 * Podpina shortcode, zakaz cache przed renderem, obsługę OBU wysłanych formularzy i treść maila.
+	 *
+	 * Oba warianty akcji admin-post: zalogowany też wyśle te formularze, a `admin_post_nopriv_`
 	 * jego żądania nie widzi.
 	 *
 	 * Filtry treści maila stoją tu, a nie w obsłudze żądania, i obejmują przez to także żądania
@@ -145,6 +210,8 @@ final class PasswordReset {
 		add_action( 'template_redirect', array( self::class, 'on_template_redirect' ) );
 		add_action( 'admin_post_nopriv_' . self::ACTION_REQUEST, array( self::class, 'handle_request' ) );
 		add_action( 'admin_post_' . self::ACTION_REQUEST, array( self::class, 'handle_request' ) );
+		add_action( 'admin_post_nopriv_' . self::ACTION_SET, array( self::class, 'handle_set' ) );
+		add_action( 'admin_post_' . self::ACTION_SET, array( self::class, 'handle_set' ) );
 		add_filter( 'retrieve_password_title', array( self::class, 'mail_title' ) );
 		add_filter( 'retrieve_password_message', array( self::class, 'mail_message' ), 10, 3 );
 	}
@@ -170,8 +237,9 @@ final class PasswordReset {
 	}
 
 	/**
-	 * Zwraca formularz adresu, poprzedzony komunikatem o wyniku poprzedniego żądania (PRG) i —
-	 * gdy adres niesie odnośnik, który nie działa — komunikatem o nieaktualnym odnośniku.
+	 * Zwraca jeden z dwóch formularzy (patrz „rozdzielenie widoków” w dokumentacji klasy),
+	 * poprzedzony komunikatem o wyniku poprzedniego żądania (PRG) i — gdy adres niesie odnośnik,
+	 * który nie działa — komunikatem o nieaktualnym odnośniku.
 	 *
 	 * Druga warstwa zakazu cache: pierwsza jedzie z `on_template_redirect()`, tu pokrywamy
 	 * umieszczenie formularza poza treścią wpisu. Wywołanie jest idempotentne.
@@ -179,20 +247,40 @@ final class PasswordReset {
 	public static function render(): string {
 		RegistrationHandler::no_cache();
 
-		return self::result_notice() . self::link_notice() . self::form();
+		$notice = self::result_notice();
+		$key    = self::query_text( self::KEY_ARG );
+		$login  = self::query_text( self::USER_ARG );
+
+		if ( '' === $key && '' === $login ) {
+			return $notice . self::form();
+		}
+
+		// Klucz ŻYWY: strona oddaje formularz nowego hasła. Pytamy raz, a wynik rozstrzyga oba
+		// widoki — dwa pytania mogłyby dać dwie różne odpowiedzi w jednym żądaniu.
+		if ( ! is_wp_error( check_password_reset_key( $key, $login ) ) ) {
+			return $notice . self::password_form( $key, $login );
+		}
+
+		return $notice . self::link_notice() . self::form();
 	}
 
 	/**
 	 * Obsługuje wysłany formularz adresu (kolejność bramek: patrz dokumentacja klasy).
 	 */
 	public static function handle_request(): void {
+		$settings = SettingsRepository::get();
+
+		// Adres klienta ustalamy PRZED bramkami: nie jest bramką i nic nie zmienia, a wiersz
+		// odmowy ma go nieść także wtedy, gdy odmowa pada na nonce'ie (patrz reguła 4).
+		$ip = IpAddress::from( $_SERVER, $settings->trustedProxyHeader );
+
 		// 1. Nonce. Nonce starzeje się razem z sesją, więc człowiek z kartą otwartą od doby trafia
 		// właśnie tu: dostaje przez PRG komunikat „odśwież stronę”, a nie 403.
 		$nonce = isset( $_POST[ self::NONCE_REQUEST ] ) && is_string( $_POST[ self::NONCE_REQUEST ] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- to jest weryfikacja nonce'a.
 			? sanitize_text_field( wp_unslash( $_POST[ self::NONCE_REQUEST ] ) ) // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			: '';
 		if ( '' === $nonce || false === wp_verify_nonce( $nonce, self::NONCE_REQUEST ) ) {
-			self::finish( self::RESULT_STALE );
+			self::refuse( 'stale_nonce', self::RESULT_STALE, $ip, '' );
 			return;
 		}
 
@@ -205,18 +293,15 @@ final class PasswordReset {
 		// 3. Pułapka na boty, PRZED progami: odmowa nic nie kosztuje i nie liczy się do progu, więc
 		// bot nie zabiera budżetu nikomu. Odpowiedź dostaje tę samą, co człowiek (patrz reguła 1).
 		if ( ! self::looks_human() ) {
-			self::finish( self::RESULT_SENT );
+			self::refuse( 'honeypot', self::RESULT_SENT, $ip, self::email() );
 			return;
 		}
-
-		$settings = SettingsRepository::get();
 
 		// 4. Próg per adres IP, zużywany przez KAŻDE żądanie (patrz reguła 3). Bez ustalonego
 		// adresu klienta progu się nie liczy: ruch bez adresu zlany w jeden kubełek odciąłby
 		// wszystkich (ta sama reguła, co w `SpamGuard` i `PasswordSetup`).
-		$ip = IpAddress::from( $_SERVER, $settings->trustedProxyHeader );
 		if ( '' !== $ip && RateLimiter::hit( self::BUCKET_IP . $ip ) > $settings->resetLimitPerHour ) {
-			self::finish( self::RESULT_TOO_MANY );
+			self::refuse( 'ip_limit', self::RESULT_TOO_MANY, $ip, self::email() );
 			return;
 		}
 
@@ -224,7 +309,7 @@ final class PasswordReset {
 		if ( '' === $email ) {
 			// Puste pole: odpowiedź ta sama, pracy żadnej — nie ma komu wysłać maila. Kubełka per
 			// adres przy pustej wartości nie zakładamy, bo byłby to jeden kubełek dla wszystkich.
-			self::finish( self::RESULT_SENT );
+			self::refuse( 'empty_email', self::RESULT_SENT, $ip, '' );
 			return;
 		}
 
@@ -232,7 +317,7 @@ final class PasswordReset {
 		// rośnie dla KAŻDEGO adresu, także nieistniejącego: inaczej „zbyt wiele żądań” zdradzałoby,
 		// że adres ma konto. Kubełków nie zasypie bot, bo każde żądanie zużywa najpierw próg per IP.
 		if ( RateLimiter::hit( self::BUCKET_EMAIL . self::email_key( $email ) ) > $settings->resetLimitPerEmailPerHour ) {
-			self::finish( self::RESULT_TOO_MANY );
+			self::refuse( 'email_limit', self::RESULT_TOO_MANY, $ip, $email );
 			return;
 		}
 
@@ -262,6 +347,113 @@ final class PasswordReset {
 	}
 
 	/**
+	 * Obsługuje wysłany formularz nowego hasła.
+	 *
+	 * Kolejność bramek: nonce, metoda POST, próg per adres IP, klucz rdzenia, próg per konto,
+	 * reguły hasła, zapis.
+	 *
+	 * Próg per adres IP stoi PRZED sprawdzeniem klucza, żeby zgadywanie klucza na TEJ ścieżce też
+	 * się liczyło. Próg per KONTO stoi PO sprawdzeniu klucza i tylko dlatego: `USER_ARG` jest
+	 * NIESPRAWDZONYM łańcuchem z żądania, więc liczony wcześniej pozwalałby osobie trzeciej
+	 * wyczerpać właścicielowi budżet samą podmianą loginu w adresie. Kubełek kluczowany kontem
+	 * powstaje WYŁĄCZNIE dla konta, które naprawdę zostało ustalone, a nieudane sprawdzenie klucza
+	 * liczy się tylko w kubełku per adres IP (ta sama reguła, co w `PasswordSetup::handle()`
+	 * i w `Confirmation::handle_resend()`).
+	 *
+	 * ODMOWA Z REGUŁ HASŁA NIE ZUŻYWA KLUCZA: klucz czyści `reset_password()` i tylko ono. Zbyt
+	 * krótkie hasło spalające odnośnik byłoby odmową trafiającą w człowieka, który nic złego nie
+	 * zrobił — dlatego każda odmowa poza samym kluczem wraca na stronę Z ODNOŚNIKIEM i formularz
+	 * pokazuje się ponownie.
+	 *
+	 * O stan konta `handle_set()` nie pyta świadomie, tak samo jak `PasswordSetup::handle()`:
+	 * dostępem rządzi stan konta, nie istnienie hasła, więc hasło na koncie odrzuconym niczego nie
+	 * otwiera, a odmowa zdradzałaby stan konta temu, kto zna sam odnośnik.
+	 */
+	public static function handle_set(): void {
+		// Odnośnik z żądania: wraca w adresie odmowy, żeby formularz dał się wysłać ponownie.
+		$key   = self::posted( self::KEY_ARG );
+		$login = self::posted( self::USER_ARG );
+
+		// 1. Nonce (powód jak w `handle_request()`). Odmowa zostawia odnośnik, bo klucz z maila
+		// żyje dobę i przeżywa przedawnienie nonce'a.
+		$nonce = self::posted( self::NONCE_SET );
+		if ( '' === $nonce || false === wp_verify_nonce( $nonce, self::NONCE_SET ) ) {
+			self::finish_with_link( self::RESULT_STALE, $key, $login );
+			return;
+		}
+
+		// 2. Metoda POST (admin-post odpala się dla każdej metody).
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) && is_string( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'POST' !== $method ) {
+			wp_die( esc_html__( 'Ta operacja wymaga żądania POST.', 'portal-users' ), '', array( 'response' => 405 ) );
+		}
+
+		$settings = SettingsRepository::get();
+
+		// 3. Próg per adres IP, w OSOBNYM kubełku (patrz BUCKET_SET_IP). Bez ustalonego adresu
+		// klienta progu się nie liczy (ta sama reguła, co w `handle_request()`).
+		$ip = IpAddress::from( $_SERVER, $settings->trustedProxyHeader );
+		if ( '' !== $ip && RateLimiter::hit( self::BUCKET_SET_IP . $ip ) > $settings->resetLimitPerHour ) {
+			self::finish_with_link( self::RESULT_TOO_MANY, $key, $login );
+			return;
+		}
+
+		// 4. Klucz. Pyta o niego `check_password_reset_key()`, czyli TEN SAM mechanizm rdzenia,
+		// który klucz wystawił: weryfikuje go w parze z loginem, pilnuje terminu ważności i
+		// oddaje konto. Drugiej reguły ważności tu nie ma. Odmowa NIE niesie odnośnika dalej:
+		// ten konkretny odnośnik już nie zadziała nigdy, a droga dalej jest przez formularz adresu.
+		$user = check_password_reset_key( $key, $login );
+		if ( $user instanceof WP_Error ) {
+			self::finish( self::RESULT_INVALID );
+			return;
+		}
+
+		// 5. Próg per konto, w osobnym kubełku (patrz BUCKET_SET_USER).
+		if ( RateLimiter::hit( self::BUCKET_SET_USER . $user->ID ) > $settings->resetLimitPerHour ) {
+			self::finish_with_link( self::RESULT_TOO_MANY, $key, $login );
+			return;
+		}
+
+		// Hasła NIE sanityzujemy ani nie obcinamy: nie jedzie do bazy jako tekst, tylko do
+		// `reset_password()`, które liczy z niego skrót. `sanitize_text_field()` zjadłby znaki,
+		// których człowiek użył, i hasło przestałoby się zgadzać przy logowaniu (ta sama reguła,
+		// co w `PasswordSetup::handle()`).
+		$password = isset( $_POST[ self::PASSWORD_FIELD ] ) && is_string( $_POST[ self::PASSWORD_FIELD ] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce sprawdzony wyżej.
+			? (string) wp_unslash( $_POST[ self::PASSWORD_FIELD ] ) // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized,WordPress.Security.NonceVerification.Missing -- hasło nie podlega sanityzacji (patrz komentarz wyżej).
+			: '';
+
+		// 6. Reguły hasła żyją w domenie: WSPÓLNE z ustawieniem hasła z biletu rejestracji.
+		$violation = PasswordPolicy::check( $password, (string) $user->user_email );
+		if ( PasswordPolicy::ERROR_SHORT === $violation ) {
+			self::finish_with_link( self::RESULT_SHORT, $key, $login );
+			return;
+		}
+		if ( PasswordPolicy::ERROR_EMAIL === $violation ) {
+			self::finish_with_link( self::RESULT_EMAIL, $key, $login );
+			return;
+		}
+
+		// 7. Zapis. `reset_password()` liczy skrót, CZYŚCI `user_activation_key` (stąd
+		// jednorazowość odnośnika) i odpala akcje rdzenia.
+		//
+		// Jawnego niszczenia pozostałych sesji tu NIE MA, choć odzyskiwania hasła używa człowiek,
+		// któremu ktoś przejął konto: ciasteczko uwierzytelniające rdzenia niesie fragment skrótu
+		// hasła, więc zmiana hasła unieważnia cudze ciasteczko sama. `WP_Session_Tokens::destroy_all()`
+		// zostało napisane i usunięte, bo test `test_setting_a_password_destroys_other_sessions_of_that_account`
+		// przechodzi bez niego — zostaje wtedy tylko wiersz w metadanej `session_tokens`, który
+		// niczego nie otwiera. Linii obrony, której nic nie dowodzi, nie trzymamy.
+		reset_password( $user, $password );
+
+		// W logu NIE MA hasła ani jego skrótu — jest konto i adres klienta. Konto jest tu znane
+		// (ustalił je klucz), więc wiersz wskazuje je wprost, inaczej niż wiersz żądania o link.
+		EventLog::write( self::LOG_ACTION_SET, $user->ID, 0, array( 'ip' => $ip ) );
+
+		// 8. Przekierowanie (PRG) BEZ odnośnika: klucz jest zużyty, a adres z martwym kluczem
+		// kazałby stronie pokazać komunikat o nieaktualnym odnośniku po operacji, która się udała.
+		self::finish( self::RESULT_DONE );
+	}
+
+	/**
 	 * Tekst komunikatu dla wyniku (RESULT_*). Kod nieznany daje `''` — strona ma wtedy nie
 	 * pokazywać nic, a nie puste okienko alertu.
 	 *
@@ -277,6 +469,20 @@ final class PasswordReset {
 				return __( 'Zbyt wiele żądań odzyskania hasła. Spróbuj ponownie później.', 'portal-users' );
 			case self::RESULT_STALE:
 				return __( 'Formularz jest nieaktualny. Odśwież stronę i wypełnij go ponownie.', 'portal-users' );
+			case self::RESULT_DONE:
+				return __( 'Hasło zostało ustawione. Możesz się teraz zalogować.', 'portal-users' );
+			case self::RESULT_INVALID:
+				// JEDEN tekst dla klucza martwego, zużytego, przeterminowanego i cudzego; czyta go
+				// także komunikat na stronie otwartej z nieaktualnego odnośnika (`link_notice()`).
+				return __( 'Ten odnośnik do ustawienia hasła jest nieaktualny. Poproś o nowy, podając adres e-mail.', 'portal-users' );
+			case self::RESULT_SHORT:
+				return sprintf(
+					/* translators: %d: minimalna liczba znaków hasła. */
+					__( 'Hasło musi mieć co najmniej %d znaków.', 'portal-users' ),
+					PasswordPolicy::MIN_LENGTH
+				);
+			case self::RESULT_EMAIL:
+				return __( 'Hasło nie może być takie samo jak adres e-mail.', 'portal-users' );
 			default:
 				return '';
 		}
@@ -312,12 +518,22 @@ final class PasswordReset {
 	 * rdzenia (`wp-login.php?action=rp`) działa, bo `wp-login.php` zostaje świadomie otwarte. To ta
 	 * sama reguła, którą po swojej stronie trzyma `Redirects::lostpassword_url()`.
 	 *
+	 * Argumenty 2 i 3 mają wartości domyślne, a bez któregokolwiek z nich treść wraca NIETKNIĘTA:
+	 * obca wtyczka potrafi zawołać `apply_filters( 'retrieve_password_message', $tresc )` z jednym
+	 * argumentem, a wymagane argumenty zamieniały takie wywołanie w `ArgumentCountError`, czyli
+	 * w błąd 500 na ścieżce, która miała tylko przepuścić treść dalej. To ta sama ostrożność, co
+	 * typ `mixed` przy pierwszym argumencie.
+	 *
 	 * @param mixed  $message   Treść ustalona przez rdzeń.
 	 * @param string $key       Klucz wygenerowany przez rdzeń.
 	 * @param string $userLogin Login konta, do którego klucz należy.
 	 * @return mixed Nasza treść albo wejście nietknięte.
 	 */
-	public static function mail_message( mixed $message, string $key, string $userLogin ): mixed {
+	public static function mail_message( mixed $message, string $key = '', string $userLogin = '' ): mixed {
+		if ( '' === $key || '' === $userLogin ) {
+			return $message;
+		}
+
 		$page = self::link_page();
 		if ( '' === $page ) {
 			return $message;
@@ -388,6 +604,31 @@ final class PasswordReset {
 	}
 
 	/**
+	 * Formularz nowego hasła dla ŻYWEGO klucza.
+	 *
+	 * Oba argumenty odnośnika jadą w polach ukrytych, bo adresem akcji jest `admin-post.php`,
+	 * a nie ta strona — argumenty z adresu strony do żądania POST same nie trafią. Sekretem
+	 * żadne z nich nie jest (patrz dokumentacja klasy), a handler i tak pyta o klucz rdzeń.
+	 *
+	 * @param string $key   Klucz z odnośnika.
+	 * @param string $login Login konta z odnośnika.
+	 */
+	private static function password_form( string $key, string $login ): string {
+		$html  = '<form class="pusers-password-new" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+		$html .= '<input type="hidden" name="action" value="' . esc_attr( self::ACTION_SET ) . '" />';
+		$html .= '<input type="hidden" name="' . esc_attr( self::USER_ARG ) . '" value="' . esc_attr( $login ) . '" />';
+		$html .= '<input type="hidden" name="' . esc_attr( self::KEY_ARG ) . '" value="' . esc_attr( $key ) . '" />';
+
+		$html .= '<p class="pusers-field-password"><label for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Nowe hasło', 'portal-users' ) . '</label> ';
+		$html .= '<input type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" /></p>';
+
+		$html .= wp_nonce_field( self::NONCE_SET, self::NONCE_SET, true, false );
+		$html .= '<p><button type="submit">' . esc_html__( 'Ustaw nowe hasło', 'portal-users' ) . '</button></p>';
+
+		return $html . '</form>';
+	}
+
+	/**
 	 * Komunikat o wyniku poprzedniego żądania (PRG) albo pusty łańcuch.
 	 */
 	private static function result_notice(): string {
@@ -406,26 +647,16 @@ final class PasswordReset {
 	}
 
 	/**
-	 * Komunikat dla człowieka, który przyszedł z odnośnikiem, a odnośnik nie działa; pusty łańcuch,
-	 * gdy adres odnośnika nie niesie albo gdy klucz jest ważny.
+	 * Komunikat dla człowieka, który przyszedł z odnośnikiem, a odnośnik nie działa. O to, czy
+	 * odnośnik działa, pyta `render()` — ten sam jego wynik rozstrzyga oba widoki.
 	 *
 	 * Formularza adresu ten komunikat NIE zabiera (patrz „rozdzielenie widoków” w dokumentacji
 	 * klasy): strona bez drogi dalej jest awarią trudniejszą do zgłoszenia niż zły komunikat.
-	 * O ważność klucza pyta `check_password_reset_key()`, czyli TEN SAM mechanizm rdzenia, który
-	 * klucz wystawił — drugiej reguły ważności tu nie ma.
+	 * Tekst jest TEN SAM, co dla `RESULT_INVALID` z handlera, i czytamy go z jednej mapy
+	 * komunikatów: dwie kopie tego samego zdania rozjechałyby się przy pierwszej zmianie.
 	 */
 	private static function link_notice(): string {
-		$key   = self::query_text( self::KEY_ARG );
-		$login = self::query_text( self::USER_ARG );
-		if ( '' === $key && '' === $login ) {
-			return '';
-		}
-
-		if ( ! is_wp_error( check_password_reset_key( $key, $login ) ) ) {
-			return '';
-		}
-
-		return '<p class="pusers-notice" role="alert">' . esc_html__( 'Ten odnośnik do ustawienia hasła jest nieaktualny. Poproś o nowy, podając adres e-mail.', 'portal-users' ) . '</p>';
+		return '<p class="pusers-notice" role="alert">' . esc_html( self::message_for( self::RESULT_INVALID ) ) . '</p>';
 	}
 
 	/**
@@ -435,6 +666,17 @@ final class PasswordReset {
 	 */
 	private static function query_text( string $name ): string {
 		return isset( $_GET[ $name ] ) && is_string( $_GET[ $name ] ) ? sanitize_text_field( wp_unslash( $_GET[ $name ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+	}
+
+	/**
+	 * Wartość pola z żądania albo `''`. Czyta także pola, które jadą PRZED weryfikacją nonce'a
+	 * (odnośnik wracający w adresie odmowy i samo pole nonce'a), więc weryfikację nonce'a robi
+	 * wywołujący.
+	 *
+	 * @param string $name Nazwa pola.
+	 */
+	private static function posted( string $name ): string {
+		return isset( $_POST[ $name ] ) && is_string( $_POST[ $name ] ) ? sanitize_text_field( wp_unslash( $_POST[ $name ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce weryfikuje wywołujący (patrz opis).
 	}
 
 	/**
@@ -486,5 +728,58 @@ final class PasswordReset {
 		if ( wp_safe_redirect( add_query_arg( self::RESULT_ARG, $code, self::base_url() ) ) ) {
 			exit;
 		}
+	}
+
+	/**
+	 * Przekierowuje na stronę odzyskiwania hasła ze znacznikiem wyniku I ODNOŚNIKIEM, czyli oboma
+	 * argumentami z żądania (PRG). Odmowa, która odnośnik gubi, kazałaby człowiekowi z żywym
+	 * kluczem prosić o nowy mail, choć jego klucz dalej działa.
+	 *
+	 * Adres bierze się z ustawień, nie z żądania (jak w `finish()`); argumenty są NIESEKRETNE,
+	 * a strona i tak pyta o klucz rdzeń, zanim pokaże formularz.
+	 *
+	 * @param string $code  Wynik (RESULT_*).
+	 * @param string $key   Klucz z żądania.
+	 * @param string $login Login konta z żądania.
+	 */
+	private static function finish_with_link( string $code, string $key, string $login ): void {
+		$url = add_query_arg(
+			array(
+				self::RESULT_ARG => $code,
+				self::USER_ARG   => $login,
+				self::KEY_ARG    => $key,
+			),
+			self::base_url()
+		);
+		if ( wp_safe_redirect( $url ) ) {
+			exit;
+		}
+	}
+
+	/**
+	 * Odmowa żądania o link: wiersz w logu z POWODEM odmowy i przekierowanie (PRG). Powód jest
+	 * jedynym śladem, bo odpowiedź dla człowieka jest zawsze ta sama (patrz reguła 4).
+	 *
+	 * Adres e-mail trafia do wiersza WYŁĄCZNIE skrótem (patrz reguła 2); pusta wartość zostaje
+	 * pusta, bo skrót pustego łańcucha byłby jednym skrótem dla wszystkich żądań bez adresu.
+	 *
+	 * @param string $reason Powód odmowy.
+	 * @param string $code   Wynik dla człowieka (RESULT_*).
+	 * @param string $ip     Adres klienta albo `''`.
+	 * @param string $email  Adres e-mail z żądania albo `''`.
+	 */
+	private static function refuse( string $reason, string $code, string $ip, string $email ): void {
+		EventLog::write(
+			self::LOG_ACTION_REQUEST,
+			0,
+			0,
+			array(
+				'ip'         => $ip,
+				'email_hash' => '' === $email ? '' : self::email_key( $email ),
+				'refused'    => $reason,
+			)
+		);
+
+		self::finish( $code );
 	}
 }
