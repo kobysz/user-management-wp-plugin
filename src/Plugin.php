@@ -19,6 +19,7 @@ use PortalUsers\Front\LoginGateway;
 use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
+use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
 
 defined( 'ABSPATH' ) || exit;
@@ -62,6 +63,11 @@ final class Plugin {
 		// nie fatal" jest dobrą polityką dla ekranów panelu i złą dla bramy. Brama nie potrzebuje
 		// ACF do niczego: czyta metadaną stanu i pisze do logu zdarzeń.
 		LoginGateway::register();
+
+		// Z tego samego powodu poza hookiem zależnym od ACF Pro stoi strażnik sesji: repozytorium
+		// stanu odpala akcję zmiany stanu niezależnie od ACF, więc strażnik za sprawdzeniem
+		// zależności przestawałby niszczyć sesje odrzuconych kont, gdy tylko ACF Pro zniknie.
+		SessionGuard::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.

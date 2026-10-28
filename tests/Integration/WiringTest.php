@@ -21,6 +21,7 @@ use PortalUsers\Front\LoginGateway;
 use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
+use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Persistence\ProfessionRepository;
@@ -206,6 +207,24 @@ final class WiringTest extends WP_UnitTestCase {
 		);
 		$this->assertSame( LoginGateway::PRIORITY, has_filter( 'authenticate', array( LoginGateway::class, 'gate' ) ) );
 		$this->assertSame( LoginGateway::REST_PRIORITY, has_filter( 'rest_authentication_errors', array( LoginGateway::class, 'gate_rest' ) ) );
+	}
+
+	public function test_boot_registers_the_session_guard_even_when_acf_pro_is_missing(): void {
+		// Repozytorium stanu odpala akcję niezależnie od ACF Pro. Strażnik za sprawdzeniem zależności
+		// przestawałby niszczyć sesje odrzuconych kont w chwili, gdy ACF Pro zniknie.
+		add_filter( 'pusers_acf_pro_loaded', '__return_false' );
+		remove_action( 'pusers_account_status_changed', array( SessionGuard::class, 'on_status_changed' ), 10 );
+		$this->assertFalse( Dependencies::satisfied(), 'Test ma działać przy NIEspełnionych zależnościach.' );
+		$this->assertFalse( has_action( 'pusers_account_status_changed', array( SessionGuard::class, 'on_status_changed' ) ), 'Strażnik miał być zdjęty przed próbą.' );
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		$this->assertFalse(
+			has_action( 'pusers_register_features', array( SessionGuard::class, 'register' ) ),
+			'Strażnik nie może jechać przez hook zależny od ACF Pro.'
+		);
+		$this->assertSame( 10, has_action( 'pusers_account_status_changed', array( SessionGuard::class, 'on_status_changed' ) ) );
 	}
 
 	public function test_the_resend_form_posts_to_the_registered_action(): void {

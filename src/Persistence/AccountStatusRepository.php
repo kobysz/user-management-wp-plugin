@@ -51,12 +51,27 @@ final class AccountStatusRepository {
 	}
 
 	/**
-	 * Zapisuje stan konta.
+	 * Zapisuje stan konta i, gdy stan naprawdę się zmienił, ogłasza to akcją
+	 * `pusers_account_status_changed( int $userId, ?AccountStatus $old, AccountStatus $new )`.
+	 *
+	 * Repozytorium sesji nie rusza: warstwa przechowywania nie wylogowuje ludzi, tylko ogłasza fakt.
+	 * Stan sprzed zapisu czytany jest przed zapisem; null oznacza konto bez rozpoznanego stanu.
+	 * Powtórny zapis tej samej wartości nie jest zmianą stanu, więc akcji nie odpala.
+	 * Powodzenia zapisu nie poznaje się po wyniku `update_user_meta()` (fałsz także przy wartości
+	 * identycznej z zapisaną), tylko po odczycie zwrotnym.
 	 *
 	 * @param int           $user_id Identyfikator użytkownika.
 	 * @param AccountStatus $status  Nowy stan.
 	 */
 	public static function set( int $user_id, AccountStatus $status ): void {
+		$old = self::get( $user_id );
+
 		update_user_meta( $user_id, UserMeta::STATUS, $status->value );
+
+		if ( $old === $status || self::get( $user_id ) !== $status ) {
+			return;
+		}
+
+		do_action( 'pusers_account_status_changed', $user_id, $old, $status );
 	}
 }
