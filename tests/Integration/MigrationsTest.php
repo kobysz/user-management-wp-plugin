@@ -12,6 +12,7 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration;
 
 use PortalUsers\Cron\DispatchMail;
+use PortalUsers\Cron\PurgeMailLog;
 use PortalUsers\Persistence\Migrations;
 use WP_UnitTestCase;
 
@@ -177,9 +178,23 @@ final class MigrationsTest extends WP_UnitTestCase {
 
 		Migrations::maybe_upgrade();
 
-		$this->assertSame( 4, (int) get_option( 'pusers_db_version' ) );
+		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
 		$this->assertNotFalse( wp_next_scheduled( DispatchMail::HOOK ), 'Krok jednorazowy musi założyć zdarzenie cykliczne.' );
 		$this->assertSame( DispatchMail::SCHEDULE, wp_get_schedule( DispatchMail::HOOK ) );
+	}
+
+	public function test_the_upgrade_from_version_four_schedules_the_mail_log_retention(): void {
+		// Portal, który przeszedł już migrację 4, bez podbicia wersji nigdy nie dostałby crona retencji.
+		$this->fresh_install();
+		update_option( 'pusers_db_version', 4 );
+		wp_clear_scheduled_hook( PurgeMailLog::HOOK );
+
+		Migrations::maybe_upgrade();
+
+		$this->assertSame( 5, Migrations::DB_VERSION );
+		$this->assertSame( 5, (int) get_option( 'pusers_db_version' ) );
+		$this->assertNotFalse( wp_next_scheduled( PurgeMailLog::HOOK ) );
+		$this->assertSame( 'daily', wp_get_schedule( PurgeMailLog::HOOK ) );
 	}
 
 	public function test_terms_version_hash_is_unique(): void {

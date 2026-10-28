@@ -9,12 +9,14 @@ declare( strict_types=1 );
 
 namespace PortalUsers;
 
+use PortalUsers\Admin\MailLogScreen;
 use PortalUsers\Admin\MailTemplatesScreen;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Cron\DispatchMail;
+use PortalUsers\Cron\PurgeMailLog;
 use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\LoginForm;
@@ -89,6 +91,10 @@ final class Plugin {
 		// z logiem wysyłek zostają za zależnością.
 		DispatchMail::register();
 
+		// Retencja logu wysyłek też nie zależy od ACF Pro: kolejka rośnie, kiedy dispatcher chodzi,
+		// więc czyszczenie musi chodzić razem z nim.
+		PurgeMailLog::register();
+
 		// I z tego samego powodu poza hookiem zależnym od ACF Pro stoi przechwytywanie maila
 		// rdzeniowego: odzyskiwanie hasła stoi na mechanizmie rdzenia i musi działać także wtedy,
 		// gdy ACF Pro jest wyłączone albo zepsute aktualizacją. Przechwytywanie nie potrzebuje ACF
@@ -106,6 +112,7 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( ProfessionsScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MatrixScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MailTemplatesScreen::class, 'register' ) );
+		add_action( 'pusers_register_features', array( MailLogScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginHandler::class, 'register' ) );

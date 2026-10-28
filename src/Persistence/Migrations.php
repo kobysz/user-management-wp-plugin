@@ -12,6 +12,7 @@ namespace PortalUsers\Persistence;
 defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Cron\DispatchMail;
+use PortalUsers\Cron\PurgeMailLog;
 use PortalUsers\Cron\PurgeUnconfirmed;
 
 /**
@@ -20,9 +21,9 @@ use PortalUsers\Cron\PurgeUnconfirmed;
 final class Migrations {
 
 	/**
-	 * Wersja schematu bazy i jednorazowych kroków aktualizacji (2: harmonogram czyszczenia kont, 3: tabela kolejki maili, 4: harmonogram wysyłki z kolejki). Zwiększ przy każdej zmianie tabel albo nowym kroku.
+	 * Wersja schematu bazy i jednorazowych kroków aktualizacji (2: harmonogram czyszczenia kont, 3: tabela kolejki maili, 4: harmonogram wysyłki z kolejki, 5: harmonogram retencji logu wysyłek). Zwiększ przy każdej zmianie tabel albo nowym kroku.
 	 */
-	public const DB_VERSION = 4;
+	public const DB_VERSION = 5;
 
 	/**
 	 * Nazwy tabel wtyczki bez prefiksu. Jedyne źródło dla odinstalowania i warunku zapisu wersji w run();
@@ -128,6 +129,9 @@ final class Migrations {
 			// To samo dla crona wysyłki: instalacja, która przeszła już migrację 3, nigdy nie
 			// zaplanowałaby dispatchera, a wiersze kolejki czekałyby w bazie bez konsumenta.
 			DispatchMail::schedule();
+			// I cron retencji logu wysyłek: portal po migracji 4 nie przechodzi aktywacji, a bez tego
+			// kroku log rósłby bez końca.
+			PurgeMailLog::schedule();
 		}
 	}
 
