@@ -26,8 +26,25 @@ final class PageUrl {
 	 * @param int $pageId Identyfikator strony z ustawień (0 = brak).
 	 */
 	public static function for( int $pageId ): string {
+		$url = self::existing( $pageId );
+
+		return '' === $url ? home_url( '/' ) : $url;
+	}
+
+	/**
+	 * Adres strony o danym identyfikatorze albo `''`, gdy strony nie wskazano lub została usunięta
+	 * z panelu.
+	 *
+	 * To ta sama reguła co w `for()`, tylko BEZ odwrotu na stronę główną — dla wywołujących, dla
+	 * których strona główna jest złą odpowiedzią. Odnośnik w mailu jest tego przykładem: kieruje
+	 * na konkretną stronę wtyczki i jeżeli tej strony nie ma, lepiej zostawić odnośnik rdzenia niż
+	 * wysłać człowieka na stronę główną, która nic z jego kluczem nie zrobi.
+	 *
+	 * @param int $pageId Identyfikator strony z ustawień (0 = brak).
+	 */
+	public static function existing( int $pageId ): string {
 		$link = $pageId > 0 ? get_permalink( $pageId ) : false;
 
-		return false === $link ? home_url( '/' ) : $link;
+		return false === $link ? '' : $link;
 	}
 }

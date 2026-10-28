@@ -28,4 +28,16 @@ final class PageUrlTest extends WP_UnitTestCase {
 		$this->assertSame( home_url( '/' ), PageUrl::for( $deleted ) );
 		$this->assertNotSame( '', PageUrl::for( $deleted ) );
 	}
+
+	public function test_the_variant_without_the_fallback_says_when_there_is_no_page(): void {
+		// Dla odnośnika w mailu strona główna jest złą odpowiedzią, więc `existing()` oddaje `''`
+		// i wywołujący sam decyduje, co z brakiem strony zrobić.
+		$page    = self::factory()->post->create( array( 'post_type' => 'page' ) );
+		$deleted = self::factory()->post->create( array( 'post_type' => 'page' ) );
+		wp_delete_post( $deleted, true );
+
+		$this->assertSame( PageUrl::for( $page ), PageUrl::existing( $page ), 'Dla istniejącej strony oba warianty muszą dać ten sam adres.' );
+		$this->assertSame( '', PageUrl::existing( 0 ) );
+		$this->assertSame( '', PageUrl::existing( $deleted ) );
+	}
 }

@@ -18,6 +18,7 @@ use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\LoginForm;
 use PortalUsers\Front\LoginGateway;
 use PortalUsers\Front\LoginHandler;
+use PortalUsers\Front\PasswordReset;
 use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\Redirects;
 use PortalUsers\Front\RegistrationForm;
@@ -88,6 +89,7 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( RegistrationHandler::class, 'register' ) );
 		add_action( 'pusers_register_features', array( Confirmation::class, 'register' ) );
 		add_action( 'pusers_register_features', array( PasswordSetup::class, 'register' ) );
+		add_action( 'pusers_register_features', array( PasswordReset::class, 'register' ) );
 		add_action( 'pusers_register_features', array( TermsBinding::class, 'register' ) );
 		add_action( 'pusers_register_features', array( PurgeUnconfirmed::class, 'register' ) );
 	}

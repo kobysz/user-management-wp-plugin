@@ -20,6 +20,7 @@ use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\LoginForm;
 use PortalUsers\Front\LoginGateway;
 use PortalUsers\Front\LoginHandler;
+use PortalUsers\Front\PasswordReset;
 use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\Redirects;
 use PortalUsers\Front\RegistrationForm;
@@ -59,6 +60,7 @@ final class WiringTest extends WP_UnitTestCase {
 			LoginHandler::ACTION,
 			Confirmation::ACTION_RESEND,
 			PasswordSetup::ACTION,
+			PasswordReset::ACTION_REQUEST,
 		);
 	}
 
@@ -78,6 +80,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'redirects' => array( Redirects::class ),
 			'confirmation' => array( Confirmation::class ),
 			'password setup' => array( PasswordSetup::class ),
+			'password reset' => array( PasswordReset::class ),
 			'terms binding' => array( TermsBinding::class ),
 			'purge unconfirmed' => array( PurgeUnconfirmed::class ),
 		);
@@ -176,6 +179,19 @@ final class WiringTest extends WP_UnitTestCase {
 		PasswordSetup::register();
 		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . PasswordSetup::ACTION, array( PasswordSetup::class, 'handle' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_' . PasswordSetup::ACTION, array( PasswordSetup::class, 'handle' ) ) );
+	}
+
+	public function test_password_reset_register_hooks_its_handler_the_shortcode_and_the_mail_filters(): void {
+		// Niezalogowany wysyła ten formularz najczęściej, ale wariant `admin_post_` jest tu równie
+		// potrzebny: `Redirects` odcięło lekarzowi `wp-admin`, więc hasło zmienia on zalogowany,
+		// właśnie tą drogą. Filtry treści maila podmieniają odnośnik rdzenia na adres strony
+		// wtyczki — bez nich mail prowadziłby na `wp-login.php?action=rp`.
+		PasswordReset::register();
+		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . PasswordReset::ACTION_REQUEST, array( PasswordReset::class, 'handle_request' ) ) );
+		$this->assertNotFalse( has_action( 'admin_post_' . PasswordReset::ACTION_REQUEST, array( PasswordReset::class, 'handle_request' ) ) );
+		$this->assertTrue( shortcode_exists( PasswordReset::SHORTCODE ) );
+		$this->assertNotFalse( has_filter( 'retrieve_password_title', array( PasswordReset::class, 'mail_title' ) ) );
+		$this->assertNotFalse( has_filter( 'retrieve_password_message', array( PasswordReset::class, 'mail_message' ) ) );
 	}
 
 	public function test_login_gateway_register_hooks_the_gate_behind_the_core_password_check(): void {
