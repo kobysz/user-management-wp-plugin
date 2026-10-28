@@ -509,7 +509,11 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		$this->assertSame( PasswordReset::RESULT_SENT, $result, 'Bot dostaje tę samą odpowiedź, co człowiek.' );
 		$this->assertSame( array(), $this->mails, 'Wypełniona pułapka nie wysyła maila.' );
 		// Pułapka stoi PRZED progami: odmowa nic nie kosztuje, więc bot nie zabiera budżetu nikomu.
-		$this->assertSame( array(), $this->limiterOptions(), 'Wypełniona pułapka zużyła próg.' );
+		// Jedyny licznik, który odmowa rusza, to WŁASNY budżet wierszy w logu — a dwa nazwane
+		// liczniki przy dwóch istniejących znaczą, że żadnego trzeciego nie ma.
+		$this->assertSame( 0, RateLimiter::count( PasswordReset::BUCKET_IP . self::IP ), 'Wypełniona pułapka zużyła próg per IP.' );
+		$this->assertSame( 1, RateLimiter::count( PasswordReset::BUCKET_LOG_IP . self::IP ), 'Odmowa musi się policzyć w budżecie wierszy w logu.' );
+		$this->assertCount( 1, $this->limiterOptions(), 'Poza budżetem wierszy w logu pułapka nie może utworzyć żadnego licznika.' );
 	}
 
 	public function test_a_missing_nonce_gives_the_stale_result(): void {
@@ -520,7 +524,11 @@ final class PasswordResetTest extends WP_UnitTestCase {
 
 		$this->assertNotSame( '', PasswordReset::message_for( PasswordReset::RESULT_STALE ), 'Odmowa bez komunikatu to pusta strona.' );
 		$this->assertSame( array(), $this->mails, 'Odmowa nonce\'a nie wysyła maila.' );
-		$this->assertSame( array(), $this->limiterOptions(), 'Odmowa nonce\'a nie zużywa progu.' );
+		// Odmowa nonce'a nie zużywa PROGU; własny budżet wierszy w logu zużywa (patrz reguła 4),
+		// a dwa nazwane liczniki przy jednym istniejącym znaczą, że innego nie ma.
+		$this->assertSame( 0, RateLimiter::count( PasswordReset::BUCKET_IP . self::IP ), 'Odmowa nonce\'a zużyła próg per IP.' );
+		$this->assertSame( 2, RateLimiter::count( PasswordReset::BUCKET_LOG_IP . self::IP ), 'Każda z dwóch odmów liczy się w budżecie wierszy w logu.' );
+		$this->assertCount( 1, $this->limiterOptions(), 'Poza budżetem wierszy w logu odmowa nonce\'a nie może utworzyć licznika.' );
 	}
 
 	public function test_a_get_request_is_refused(): void {
@@ -681,6 +689,43 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( wp_hash( strtolower( $account['email'] ) ), $honeypot, 'Adres z wypełnionej pułapki musi trafić do logu skrótem.' );
 	}
 
+	public function test_a_flood_of_refusals_cannot_bury_the_one_row_that_matters(): void {
+		// Pierwsza bramka (nonce) stoi PRZED progami, więc wiersz odmowy pisany bez budżetu
+		// zamieniał anonimowe `POST`-y na `admin-post.php` w nieskończony `INSERT`: tabela rosła
+		// bez końca, a zalew grzebał dokładnie ten jeden wiersz, dla którego log odmów powstał.
+		$account = $this->account();
+
+		// Wiersz, którego administrator szuka: człowiek, któremu menedżer haseł wypełnił pułapkę.
+		$this->submit(
+			array(
+				PasswordReset::EMAIL_FIELD => $account['email'],
+				PasswordReset::HONEYPOT    => 'menedzer hasel',
+			)
+		);
+
+		// Zalew: odmowy nonce'a daleko ponad budżet.
+		for ( $i = 0; $i < self::IP_LIMIT + 5; $i++ ) {
+			$this->submit( array( PasswordReset::EMAIL_FIELD => $account['email'] ), false );
+		}
+
+		// Budżet to IP_LIMIT wierszy plus DOKŁADNIE jeden mówiący, że budżet się skończył.
+		$rows = $this->logRows();
+		$this->assertCount( self::IP_LIMIT + 1, $rows, 'Zalew odmów rośnie log bez ograniczenia.' );
+
+		$reasons = array();
+		foreach ( $rows as $row ) {
+			$context   = $this->contextOf( $row );
+			$reasons[] = isset( $context['refused'] ) ? (string) $context['refused'] : '';
+		}
+		$overflow = end( $reasons );
+		$this->assertNotSame( $reasons[0], $overflow, 'Wyczerpanie budżetu musi być w logu rozpoznawalne.' );
+		$this->assertSame( array( count( $reasons ) - 1 ), array_keys( $reasons, $overflow, true ), 'Wiersz o wyczerpanym budżecie musi być jeden i ostatni.' );
+
+		// I to, po co cały budżet: wiersz z początku okna PRZEŻYŁ zalew.
+		$first = implode( '|', array_map( 'strval', (array) $rows[0] ) );
+		$this->assertStringContainsString( wp_hash( strtolower( $account['email'] ) ), $first, 'Zalew wyparł wiersz, dla którego log odmów powstał.' );
+	}
+
 	public function test_the_page_leaves_the_cache_from_the_hook_before_the_render(): void {
 		// Strona niesie nonce i otwiera ustawienie hasła, więc nie może trafić do cache'a stron.
 		// Z `the_content` nagłówki wychodzą za późno, dlatego zestaw jedzie z hooka PRZED renderem.
@@ -765,12 +810,23 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( self::NEW_PASSWORD, $row, 'Hasło w logu.' );
 		$this->assertStringNotContainsString( $hash, $row, 'Skrót hasła w logu.' );
 
-		// Strona po przekierowaniu mówi, co się stało, i nie zostawia człowieka bez drogi dalej.
+		// Strona po przekierowaniu mówi, co się stało, i POKAZUJE DROGĘ, którą obiecuje. Odnośnik
+		// do logowania, nie „jakikolwiek formularz”: formularz adresu stoi na tej stronie zawsze,
+		// więc asercja na nim przechodziła także wtedy, gdy strona po udanym ustawieniu hasła
+		// proponowała wyłącznie poproszenie o KOLEJNY link odzyskiwania.
 		$_GET[ PasswordReset::RESULT_ARG ] = PasswordReset::RESULT_DONE;
 		$done                              = PasswordReset::render();
 		$this->assertNotSame( '', PasswordReset::message_for( PasswordReset::RESULT_DONE ) );
 		$this->assertStringContainsString( esc_html( PasswordReset::message_for( PasswordReset::RESULT_DONE ) ), $done );
-		$this->assertStringContainsString( '<form', $done, 'Komunikat nie może zostawić strony bez drogi dalej.' );
+		$this->assertStringContainsString( 'href="' . esc_url( wp_login_url() ) . '"', $done, 'Komunikat obiecuje zalogowanie, a strona nie pokazuje do niego drogi.' );
+		// Operacja, która się UDAŁA, nie jest alertem: ogłoszona jako alert przerywa czytnikowi
+		// ekranu zdanie bez powodu.
+		$this->assertStringContainsString( 'role="status"', $done, 'Udane ustawienie hasła ogłoszone jako alert.' );
+
+		// Bez znacznika udanego ustawienia hasła odnośnika nie ma: strona odzyskiwania hasła nie
+		// jest spisem odnośników, a komunikat i droga dalej idą w parze.
+		$_GET[ PasswordReset::RESULT_ARG ] = PasswordReset::RESULT_SENT;
+		$this->assertStringNotContainsString( 'href="' . esc_url( wp_login_url() ) . '"', PasswordReset::render() );
 	}
 
 	public function test_the_key_works_only_once(): void {
@@ -802,8 +858,23 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		// Liczymy WSZYSTKIE liczniki w bazie, nie tylko kubełek po identyfikatorze: próg policzony
 		// po samym loginie byłby dokładnie tą samą luką i licznik po identyfikatorze by go nie
 		// pokazał.
-		$this->assertCount( 1, $this->limiterOptions(), 'Poza kubełkiem per IP nie wolno utworzyć licznika dla konta, którego nie ustalono.' );
+		// Dwa liczniki, oba nazwane: próg per IP i własny budżet wierszy w logu. Trzeciego — tego
+		// po koncie — być nie może.
+		$this->assertCount( 2, $this->limiterOptions(), 'Poza progiem per IP i budżetem wierszy w logu nie wolno utworzyć licznika dla konta, którego nie ustalono.' );
 		$this->assertSame( 1, RateLimiter::count( PasswordReset::BUCKET_SET_IP . self::IP ), 'Odmowa klucza musi się policzyć w kubełku per IP.' );
+		$this->assertSame( 1, RateLimiter::count( PasswordReset::BUCKET_LOG_IP . self::IP ), 'Odmowa klucza musi się policzyć w budżecie wierszy w logu.' );
+
+		// Klucz martwy albo zgadywany to odmowa, która interesuje administratora najbardziej, więc
+		// zostawia wiersz z powodem. Konta wiersz NIE wskazuje i loginu z żądania nie niesie:
+		// konta nie ustalono, a niesprawdzony login udawałby wiedzę, której nie mamy.
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows, 'Odmowa klucza nie zostawiła wiersza w logu.' );
+		$context = $this->contextOf( $rows[0] );
+		$this->assertSame( PasswordReset::LOG_ACTION_SET, $rows[0]->action );
+		$this->assertNotSame( '', isset( $context['refused'] ) ? (string) $context['refused'] : '', 'Odmowa bez powodu nie mówi administratorowi, co się stało.' );
+		$this->assertSame( self::IP, isset( $context['ip'] ) ? (string) $context['ip'] : '', 'Wiersz odmowy musi nieść adres IP.' );
+		$this->assertSame( 0, (int) $rows[0]->subject_user_id, 'Wiersz wskazuje konto, którego nie ustalono.' );
+		$this->assertStringNotContainsString( $other['login'], implode( '|', array_map( 'strval', (array) $rows[0] ) ), 'Niesprawdzony login z żądania w logu.' );
 
 		$this->assertTrue( wp_check_password( self::OLD_PASSWORD, $this->storedHash( $other['id'] ), $other['id'] ), 'Cudzy klucz ustawił hasło.' );
 		$this->assertTrue( wp_check_password( self::OLD_PASSWORD, $this->storedHash( $victim['id'] ), $victim['id'] ), 'Cudza próba ustawiła hasło właścicielowi klucza.' );
@@ -893,11 +964,13 @@ final class PasswordResetTest extends WP_UnitTestCase {
 		// Odzyskiwanie hasła jest tym, czego używa człowiek, któremu ktoś przejął konto. Nowe
 		// hasło, które nie wyrzuca cudzej sesji, nie odbiera dostępu — a cały portal jest za
 		// logowaniem. Sprawdzamy DOSTĘP, nie wiersz w metadanych, bo dostęp jest wymogiem.
-		// Mechanizmem jest tu RDZEŃ: ciasteczko uwierzytelniające niesie fragment skrótu hasła,
-		// więc zmiana hasła unieważnia cudze ciasteczko bez naszej linii kodu. Jawne
-		// `WP_Session_Tokens::destroy_all()` zostało napisane i USUNIĘTE, bo ten test przechodzi
-		// bez niego; różnicę widać tylko w metadanej `session_tokens`, gdzie wiersz zostaje —
-		// a sam wiersz nikomu niczego nie otwiera.
+		//
+		// Ten test NIE ODRÓŻNIA obecności `WP_Session_Tokens::destroy_all()` w `handle_set()` od
+		// jej braku i odróżnić nie może: rdzeń maskuje ją własnym mechanizmem, bo ciasteczko
+		// uwierzytelniające niesie fragment skrótu hasła. Zęby tego testu są wobec USUNIĘCIA
+		// `reset_password()` — i po to tu jest. Powody, dla których jawne niszczenie sesji stoi
+		// w handlerze mimo braku testu, są zapisane przy tej linii (kolizja czterech znaków skrótu
+		// i zgodność z `SessionGuard`).
 		$account = $this->account( self::OLD_PASSWORD );
 		$expires = time() + 2 * DAY_IN_SECONDS;
 		$token   = WP_Session_Tokens::get_instance( $account['id'] )->create( $expires );
