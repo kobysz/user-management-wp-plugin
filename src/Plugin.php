@@ -19,6 +19,7 @@ use PortalUsers\Front\LoginForm;
 use PortalUsers\Front\LoginGateway;
 use PortalUsers\Front\LoginHandler;
 use PortalUsers\Front\PasswordSetup;
+use PortalUsers\Front\Redirects;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\SessionGuard;
@@ -83,6 +84,7 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginHandler::class, 'register' ) );
+		add_action( 'pusers_register_features', array( Redirects::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationHandler::class, 'register' ) );
 		add_action( 'pusers_register_features', array( Confirmation::class, 'register' ) );
 		add_action( 'pusers_register_features', array( PasswordSetup::class, 'register' ) );
