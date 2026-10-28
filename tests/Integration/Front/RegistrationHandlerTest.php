@@ -28,12 +28,15 @@ use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\TermsRepository;
 use PortalUsers\Persistence\UserMeta;
 use PortalUsers\Tests\Integration\Support\AcfRenderRecorder;
+use PortalUsers\Tests\Integration\Support\QueuedMailsTrait;
 use WP_UnitTestCase;
 use WPDieException;
 
 require_once dirname( __DIR__ ) . '/Support/acf-render-stub.php';
 
 final class RegistrationHandlerTest extends WP_UnitTestCase {
+
+	use QueuedMailsTrait;
 
 	private const PASSWORD = 'S3kret\\ne"Haslo!';
 
@@ -69,13 +72,6 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	private int $sequence          = 0;
 
 	/**
-	 * Wiadomości przechwycone zamiast wysłania.
-	 *
-	 * @var list<array<string, mixed>>
-	 */
-	private array $mails = array();
-
-	/**
 	 * Ciasteczka przechwycone przez szew wysyłania.
 	 *
 	 * @var list<array{value: string, options: array<string, mixed>}>
@@ -87,17 +83,7 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		require_once ABSPATH . 'wp-admin/includes/user.php';
 		RateLimiter::reset_failure_report();
 		AcfRenderRecorder::$fields = array();
-		$this->mails = array();
 		remove_all_actions( RegistrationHandler::REGISTERED_HOOK );
-		add_filter(
-			'pre_wp_mail',
-			function ( $short, $atts ) {
-				$this->mails[] = (array) $atts;
-				return true;
-			},
-			10,
-			2
-		);
 		$this->redirected          = '';
 		$this->originalMethod      = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
 		$this->originalAddr        = isset( $_SERVER['REMOTE_ADDR'] ) ? (string) $_SERVER['REMOTE_ADDR'] : '';
@@ -398,7 +384,7 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 
 		$this->assertNotSame( '', $hash, 'Konto bez hasła logowałoby się pustym hasłem.' );
 		$this->assertFalse( wp_check_password( '', $hash, $id ) );
-		foreach ( $this->mails as $mail ) {
+		foreach ( $this->mails() as $mail ) {
 			$this->assertStringNotContainsString( $hash, (string) $mail['message'], 'Hasła nikomu nie wysyłamy.' );
 		}
 		$this->assertStringNotContainsString( $hash, serialize( get_user_meta( $id ) ), 'Hasła nigdzie nie zapisujemy.' );
@@ -869,22 +855,22 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 	public function test_the_owner_of_an_existing_address_gets_a_mail_about_the_attempt(): void {
 		$email = $this->email();
 		$this->register_ok( array( RegistrationForm::EMAIL => $email ) );
-		$this->mails = array();
+		$this->forget_mails();
 
 		$this->post_and_submit( array( RegistrationForm::EMAIL => $email ) );
 
-		$this->assertCount( 1, $this->mails );
-		$this->assertSame( array( $email ), (array) $this->mails[0]['to'] );
-		$this->assertStringContainsString( 'już istnieje', (string) $this->mails[0]['message'] );
-		$this->assertStringContainsString( 'zignoruj', (string) $this->mails[0]['message'] );
+		$this->assertCount( 1, $this->mails() );
+		$this->assertSame( array( $email ), (array) $this->mails()[0]['to'] );
+		$this->assertStringContainsString( 'już istnieje', (string) $this->mails()[0]['message'] );
+		$this->assertStringContainsString( 'zignoruj', (string) $this->mails()[0]['message'] );
 	}
 
 	public function test_an_address_taken_between_the_check_and_the_insert_gets_the_accepted_response_too(): void {
 		// Wyścig: sprawdzenie email_exists() widzi adres wolnym, a wp_insert_user() zgłasza już zajęty.
 		$email    = $this->email();
 		$existing = $this->register_ok( array( RegistrationForm::EMAIL => $email ) );
-		$this->mails = array();
-		$calls       = 0;
+		$this->forget_mails();
+		$calls = 0;
 		add_filter(
 			'email_exists',
 			static function ( $id ) use ( &$calls ) {
@@ -898,21 +884,21 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertGreaterThan( 1, $calls, 'Wyścig musiał zajść między sprawdzeniem a zapisem.' );
 		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $location );
 		$this->assertSame( $before, $this->user_ids() );
-		$this->assertCount( 1, $this->mails );
+		$this->assertCount( 1, $this->mails() );
 		$this->assertSame( $existing, (int) email_exists( $email ) );
 	}
 
 	public function test_the_attempt_mail_is_not_sent_once_its_limit_is_used_up_and_the_response_stays_the_same(): void {
 		$email = $this->email();
 		$this->register_ok( array( RegistrationForm::EMAIL => $email ) );
-		$this->mails = array();
+		$this->forget_mails();
 		for ( $i = 0; $i < 3; $i++ ) {
 			Mailer::may_send_to( $email, Mailer::PURPOSE_ATTEMPT );
 		}
 
 		$location = $this->post_and_submit( array( RegistrationForm::EMAIL => $email ) );
 
-		$this->assertSame( array(), $this->mails, 'Próg maili o próbie rejestracji wyczerpany.' );
+		$this->assertSame( array(), $this->mails(), 'Próg maili o próbie rejestracji wyczerpany.' );
 		$this->assertStringContainsString( RegistrationHandler::DONE_ARG . '=1', $location, 'Odpowiedź ta sama co dla przyjętego zgłoszenia.' );
 		$this->assertTrue( Mailer::may_send_to( $email, Mailer::PURPOSE_RESEND ), 'Cudze zgłoszenia nie odbierają właścicielowi ponownej wysyłki.' );
 	}

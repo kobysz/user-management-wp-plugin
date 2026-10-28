@@ -12,25 +12,28 @@ namespace PortalUsers\Front;
 defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Domain\Account\AccountStatus;
-use PortalUsers\Domain\Credentials\CredentialType;
-use PortalUsers\Domain\Credentials\ValidatorRegistry;
+use PortalUsers\Domain\Mail\MailKind;
 use PortalUsers\Domain\Profession\Profession;
+use PortalUsers\Mail\MailQueue;
+use PortalUsers\Mail\PlaceholderFactory;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\EventLog;
-use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
 
 /**
- * Treści są minimalne i funkcjonalne. Każda przechodzi przez `FILTER_BODY` (i temat przez `FILTER_SUBJECT`),
- * więc kolejny plan podmienia szablony bez ruszania zdarzeń, które maile wywołują.
+ * Zdarzenia rejestracji zamienione na wiersze kolejki. Żadne z nich nie woła `wp_mail()`: treść powstaje
+ * w chwili zdarzenia (snapshot szablonu), a wysyłką zajmuje się dispatcher. Dzięki temu odpowiedź
+ * użytkownika nie czeka na serwer poczty, a na pytanie „czy ten mail wyszedł" odpowiada log wysyłek.
+ *
+ * Temat i treść bierze `MailQueue` z szablonu rodzaju i przepuszcza przez `FILTER_SUBJECT` / `FILTER_BODY`.
+ * Stałe `KIND_*` zostają literałami równymi wartościom `MailKind`: PHP 8.1 nie przyjmuje
+ * `MailKind::Confirmation->value` w wyrażeniu stałej, a wyrzucenie stałych zepsułoby kontrakt filtrów
+ * z Planu 3. Zgodność literałów z enumem pilnuje test jednostkowy.
  *
  * Odbiorcy redakcji pochodzą WYŁĄCZNIE z ustawień wtyczki (lista globalna, nadpisana adresem profesji).
  * Adres administratora witryny nie jest tu nigdy źródłem: nie zawsze główny administrator odpowiada za akceptację.
- *
- * Liczby stawiamy po dwukropku na końcu zdania, bez `_n()`: językiem źródłowym jest polski, katalogu
- * tłumaczeń nie ma, więc gettext zastosowałby angielską regułę dwóch form.
  */
 final class Mailer {
 
@@ -68,12 +71,11 @@ final class Mailer {
 	private const BUCKET_MAIL_TO = 'mail_to:';
 
 	/**
-	 * Wysyła użytkownikowi link potwierdzający adres.
+	 * Kolejkuje użytkownikowi link potwierdzający adres.
 	 *
-	 * Treść mówi, że po kliknięciu trzeba USTAWIĆ HASŁO: zgłoszenie o hasło nie pyta, a konto bez
-	 * ustawionego hasła nie ma danych logowania, więc człowiek musi wiedzieć, że link jest jedyną
-	 * drogą do konta. Ostrzeżenie „jeżeli to nie Ty zakładałeś konto” ZOSTAJE: samo zgłoszenie
-	 * cudzego adresu jest nadal możliwe, choć nie daje już dostępu do konta.
+	 * Klucz odporności niesie skrót odnośnika, bo ponowna wysyłka (funkcja Planu 3) generuje NOWY token:
+	 * klucz bez tokenu zablokowałby ją na zawsze. Mail idzie natychmiast — człowiek czeka przy ekranie,
+	 * a bez tego odnośnika nie ma jak wejść na konto.
 	 *
 	 * @param int    $userId Identyfikator użytkownika.
 	 * @param string $link   Pełny odnośnik z tokenem.
@@ -84,33 +86,22 @@ final class Mailer {
 			return false;
 		}
 
-		$body = implode(
-			"\n",
-			array(
-				__( 'Dziękujemy za rejestrację. Potwierdź adres e-mail i ustaw hasło do konta, otwierając odnośnik:', 'portal-users' ),
-				$link,
-				'',
-				__( 'Hasła nie ustawia się w formularzu zgłoszenia: ustawisz je dopiero po otwarciu tego odnośnika.', 'portal-users' ),
-				'',
-				__( 'Jeżeli to nie Ty zakładałeś konto, zignoruj tę wiadomość.', 'portal-users' ),
-			)
-		);
-
-		return self::send(
+		return MailQueue::enqueue(
+			MailKind::Confirmation,
+			$userId,
 			$user->user_email,
-			__( 'Potwierdź adres e-mail', 'portal-users' ),
-			$body,
-			self::KIND_CONFIRMATION,
-			array(
-				'user_id' => $userId,
-				'link'    => $link,
-			)
+			PlaceholderFactory::for_user( $userId, array( 'link_potwierdzenia' => $link ) ),
+			MailKind::Confirmation->value . ':' . $userId . ':' . substr( wp_hash( $link ), 0, 16 ),
+			true
 		);
 	}
 
 	/**
-	 * Powiadamia redakcję o potwierdzeniu adresu. Gdy akceptacja jest włączona, wiadomość wzywa do decyzji;
-	 * gdy wyłączona, jest czysto informacyjna (konto jest już zatwierdzone).
+	 * Powiadamia redakcję o potwierdzeniu adresu. Gdy wniosek czeka na decyzję, idzie rodzaj `editorial`
+	 * (wezwanie do decyzji); gdy konto jest już zatwierdzone — `editorial_auto`, czysto informacyjny.
+	 *
+	 * O rodzaju decyduje STAN konta, nie samo ustawienie akceptacji: stan jest tym, co o koncie
+	 * rozstrzyga, a ustawienie mogło się zmienić między zgłoszeniem a potwierdzeniem adresu.
 	 *
 	 * @param int $userId Identyfikator użytkownika.
 	 */
@@ -130,46 +121,25 @@ final class Mailer {
 			return false;
 		}
 
-		$needsDecision = AccountStatus::Pending === AccountStatusRepository::get( $userId );
-		$link          = $needsDecision ? self::application_link( $userId ) : '';
+		$kind   = AccountStatus::Pending === AccountStatusRepository::get( $userId ) ? MailKind::Editorial : MailKind::EditorialAuto;
+		$values = PlaceholderFactory::for_user( $userId );
+		// Adres redakcji potwierdza się raz, więc w kluczu wystarczy rodzaj i konto; odbiorcę dopina kolejka.
+		$dedupeKey = $kind->value . ':' . $userId;
 
-		$lines   = array();
-		$lines[] = $needsDecision
-			? __( 'Nowe konto potwierdziło adres e-mail i czeka na decyzję.', 'portal-users' )
-			: __( 'Nowe konto potwierdziło adres e-mail i zostało zatwierdzone automatycznie (akceptacja jest wyłączona). Ta wiadomość ma charakter informacyjny.', 'portal-users' );
-		$lines[] = '';
-		$lines[] = __( 'Profesja:', 'portal-users' ) . ' ' . ( null === $profession ? $professionKey : $profession->label );
-		$lines[] = __( 'Adres e-mail:', 'portal-users' ) . ' ' . $user->user_email;
-		$lines[] = __( 'Numer uprawnień:', 'portal-users' ) . ' ' . self::credential_summary( $userId, $profession );
-		$lines[] = '';
-		$lines[] = __( 'Pola zgłoszenia:', 'portal-users' );
-		foreach ( self::submitted_fields( $userId, FieldMatrixRepository::get()->visibleFields( $professionKey ) ) as $name => $value ) {
-			$lines[] = '- ' . $name . ': ' . $value;
-		}
-		if ( '' !== $link ) {
-			$lines[] = '';
-			$lines[] = __( 'Wniosek:', 'portal-users' ) . ' ' . $link;
+		// Osobna wiadomość do każdego odbiorcy: w `To:` jednej wiadomości każdy widziałby adresy pozostałych.
+		$queued = true;
+		foreach ( $recipients as $recipient ) {
+			$queued = MailQueue::enqueue( $kind, $userId, $recipient, $values, $dedupeKey ) && $queued;
 		}
 
-		$subject = $needsDecision
-			? __( 'Nowy wniosek o konto czeka na decyzję', 'portal-users' )
-			: __( 'Nowe konto zatwierdzone automatycznie', 'portal-users' );
-
-		return self::send(
-			$recipients,
-			$subject,
-			implode( "\n", $lines ),
-			self::KIND_EDITORIAL,
-			array(
-				'user_id'        => $userId,
-				'needs_decision' => $needsDecision,
-				'link'           => $link,
-			)
-		);
+		return $queued;
 	}
 
 	/**
 	 * Informuje właściciela istniejącego konta, że ktoś próbował zarejestrować jego adres. Konto się nie zmienia.
+	 *
+	 * Klucz odporności niesie bieżącą godzinę UTC: najwyżej jeden taki mail na godzinę, zgodnie z progiem
+	 * `may_send_to()`. Osoba trzecia zgłaszająca cudzy adres nie zasypie właściciela.
 	 *
 	 * @param int $userId Identyfikator istniejącego użytkownika.
 	 */
@@ -179,25 +149,12 @@ final class Mailer {
 			return false;
 		}
 
-		$body = implode(
-			"\n",
-			array(
-				__( 'Ktoś próbował zarejestrować konto z Twoim adresem e-mail, ale konto z tym adresem już istnieje.', 'portal-users' ),
-				__( 'Nic się w nim nie zmieniło.', 'portal-users' ),
-				'',
-				__( 'Jeżeli to byłeś Ty, zaloguj się na istniejące konto. Jeżeli nie pamiętasz hasła, możesz je odzyskać:', 'portal-users' ),
-				wp_lostpassword_url(),
-				'',
-				__( 'Jeżeli to nie Ty, zignoruj tę wiadomość. Nie musisz nic robić.', 'portal-users' ),
-			)
-		);
-
-		return self::send(
+		return MailQueue::enqueue(
+			MailKind::ExistingAccount,
+			$userId,
 			$user->user_email,
-			__( 'Próba rejestracji na Twój adres e-mail', 'portal-users' ),
-			$body,
-			self::KIND_EXISTING,
-			array( 'user_id' => $userId )
+			PlaceholderFactory::for_user( $userId ),
+			MailKind::ExistingAccount->value . ':' . $userId . ':' . gmdate( 'YmdH' )
 		);
 	}
 
@@ -247,115 +204,5 @@ final class Mailer {
 		}
 
 		return array_values( $out );
-	}
-
-	/**
-	 * Odnośnik do wniosku w panelu (do czasu ekranu wniosków: edycja użytkownika).
-	 *
-	 * @param int $userId Identyfikator użytkownika.
-	 */
-	private static function application_link( int $userId ): string {
-		return admin_url( 'user-edit.php?user_id=' . $userId );
-	}
-
-	/**
-	 * Numer uprawnień z wynikiem walidacji, ponownie liczonym na zapisanej wartości.
-	 *
-	 * @param int             $userId     Identyfikator użytkownika.
-	 * @param Profession|null $profession Profesja konta.
-	 */
-	private static function credential_summary( int $userId, ?Profession $profession ): string {
-		if ( null === $profession || CredentialType::None === $profession->credentialType || '' === $profession->credentialField ) {
-			return __( 'nie dotyczy', 'portal-users' );
-		}
-
-		$stored = get_user_meta( $userId, RegistrationHandler::ACF_META_PREFIX . $profession->credentialField, true );
-		$number = is_string( $stored ) ? $stored : '';
-		if ( '' === $number ) {
-			return __( 'brak', 'portal-users' );
-		}
-
-		$validator = ( new ValidatorRegistry() )->for( $profession->credentialType );
-		if ( null === $validator ) {
-			return $number;
-		}
-		$result = $validator->validate( $number );
-
-		return $result->isValid()
-			? $number . ' (' . __( 'wynik walidacji: poprawny', 'portal-users' ) . ')'
-			: $number . ' (' . __( 'wynik walidacji: niepoprawny', 'portal-users' ) . ', ' . $result->code() . ')';
-	}
-
-	/**
-	 * Zapisane pola zgłoszenia (metadane z przedrostkiem pól ACF) jako nazwa => wartość w jednej linii.
-	 *
-	 * Tylko pola widoczne w macierzy dla profesji wnioskodawcy: ukryte nie trafiają do redakcji.
-	 *
-	 * @param int                $userId        Identyfikator użytkownika.
-	 * @param array<int, string> $visibleFields Pola widoczne dla profesji.
-	 * @return array<string, string>
-	 */
-	private static function submitted_fields( int $userId, array $visibleFields ): array {
-		$out     = array();
-		$prefix  = RegistrationHandler::ACF_META_PREFIX;
-		$all     = get_user_meta( $userId );
-		$visible = array_flip( $visibleFields );
-		foreach ( is_array( $all ) ? $all : array() as $key => $values ) {
-			$key = (string) $key;
-			if ( ! str_starts_with( $key, $prefix ) || ! is_array( $values ) ) {
-				continue;
-			}
-			$name = substr( $key, strlen( $prefix ) );
-			if ( ! isset( $visible[ $name ] ) ) {
-				continue;
-			}
-			$value = $values[0] ?? '';
-
-			$out[ $name ] = is_string( $value ) ? trim( (string) preg_replace( '/\s+/', ' ', $value ) ) : '';
-		}
-		ksort( $out );
-
-		return $out;
-	}
-
-	/**
-	 * Wysyła wiadomość tekstową, przepuszczając temat i treść przez filtry.
-	 *
-	 * @param string|list<string>  $to      Odbiorca albo odbiorcy.
-	 * @param string               $subject Temat domyślny.
-	 * @param string               $body    Treść domyślna.
-	 * @param string               $kind    Rodzaj wiadomości (KIND_*).
-	 * @param array<string, mixed> $context Kontekst dla filtrów.
-	 */
-	private static function send( string|array $to, string $subject, string $body, string $kind, array $context ): bool {
-		/**
-		 * Treść wiadomości. Plan szablonów podmienia ją tu, bez ruszania zdarzeń.
-		 *
-		 * @param string               $body    Treść domyślna.
-		 * @param string               $kind    Rodzaj wiadomości.
-		 * @param array<string, mixed> $context Kontekst.
-		 */
-		$filteredBody = apply_filters( self::FILTER_BODY, $body, $kind, $context ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej FILTER_BODY, która ma prefiks pusers_.
-		/**
-		 * Temat wiadomości.
-		 *
-		 * @param string               $subject Temat domyślny.
-		 * @param string               $kind    Rodzaj wiadomości.
-		 * @param array<string, mixed> $context Kontekst.
-		 */
-		$filteredSubject = apply_filters( self::FILTER_SUBJECT, $subject, $kind, $context ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej FILTER_SUBJECT, która ma prefiks pusers_.
-
-		// Osobna wiadomość do każdego odbiorcy: w `To:` jednej wiadomości każdy widziałby adresy pozostałych.
-		$sent = true;
-		foreach ( (array) $to as $recipient ) {
-			$ok   = wp_mail(
-				$recipient,
-				is_string( $filteredSubject ) ? $filteredSubject : $subject,
-				is_string( $filteredBody ) ? $filteredBody : $body
-			);
-			$sent = $ok && $sent;
-		}
-
-		return $sent;
 	}
 }
