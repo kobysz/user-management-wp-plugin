@@ -174,6 +174,81 @@ final class Mailer {
 	}
 
 	/**
+	 * Mówi wnioskodawcy, że adres jest potwierdzony, a wniosek czeka na decyzję redakcji.
+	 *
+	 * Adres potwierdza się raz, więc klucz niesie tylko rodzaj i konto: ponowne wywołanie nie zrodzi
+	 * drugiego „czeka na decyzję". Mail nie idzie natychmiast — nikt nie czeka przy ekranie.
+	 *
+	 * @param int $userId Identyfikator użytkownika.
+	 */
+	public static function application_received( int $userId ): bool {
+		return self::to_applicant( MailKind::ApplicationReceived, $userId, array(), MailKind::ApplicationReceived->value . ':' . $userId );
+	}
+
+	/**
+	 * Informuje wnioskodawcę, że konto jest zatwierdzone. Woła to potwierdzenie adresu przy wyłączonej
+	 * akceptacji oraz (od Planu 6) akcja zatwierdzenia w panelu.
+	 *
+	 * Klucz niesie minutę, bo idempotencja ma chronić przed podwójnym kliknięciem, a nie przed ponowną
+	 * decyzją tygodnie później (zatwierdzenie po wcześniejszym odrzuceniu jest realną ścieżką).
+	 *
+	 * @param int $userId Identyfikator użytkownika.
+	 */
+	public static function approved( int $userId ): bool {
+		return self::to_applicant( MailKind::Approved, $userId, array(), MailKind::Approved->value . ':' . $userId . ':' . self::minute_bucket() );
+	}
+
+	/**
+	 * Informuje wnioskodawcę o odrzuceniu wniosku. Powód przychodzi już rozstrzygnięty (wpisany ręcznie
+	 * albo wybrany z ustawień); tu nikt go nie szuka.
+	 *
+	 * Klucz niesie minutę i skrót powodu: podwójne kliknięcie nie wyśle dwóch maili, a ponowne odrzucenie
+	 * z INNYM powodem wyśle, bo człowiek ma wiedzieć, co się zmieniło.
+	 *
+	 * @param int    $userId Identyfikator użytkownika.
+	 * @param string $reason Powód odrzucenia.
+	 */
+	public static function rejected( int $userId, string $reason ): bool {
+		return self::to_applicant(
+			MailKind::Rejected,
+			$userId,
+			array( 'powod_odrzucenia' => $reason ),
+			MailKind::Rejected->value . ':' . $userId . ':' . self::minute_bucket() . ':' . substr( wp_hash( $reason ), 0, 16 )
+		);
+	}
+
+	/**
+	 * Wspólny tor maili do wnioskodawcy: konto i adres muszą istnieć, wiersz powstaje bez natychmiastowej wysyłki.
+	 *
+	 * @param MailKind              $kind      Rodzaj maila.
+	 * @param int                   $userId    Identyfikator użytkownika.
+	 * @param array<string, string> $extra     Zmienne od wołającego.
+	 * @param string                $dedupeKey Klucz odporności (odbiorcę dopina kolejka).
+	 */
+	private static function to_applicant( MailKind $kind, int $userId, array $extra, string $dedupeKey ): bool {
+		$user = get_userdata( $userId );
+		if ( false === $user || '' === $user->user_email ) {
+			return false;
+		}
+
+		return MailQueue::enqueue( $kind, $userId, $user->user_email, PlaceholderFactory::for_user( $userId, $extra ), $dedupeKey );
+	}
+
+	/**
+	 * Kubełek minuty do kluczy odporności zatwierdzenia i odrzucenia (UTC, `YmdHi`). Filtr jest szwem
+	 * testowym jednej decyzji i WEWNĘTRZNYM, nie punktem rozszerzenia: bez niego nie da się deterministycznie
+	 * sprawdzić, że ta sama decyzja w tej samej minucie daje jeden wiersz, a w późniejszej drugi. Zwrócenie
+	 * z niego stałej na prawdziwej witrynie sprawi, że każda następna decyzja tego samego rodzaju (a przy
+	 * odrzuceniu z tym samym powodem) zostanie uznana za duplikat i wnioskodawca nigdy jej nie dostanie,
+	 * choć panel pokaże, że mail wyszedł.
+	 */
+	private static function minute_bucket(): string {
+		$bucket = apply_filters( 'pusers_internal_test_seam_minute_bucket', gmdate( 'YmdHi' ) );
+
+		return is_string( $bucket ) ? $bucket : gmdate( 'YmdHi' );
+	}
+
+	/**
 	 * Zlicza próbę wysłania maila na adres z formularza publicznego i mówi, czy wolno wysłać.
 	 *
 	 * Każdy cel (ponowna wysyłka, mail o próbie rejestracji) ma własny kubełek na adres i próg równy progowi

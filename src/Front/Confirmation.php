@@ -150,6 +150,7 @@ final class Confirmation {
 		AccountStatusRepository::set( $userId, $next );
 		EventLog::write( self::LOG_ACTION, $userId, 0, array( 'status' => $next->value ) );
 		Mailer::editorial( $userId );
+		self::notify_applicant( $userId );
 
 		return self::RESULT_OK;
 	}
@@ -299,6 +300,23 @@ final class Confirmation {
 			default:
 				return __( 'Link potwierdzający jest nieprawidłowy albo został już użyty.', 'portal-users' );
 		}
+	}
+
+	/**
+	 * Mail do wnioskodawcy po potwierdzeniu adresu. Rozstrzyga STAN konta odczytany z repozytorium, nie
+	 * ustawienie (tak samo jak `Mailer::editorial()`): „czeka na decyzję" wobec konta już zatwierdzonego
+	 * byłoby nieprawdą. Osobna metoda także dlatego, że analiza statyczna uznaje powtórny odczyt stanu
+	 * w `confirm()` za ten sam, który tuż wcześniej potwierdził `email_unconfirmed`.
+	 *
+	 * @param int $userId Identyfikator użytkownika.
+	 */
+	private static function notify_applicant( int $userId ): void {
+		if ( AccountStatus::Pending === AccountStatusRepository::get( $userId ) ) {
+			Mailer::application_received( $userId );
+			return;
+		}
+
+		Mailer::approved( $userId );
 	}
 
 	/**

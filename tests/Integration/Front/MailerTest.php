@@ -359,6 +359,106 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'już istnieje', $this->first_body() );
 	}
 
+	public function test_the_rejection_mail_carries_the_reason(): void {
+		$id = $this->account( 'lekarz' );
+
+		$this->assertTrue( Mailer::rejected( $id, 'numer nieprawidłowy' ) );
+
+		$this->assertSame( MailKind::Rejected->value, $this->mails()[0]['kind'] );
+		$this->assertStringContainsString( 'numer nieprawidłowy', $this->first_body() );
+		$this->assertStringNotContainsString( '{', $this->first_body(), 'Żadna zmienna nie zostaje w treści dosłownie.' );
+	}
+
+	public function test_a_re_rejection_with_another_reason_queues_again_but_the_same_reason_does_not(): void {
+		$id = $this->account( 'lekarz' );
+
+		$this->assertTrue( Mailer::rejected( $id, 'numer nieprawidłowy' ) );
+		$this->assertFalse( Mailer::rejected( $id, 'numer nieprawidłowy' ) );
+		$this->assertTrue( Mailer::rejected( $id, 'brak dokumentów' ) );
+	}
+
+	public function test_application_received_and_approved_mails_resolve_every_variable(): void {
+		$pageId = (int) self::factory()->post->create( array( 'post_type' => 'page', 'post_title' => 'Logowanie' ) );
+		SettingsRepository::save( Settings::fromArray( array( 'login_page_id' => $pageId ) ) );
+		$id = $this->account( 'lekarz' );
+
+		$this->assertTrue( Mailer::application_received( $id ) );
+		$this->assertTrue( Mailer::approved( $id ) );
+
+		foreach ( $this->mails() as $mail ) {
+			$this->assertStringNotContainsString( '{', $mail['message'] );
+			$this->assertStringNotContainsString( '{', $mail['subject'] );
+			$this->assertSame( array( 'osoba@example.test' ), $mail['to'] );
+		}
+		$kinds = array_column( $this->mails(), 'kind' );
+		$this->assertSame( array( MailKind::ApplicationReceived->value, MailKind::Approved->value ), $kinds );
+		$this->assertStringContainsString( (string) get_permalink( $pageId ), $this->mails()[1]['message'] );
+	}
+
+	public function test_a_double_click_on_approve_queues_one_mail_but_a_later_decision_queues_another(): void {
+		// Idempotencja chroni od podwójnego kliknięcia, nie od ponownej decyzji miesiąc później.
+		$id     = $this->account( 'lekarz' );
+		$bucket = '202610281200';
+		$seam   = static function () use ( &$bucket ): string {
+			return $bucket;
+		};
+		add_filter( 'pusers_internal_test_seam_minute_bucket', $seam );
+
+		$this->assertTrue( Mailer::approved( $id ) );
+		$this->assertFalse( Mailer::approved( $id ) );
+		$bucket = '202611281200';
+		$this->assertTrue( Mailer::approved( $id ) );
+
+		$this->assertCount( 2, $this->mails() );
+		remove_filter( 'pusers_internal_test_seam_minute_bucket', $seam );
+	}
+
+	public function test_the_same_rejection_in_a_later_bucket_queues_a_second_row(): void {
+		$id     = $this->account( 'lekarz' );
+		$bucket = '202610281200';
+		$seam   = static function () use ( &$bucket ): string {
+			return $bucket;
+		};
+		add_filter( 'pusers_internal_test_seam_minute_bucket', $seam );
+
+		$this->assertTrue( Mailer::rejected( $id, 'powód' ) );
+		$this->assertFalse( Mailer::rejected( $id, 'powód' ) );
+		$bucket = '202610281201';
+		$this->assertTrue( Mailer::rejected( $id, 'powód' ) );
+		remove_filter( 'pusers_internal_test_seam_minute_bucket', $seam );
+	}
+
+	public function test_application_received_is_queued_once_ever(): void {
+		$id = $this->account( 'lekarz' );
+
+		$this->assertTrue( Mailer::application_received( $id ) );
+		$this->assertFalse( Mailer::application_received( $id ) );
+	}
+
+	public function test_the_cycle_mails_are_not_immediate(): void {
+		$id = $this->account( 'lekarz' );
+		Mailer::application_received( $id );
+		Mailer::approved( $id );
+		Mailer::rejected( $id, 'x' );
+
+		$this->assertFalse( wp_next_scheduled( MailQueue::DISPATCH_HOOK ), 'Nikt nie czeka przy ekranie: idzie z najbliższym przebiegiem crona.' );
+		$this->assertCount( 3, $this->mails() );
+	}
+
+	public function test_cycle_mails_for_an_account_without_an_address_queue_nothing(): void {
+		$this->assertFalse( Mailer::application_received( 0 ) );
+		$this->assertFalse( Mailer::approved( 0 ) );
+		$this->assertFalse( Mailer::rejected( 0, 'x' ) );
+
+		$id = $this->account( 'lekarz' );
+		$this->clear_email( $id );
+
+		$this->assertFalse( Mailer::application_received( $id ) );
+		$this->assertFalse( Mailer::approved( $id ) );
+		$this->assertFalse( Mailer::rejected( $id, 'x' ) );
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+	}
+
 	public function test_the_per_address_mail_limit_allows_the_configured_number_and_then_refuses(): void {
 		SettingsRepository::save( Settings::fromArray( array( 'registration_limit_per_email_per_hour' => 2 ) ) );
 
