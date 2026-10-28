@@ -71,6 +71,8 @@ final class MailTemplatesScreen {
 			}
 			$current = MailTemplateRepository::override( $kind );
 
+			// Końce linii zapisujemy jako LF, żeby zapisany tekst nie zależał od przeglądarki
+			// administratora (CRLF z formularza, LF z innego klienta).
 			// Treść maila jest zwykłym tekstem: HtmlBody::wrap() eskejpuje wszystko, więc wpisany
 			// znacznik dojechałby do lekarza dosłownie. Zdejmowanie go przy zapisie mówi prawdę
 			// zamiast obiecywać HTML, którego nie ma. sanitize_textarea_field() zachowuje łamania linii.
@@ -196,6 +198,6 @@ final class MailTemplatesScreen {
 		if ( ! isset( $_POST[ $name ] ) || ! is_string( $_POST[ $name ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- guard() w handle_save().
 			return null;
 		}
-		return (string) wp_unslash( $_POST[ $name ] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- guard() w handle_save(); wartość czyszczy wywołujący.
+		return (string) wp_unslash( $_POST[ $name ] ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- guard() w handle_save(); wartość czyszczy wywołujący.
 	}
 }

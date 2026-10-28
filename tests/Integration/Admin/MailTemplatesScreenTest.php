@@ -10,6 +10,7 @@ namespace PortalUsers\Tests\Integration\Admin;
 use PortalUsers\Admin\MailTemplatesScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Domain\Mail\MailKind;
+use PortalUsers\Domain\Mail\MailTemplate;
 use PortalUsers\Mail\DefaultTemplates;
 use PortalUsers\Persistence\MailTemplateRepository;
 use WP_UnitTestCase;
@@ -155,8 +156,41 @@ final class MailTemplatesScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'tylko w treści', $html );
 	}
 
-	public function test_the_page_is_registered_under_its_slug(): void {
-		$this->assertSame( 'pusers-mail-templates', Menu::SLUG_MAIL_TEMPLATES );
-		$this->assertSame( 'pusers_save_mail_templates', MailTemplatesScreen::ACTION );
+	public function test_a_request_without_a_kinds_fields_leaves_that_kind_untouched(): void {
+		MailTemplateRepository::save( MailKind::Approved, new MailTemplate( 'Temat A', 'Treść A' ) );
+		MailTemplateRepository::save( MailKind::Rejected, new MailTemplate( 'Temat R', 'Treść R' ) );
+		$this->asAdminPosting( MailTemplatesScreen::ACTION, array( 'tpl_approved_body' => 'Nowa treść' ) );
+
+		MailTemplatesScreen::handle_save();
+
+		$approved = MailTemplateRepository::override( MailKind::Approved );
+		$this->assertSame( 'Temat A', $approved->subject );
+		$this->assertSame( 'Nowa treść', $approved->body );
+		$this->assertSame( array( 'Temat R', 'Treść R' ), array_values( MailTemplateRepository::override( MailKind::Rejected )->toArray() ) );
+	}
+
+	public function test_a_stored_body_cannot_break_out_of_the_textarea(): void {
+		MailTemplateRepository::save( MailKind::Approved, new MailTemplate( '', '</textarea><script>alert(1)</script>' ) );
+
+		$html = $this->render_screen();
+
+		$this->assertStringNotContainsString( '<script>alert(1)', $html );
+		$this->assertStringContainsString( '&lt;/textarea&gt;&lt;script&gt;', $html );
+	}
+
+	public function test_the_screen_and_its_save_handler_are_registered(): void {
+		global $submenu;
+		$saved = $submenu;
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		MailTemplatesScreen::register();
+		do_action( 'admin_menu' );
+
+		$slugs = array_column( $submenu[ Menu::PARENT ] ?? array(), 2 );
+		$this->assertContains( Menu::SLUG_MAIL_TEMPLATES, $slugs );
+		$this->assertNotFalse( has_action( 'admin_post_' . MailTemplatesScreen::ACTION, array( MailTemplatesScreen::class, 'handle_save' ) ) );
+
+		$submenu = $saved;
+		remove_action( 'admin_menu', array( MailTemplatesScreen::class, 'add_page' ) );
+		remove_action( 'admin_post_' . MailTemplatesScreen::ACTION, array( MailTemplatesScreen::class, 'handle_save' ) );
 	}
 }
