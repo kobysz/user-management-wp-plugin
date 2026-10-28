@@ -205,9 +205,17 @@ final class WiringTest extends WP_UnitTestCase {
 		// Rdzeń trzyma swoje weryfikatory hasła na priorytecie 20 (wp-includes/default-filters.php),
 		// więc brama MUSI stać za nimi. Na filtrze `wp_authenticate_user` dostawałaby konto jeszcze
 		// PRZED `wp_check_password()` i sama zdradzałaby stan konta temu, kto zna sam adres.
+		//
+		// Za samym hasłem to jednak NIE WSZYSTKO: `wp_signon()` dokłada z wnętrza swojego ciała
+		// PIĄTY callback — `wp_authenticate_cookie` na priorytecie 30 (`wp-includes/user.php:107`)
+		// — który przy pustym loginie I pustym haśle podnosi rdzeniowy błąd do `WP_User` wziętego
+		// z ważnego ciasteczka sesji. Brama rejestrowana przy ładowaniu wtyczki szłaby wewnątrz
+		// priorytetu 30 pierwsza, więc tego `WP_User` nigdy by nie zobaczyła. Dlatego liczy się
+		// nie „za 20”, a „za uwierzytelniaczem ciasteczka”.
 		LoginGateway::register();
 		$this->assertSame( LoginGateway::PRIORITY, has_filter( 'authenticate', array( LoginGateway::class, 'gate' ) ) );
-		$this->assertGreaterThan( 20, LoginGateway::PRIORITY );
+		$this->assertGreaterThan( 30, LoginGateway::PRIORITY, 'Brama musi stać za uwierzytelniaczem ciasteczka (priorytet 30), nie tylko za weryfikatorami hasła (20).' );
+		$this->assertLessThan( 99, LoginGateway::PRIORITY, 'Brama musi stać przed wp_authenticate_spam_check (priorytet 99).' );
 		$this->assertFalse( has_filter( 'wp_authenticate_user', array( LoginGateway::class, 'gate' ) ) );
 
 		// Druga droga wejścia: REST. Rdzeń trzyma tam swoje weryfikatory na 90 i 100

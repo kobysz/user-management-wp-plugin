@@ -8,13 +8,16 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration\Front;
 
 use PortalUsers\Domain\Account\AccountStatus;
+use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Front\LoginGateway;
 use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\Migrations;
+use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
 use ReflectionClass;
 use WP_Application_Passwords;
 use WP_Error;
+use WP_Session_Tokens;
 use WP_UnitTestCase;
 use WP_User;
 
@@ -38,6 +41,8 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 	public function tear_down(): void {
 		// Nagłówki uwierzytelnienia hasłem aplikacyjnym nie mogą przeciekać do innych testów.
 		unset( $_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'] );
+		// Ciasteczko uwierzytelnienia też nie: kolejny test zaczynałby z cudzą, ważną sesją.
+		unset( $_COOKIE[ AUTH_COOKIE ], $_COOKIE[ SECURE_AUTH_COOKIE ], $_COOKIE[ LOGGED_IN_COOKIE ] );
 		parent::tear_down();
 	}
 
@@ -126,7 +131,13 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 		$this->assertCount( 3, $rows, 'Każda odmowa bramy zostawia wpis w logu zdarzeń.' );
 		foreach ( $rows as $index => $row ) {
 			$this->assertSame( LoginGateway::LOG_ACTION, $row->action );
-			$this->assertSame( array( 'code' => $seen[ $index ] ), json_decode( (string) $row->context, true ) );
+			$this->assertSame(
+				array(
+					'code'    => $seen[ $index ],
+					'channel' => LoginGateway::CHANNEL_LOGIN,
+				),
+				json_decode( (string) $row->context, true )
+			);
 		}
 	}
 
@@ -155,12 +166,18 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 		$this->assertCount( 3, $rows, 'Każda odmowa z nierozpoznanym stanem zostawia wpis w logu.' );
 		foreach ( $rows as $row ) {
 			$this->assertSame( LoginGateway::LOG_ACTION, $row->action );
-			$this->assertSame( array( 'code' => LoginGateway::CODE_UNRECOGNISED ), json_decode( (string) $row->context, true ) );
+			$this->assertSame(
+				array(
+					'code'    => LoginGateway::CODE_UNRECOGNISED,
+					'channel' => LoginGateway::CHANNEL_LOGIN,
+				),
+				json_decode( (string) $row->context, true )
+			);
 		}
 	}
 
 	public function test_the_gate_does_not_touch_a_core_error(): void {
-		// Na priorytecie 30 $user bywa WP_Error ze złym hasłem; brama oddaje go BEZ ZMIAN
+		// Na priorytecie 40 $user bywa WP_Error ze złym hasłem; brama oddaje go BEZ ZMIAN
 		// i NIE pisze do logu, bo to nie jej odmowa.
 		$error = new WP_Error( 'incorrect_password', 'Podane hasło jest nieprawidłowe.' );
 
@@ -170,7 +187,7 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 	}
 
 	public function test_the_gate_is_unreachable_without_the_correct_password(): void {
-		// Sedno projektu: brama siedzi na `authenticate` na priorytecie 30, czyli ZA sprawdzeniem
+		// Sedno projektu: brama siedzi na `authenticate` na priorytecie 40, czyli ZA sprawdzeniem
 		// hasła przez rdzeń (rdzeń trzyma swoje weryfikatory na 20). Kto hasła nie zna, do bramy
 		// nie dochodzi, więc stan konta nie wycieka do nikogo, kto zna sam adres. Gdyby brama
 		// siedziała na filtrze `wp_authenticate_user` (odpala się PRZED `wp_check_password()`),
@@ -188,6 +205,46 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 			'Komunikat dla złego hasła zdradził stan konta.'
 		);
 		$this->assertSame( array(), $this->logRows(), 'Brama zapisała odmowę, choć w ogóle nie została osiągnięta.' );
+	}
+
+	public function test_an_unapproved_account_holding_a_valid_cookie_cannot_renew_its_session_with_an_empty_form(): void {
+		// `wp_signon()` dokłada PIĄTY callback na filtr `authenticate`, z wnętrza swojego ciała:
+		// `wp-includes/user.php:107` trzyma tam `wp_authenticate_cookie` na priorytecie 30. Jego
+		// ciało wychodzi wcześnie TYLKO dla `WP_User`, a przy pustym loginie I pustym haśle woła
+		// `wp_validate_auth_cookie()` i oddaje `new WP_User( $id )`. Brama rejestrowana przy
+		// ładowaniu wtyczki idzie WEWNĄTRZ priorytetu 30 pierwsza, więc na 30 widziałaby wyłącznie
+		// rdzeniowy `empty_username`, oddawałaby go nietkniętego — a uwierzytelniacz ciasteczka
+		// podnosiłby ten błąd do `WP_User`, którego brama już nie ogląda, i `wp_signon()`
+		// wystawiałby na niego świeże ciasteczko, z „zapamiętaj mnie” włącznie. `wp-login.php`
+		// specyfikacja zostawia otwarte dla redakcji, a rdzeniowa akcja logowania nonce'a nie ma,
+		// więc konto BEZ zatwierdzenia odnawiałoby sesję bez końca pustym POST-em. Dlatego brama
+		// stoi na 40: za weryfikatorami hasła (20), za ciasteczkiem (30) i przed
+		// `wp_authenticate_spam_check` (99). Na 30 ten test PADA.
+		$account = $this->account( AccountStatus::Pending );
+		add_filter( 'send_auth_cookies', '__return_false' );
+
+		$token                  = WP_Session_Tokens::get_instance( $account['id'] )->create( time() + DAY_IN_SECONDS );
+		$_COOKIE[ AUTH_COOKIE ] = wp_generate_auth_cookie( $account['id'], time() + DAY_IN_SECONDS, 'auth', $token );
+		// Przesłanka testu: ciasteczko jest NAPRAWDĘ ważne. Bez tej asercji test przechodziłby
+		// także wtedy, gdyby ciasteczko było martwe — czyli z całkiem innego powodu niż priorytet.
+		$this->assertSame( $account['id'], wp_validate_auth_cookie(), 'Konto testowe musi mieć ważne ciasteczko sesji.' );
+
+		$signed = wp_signon(
+			array(
+				'user_login'    => '',
+				'user_password' => '',
+				'remember'      => true,
+			)
+		);
+
+		remove_filter( 'send_auth_cookies', '__return_false' );
+
+		$this->assertInstanceOf( WP_Error::class, $signed, 'Puste pola plus ważne ciasteczko wystawiły świeżą sesję kontu bez zatwierdzenia.' );
+		$this->assertNotInstanceOf( WP_User::class, $signed );
+		$this->assertSame( LoginGateway::CODE_PENDING, $signed->get_error_code(), 'Odmowa musi pochodzić z bramy, nie z rdzenia.' );
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows, 'Odmowa bramy zostawia wpis w logu zdarzeń.' );
+		$this->assertSame( LoginGateway::LOG_ACTION, $rows[0]->action );
 	}
 
 	public function test_an_unapproved_account_is_refused_rest_even_with_a_valid_application_password(): void {
@@ -224,7 +281,16 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 		$rows = $this->logRows();
 		$this->assertCount( 1, $rows, 'Odmowa na REST zostawia wpis w logu zdarzeń.' );
 		$this->assertSame( LoginGateway::LOG_ACTION, $rows[0]->action );
-		$this->assertSame( array( 'code' => LoginGateway::CODE_PENDING ), json_decode( (string) $rows[0]->context, true ) );
+		// Obie drogi piszą tę samą akcję, więc wiersz musi NAZWAĆ swoją drogę — inaczej redakcja
+		// nie odróżni odmowy z formularza logowania od odmowy na REST.
+		$this->assertNotSame( LoginGateway::CHANNEL_LOGIN, LoginGateway::CHANNEL_REST, 'Dwie drogi muszą mieć dwie różne nazwy.' );
+		$this->assertSame(
+			array(
+				'code'    => LoginGateway::CODE_PENDING,
+				'channel' => LoginGateway::CHANNEL_REST,
+			),
+			json_decode( (string) $rows[0]->context, true )
+		);
 	}
 
 	public function test_an_approved_account_passes_rest_authentication(): void {
@@ -266,6 +332,34 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 		$this->assertSame( $coreError, LoginGateway::gate_rest( $coreError ), 'Brama REST oddała inny obiekt niż błąd rdzenia.' );
 
 		$this->assertSame( array(), $this->logRows(), 'Brama REST zapisała do logu odmowę, która nie jest jej odmową.' );
+	}
+
+	public function test_the_rest_refusal_log_has_a_budget_and_reports_its_exhaustion_exactly_once(): void {
+		// Konto odrzucone zachowuje hasło aplikacyjne świadomie (jego użycie jest odmawiane, więc
+		// poświadczenie jest martwe), a zalogowany subskrybent może je sobie wystawić przez
+		// `/wp/v2/users/me/application-passwords`. Każde odmówione żądanie pisało wiersz do tabeli,
+		// której nic nie przycina — bez końca, bo poświadczenia nic nie wygasza. Budżet przycina
+		// ZAPIS, nie dostęp: odmowa przychodzi dalej na każde żądanie.
+		$account                        = $this->account( AccountStatus::Rejected );
+		$budget                         = 3;
+		$raised                         = SettingsRepository::get()->toArray();
+		$raised['login_limit_per_hour'] = $budget;
+		SettingsRepository::save( Settings::fromArray( $raised ) );
+		wp_set_current_user( $account['id'] );
+
+		$requests = $budget + 4;
+		for ( $i = 1; $i <= $requests; $i++ ) {
+			$this->assertInstanceOf( WP_Error::class, apply_filters( 'rest_authentication_errors', null ), 'Żądanie nr ' . $i . ' musi dostać odmowę niezależnie od budżetu wierszy.' );
+		}
+
+		$rows = $this->logRows();
+		$this->assertCount( $budget + 1, $rows, 'Wiersze: budżet plus DOKŁADNIE jedno zgłoszenie wyczerpania na okno licznika.' );
+		$this->assertLessThan( $requests, count( $rows ), 'Budżet nie przyciął niczego.' );
+
+		$overflow = json_decode( (string) $rows[ $budget ]->context, true );
+		$this->assertIsArray( $overflow );
+		$this->assertSame( 'log_limit', $overflow['refused'] ?? null, 'Ostatni wiersz ma mówić o wyczerpanym budżecie.' );
+		$this->assertSame( LoginGateway::CHANNEL_REST, $overflow['channel'] ?? null );
 	}
 
 	public function test_every_code_has_a_message_and_no_message_is_orphaned(): void {

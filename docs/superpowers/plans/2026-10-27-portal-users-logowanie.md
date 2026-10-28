@@ -4,7 +4,7 @@
 
 **Cel:** Lekarz loguje się na własnej stronie portalu i wchodzi tylko wtedy, gdy redakcja zatwierdziła jego konto; każdy inny stan dostaje komunikat mówiący prawdę o tym, na co czeka — a człowiek, który hasła nie zna, nie dowie się z portalu nawet tego, czy dany adres ma konto.
 
-**Architektura:** Brama stanu konta wchodzi na filtr `authenticate` z priorytetem **30**, czyli **za** rdzeniowym sprawdzeniem hasła (rdzeń trzyma `wp_authenticate_username_password` i `wp_authenticate_email_password` na 20). Dzięki temu brama nie jest osiągalna dla nikogo, kto hasła nie zna — nie trzeba udawać komunikatu „błędne hasło", żeby nie ujawnić istnienia konta, bo do bramy się po prostu nie dochodzi. Strona logowania jest shortcode'em wtyczki, żądanie idzie przez `admin-post.php` i `wp_signon()`. Odzyskiwanie hasła opiera się na **rdzeniowym** mechanizmie (`retrieve_password()`, `check_password_reset_key()`, `reset_password()`) z linkiem skierowanym na stronę wtyczki; drugiego magazynu tokenów nie powstaje. `wp-login.php` zostaje czynne dla redakcji.
+**Architektura:** Brama stanu konta wchodzi na filtr `authenticate` z priorytetem **40**, czyli **za każdym** rdzeniowym wyrokiem (rdzeń trzyma `wp_authenticate_username_password` i `wp_authenticate_email_password` na 20, a `wp_signon()` dokłada z wnętrza swojego ciała `wp_authenticate_cookie` na 30 — `wp-includes/user.php:107`). Dzięki temu brama nie jest osiągalna dla nikogo, kto hasła nie zna — nie trzeba udawać komunikatu „błędne hasło", żeby nie ujawnić istnienia konta, bo do bramy się po prostu nie dochodzi. Strona logowania jest shortcode'em wtyczki, żądanie idzie przez `admin-post.php` i `wp_signon()`. Odzyskiwanie hasła opiera się na **rdzeniowym** mechanizmie (`retrieve_password()`, `check_password_reset_key()`, `reset_password()`) z linkiem skierowanym na stronę wtyczki; drugiego magazynu tokenów nie powstaje. `wp-login.php` zostaje czynne dla redakcji.
 
 **Stos:** WordPress 6.5+, PHP 8.1+, ACF Pro (zależność twarda, sprawdzana w `Dependencies`), PHPUnit w kontenerze wp-env, PHPStan level max, PHPCS `WordPress-Core` + `WordPress-Extra` + `WordPress-Docs`.
 
@@ -57,7 +57,7 @@ Nowe części podpinają się na akcji `pusers_register_features`; `Plugin::load
 
 **Zweryfikowane w źródłach rdzenia** (kontener wp-env, WordPress 6.9):
 
-- `wp-includes/default-filters.php:516-519` — `authenticate`: `wp_authenticate_username_password` (20), `wp_authenticate_email_password` (20), `wp_authenticate_application_password` (20), `wp_authenticate_spam_check` (99).
+- `wp-includes/default-filters.php:516-519` — `authenticate`: `wp_authenticate_username_password` (20), `wp_authenticate_email_password` (20), `wp_authenticate_application_password` (20), `wp_authenticate_spam_check` (99). **Ta lista jest NIEPEŁNA** i plan pierwotnie wyciągnął z niej zły wniosek („priorytet 30 jest za wyrokiem rdzenia"): piąty callback dokłada `wp_signon()` z wnętrza swojego ciała — `wp-includes/user.php:107` — `add_filter( 'authenticate', 'wp_authenticate_cookie', 30, 3 )`. Dlatego brama stoi na **40**, patrz Task 3.
 - `wp-includes/user.php` — filtr `wp_authenticate_user` odpala się **przed** `wp_check_password()`. Dlatego brama **nie** wchodzi tam: odmowa spod tego filtra trafia do kogoś, kto hasła nie zna.
 - `wp-admin/admin-post.php` — woła `do_action( 'admin_init' )` **przed** rozdzieleniem akcji, a komentarz w `wp-admin/admin.php:174` mówi wprost „It runs on admin-ajax.php and admin-post.php as well". Odcięcie `wp-admin` na `admin_init` bez wyjątku zabiłoby **własne** handlery wtyczki dla zalogowanego nie-redaktora.
 - `wp-includes/vars.php` — `$pagenow` bierze się z `$_SERVER['PHP_SELF']` (nie z danych klienta), więc nadaje się na rozpoznanie `admin-post.php`.
@@ -91,7 +91,7 @@ Pięć klas wejścia, które specyfikacja zakłada, a które przy zacieśnianiu 
 | Plik | Odpowiedzialność |
 |---|---|
 | `src/Domain/Account/PasswordPolicy.php` | Reguły hasła jako czysta reguła: minimalna długość, zakaz hasła równego adresowi. Jedno źródło dla ustawiania hasła z biletu (Plan 3) i z odzyskiwania (ten plan). |
-| `src/Front/LoginGateway.php` | Brama na `authenticate` (priorytet 30). Czyta stan konta, konsultuje `isUnrecognised()`, oddaje `WP_Error` z własnym kodem, pisze do logu. Tłumaczy kody na komunikaty. |
+| `src/Front/LoginGateway.php` | Brama na `authenticate` (priorytet 40). Czyta stan konta, konsultuje `isUnrecognised()`, oddaje `WP_Error` z własnym kodem, pisze do logu. Tłumaczy kody na komunikaty. |
 | `src/Front/SessionGuard.php` | Unieważnia sesje konta, które przestało być `zatwierdzony`. Nasłuchuje akcji zmiany stanu. |
 | `src/Front/PageUrl.php` | Jedno źródło prawdy o adresie strony wskazanej w ustawieniach, z odwrotem na stronę główną. Zastępuje regułę zapisaną dziś wewnątrz `Confirmation::base_url()`. |
 | `src/Front/LoginForm.php` | Shortcode i widok formularza logowania; notka dla zalogowanego; pułapka na boty; punkt rozszerzenia dla CAPTCHY. |
@@ -246,7 +246,7 @@ Zapis przez ekran ustawień zachowuje pięć nowych wartości, a pusty formularz
 
 ```php
 PortalUsers\Front\LoginGateway::{
-    PRIORITY = 30,
+    PRIORITY = 40,
     LOG_ACTION = 'login_denied',
     CODE_UNCONFIRMED = 'pusers_email_unconfirmed',
     CODE_PENDING     = 'pusers_pending',
@@ -260,11 +260,13 @@ PortalUsers\Front\LoginGateway::{
 
 - Konsumuje: `LoginGate::decide()`, `AccountStatusRepository::{get,isUnrecognised}`, `EventLog::write()`.
 
-**Dlaczego priorytet 30, a nie filtr `wp_authenticate_user`.** Backlog żąda, by odmowa dla `niepotwierdzony_mail` brzmiała **identycznie** jak błędne hasło, bo inaczej brama sama staje się sondą ujawniającą, że adres jest zajęty. Filtr `wp_authenticate_user` odpala się **przed** `wp_check_password()` (sprawdzone w `wp-includes/user.php`), więc odmowa spod niego trafia do każdego, kto zna sam adres — i wtedy udawanie komunikatu byłoby jedyną obroną, a obrona oparta na zgodności dwóch łańcuchów psuje się przy pierwszej zmianie tekstu.
+**Dlaczego priorytet 40, a nie filtr `wp_authenticate_user`.** Backlog żąda, by odmowa dla `niepotwierdzony_mail` brzmiała **identycznie** jak błędne hasło, bo inaczej brama sama staje się sondą ujawniającą, że adres jest zajęty. Filtr `wp_authenticate_user` odpala się **przed** `wp_check_password()` (sprawdzone w `wp-includes/user.php`), więc odmowa spod niego trafia do każdego, kto zna sam adres — i wtedy udawanie komunikatu byłoby jedyną obroną, a obrona oparta na zgodności dwóch łańcuchów psuje się przy pierwszej zmianie tekstu.
 
-Na priorytecie 30 brama dostaje `$user` **już po** wyroku rdzenia: albo `WP_Error` (hasło złe — oddajemy bez dotykania), albo `WP_User` (hasło dobre). Kto hasła nie zna, do bramy nie dochodzi, więc każdy stan może mieć **własny, prawdziwy** komunikat — czego chce specyfikacja w wierszu 115 („każdy inny stan daje własny komunikat, żeby użytkownik wiedział, czy ma szukać maila"). **Rozstrzygnięcie: wymóg backlogu o identycznym komunikacie realizujemy konstrukcją, nie treścią** — jest zamknięty mocniej, niż żądał, i litera specyfikacji wraca w całości.
+Na priorytecie 40 brama dostaje `$user` **już po każdym** wyroku rdzenia: albo `WP_Error` (hasło złe — oddajemy bez dotykania), albo `WP_User` (hasło dobre albo ważne ciasteczko sesji). Kto hasła nie zna, do bramy nie dochodzi, więc każdy stan może mieć **własny, prawdziwy** komunikat — czego chce specyfikacja w wierszu 115 („każdy inny stan daje własny komunikat, żeby użytkownik wiedział, czy ma szukać maila"). **Rozstrzygnięcie: wymóg backlogu o identycznym komunikacie realizujemy konstrukcją, nie treścią** — jest zamknięty mocniej, niż żądał, i litera specyfikacji wraca w całości.
 
-Priorytet 30 obejmuje też `wp_authenticate_application_password` (rdzeń trzyma go na 20), więc konto bez stanu `zatwierdzony` nie wejdzie także po hasło aplikacyjne, czyli do REST.
+Priorytet 40 obejmuje też `wp_authenticate_application_password` (rdzeń trzyma go na 20), więc konto bez stanu `zatwierdzony` nie wejdzie także po hasło aplikacyjne, czyli do REST.
+
+**Dlaczego 40, a nie 30 — poprawka wniesiona recenzją całej gałęzi.** Lista z `default-filters.php` nie jest całą listą: `wp_signon()` dokłada z wnętrza swojego ciała `wp_authenticate_cookie` na priorytecie **30** (`wp-includes/user.php:107`). Ciało tego uwierzytelniacza wychodzi wcześnie **tylko** dla `WP_User`, a przy pustym loginie **i** pustym haśle woła `wp_validate_auth_cookie()` i oddaje `new WP_User( $user_id )`. Brama rejestruje się przy ładowaniu wtyczki, więc **wewnątrz** priorytetu 30 szłaby pierwsza: widziałaby rdzeniowy `empty_username`, słusznie oddawała go nietkniętego, a uwierzytelniacz ciasteczka podnosiłby ten błąd do `WP_User`, którego brama już nie ogląda — i `wp_signon()` wystawiałoby na niego świeże ciasteczko. Konto **bez zatwierdzenia**, mające ważne ciasteczko sesji, odnawiałoby je bez końca pustym `POST`-em na `wp-login.php` (specyfikacja zostawia je otwarte dla redakcji, a rdzeniowa akcja logowania nonce'a nie ma), z „zapamiętaj mnie" włącznie. Czterdzieści stoi za weryfikatorami hasła (20), za uwierzytelniaczem ciasteczka (30) i przed `wp_authenticate_spam_check` (99). Pilnuje tego `test_an_unapproved_account_holding_a_valid_cookie_cannot_renew_its_session_with_an_empty_form`, który na priorytecie 30 **pada**.
 
 - [ ] **Krok 1: Napisz padające testy**
 
@@ -282,7 +284,7 @@ public function test_an_unrecognised_stored_status_is_refused_and_logged(): void
 // a przekazanie null do LoginGate::decide() WPUSZCZA — czyli fail-open. Odmowa plus wpis do logu.
 
 public function test_the_gate_does_not_touch_a_core_error(): void
-// Na priorytecie 30 $user bywa WP_Error ze złym hasłem; brama oddaje go bez zmian
+// Na priorytecie 40 $user bywa WP_Error ze złym hasłem; brama oddaje go bez zmian
 // i NIE pisze do logu, bo to nie jej odmowa.
 
 public function test_the_gate_is_unreachable_without_the_correct_password(): void
