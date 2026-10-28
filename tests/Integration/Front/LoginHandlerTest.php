@@ -221,6 +221,18 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Adres docelowy przeniesiony w adresie przekierowania (`''` = brak).
+	 *
+	 * @param string $location Adres przekierowania.
+	 */
+	private function redirectOf( string $location ): string {
+		$query = array();
+		parse_str( (string) wp_parse_url( $location, PHP_URL_QUERY ), $query );
+
+		return isset( $query[ LoginForm::REDIRECT ] ) && is_string( $query[ LoginForm::REDIRECT ] ) ? $query[ LoginForm::REDIRECT ] : '';
+	}
+
+	/**
 	 * @return list<object> Wiersze logu zdarzeń, od najstarszego.
 	 */
 	private function logRows(): array {
@@ -314,8 +326,10 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 		$this->assertSame( 1, RateLimiter::count( LoginHandler::BUCKET_USER . $account['id'] ) );
 	}
 
-	public function test_a_failed_login_for_an_unknown_address_creates_no_account_bucket(): void {
-		// Zliczanie po surowym łańcuchu z żądania to zapychanie magazynu.
+	public function test_a_failed_login_for_an_unknown_address_counts_in_a_bucket_keyed_by_a_hash(): void {
+		// Kubełek dla łańcucha BEZ konta musi istnieć, inaczej próg sam odpowiada na pytanie „czy
+		// ten adres ma tu konto” (pilnuje tego test niżej). Klucz jest SKRÓTEM, nie wartością
+		// jawną: nazwa transientu trafia do `wp_options`, a adres e-mail lekarza jest daną osobową.
 		$identity = 'Nieznany@przyklad.test';
 
 		$this->assertSame(
@@ -329,10 +343,102 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 		);
 
 		$this->assertSame( 1, RateLimiter::count( LoginHandler::BUCKET_IP . self::IP ), 'Ruch bez konta absorbuje kubełek IP.' );
-		$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_USER . $identity ), 'Kubełek po surowym łańcuchu z żądania.' );
-		$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_USER . strtolower( $identity ) ), 'Kubełek po znormalizowanym łańcuchu z żądania.' );
-		// Niezależnie od sposobu kluczowania: w bazie stoi DOKŁADNIE jeden licznik, ten per IP.
-		$this->assertCount( 1, $this->limiterOptions(), 'Poza kubełkiem IP nie wolno utworzyć żadnego licznika.' );
+		$this->assertSame( 1, RateLimiter::count( LoginHandler::BUCKET_IDENTITY . wp_hash( strtolower( $identity ) ) ), 'Łańcuch bez konta musi mieć własny kubełek, kluczowany skrótem.' );
+		foreach ( array( $identity, strtolower( $identity ) ) as $clear ) {
+			$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_IDENTITY . $clear ), 'Kubełek kluczowany wartością jawną: ' . $clear );
+			$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_USER . $clear ), 'Kubełek per konto kluczowany łańcuchem z żądania: ' . $clear );
+		}
+		// DOKŁADNIE dwa liczniki: ten per adres IP i ten per nadesłany identyfikator.
+		$this->assertCount( 2, $this->limiterOptions(), 'Poza kubełkiem IP i kubełkiem identyfikatora nie wolno utworzyć żadnego licznika.' );
+	}
+
+	public function test_an_exhausted_known_address_and_an_exhausted_unknown_address_get_the_SAME_refusal(): void {
+		// Sedno: próg nie może odpowiadać na pytanie „czy ten adres ma tu konto”. Kubełek tylko dla
+		// kont istniejących dawał nieznanemu adresowi RESULT_BAD aż do progu per adres IP, a
+		// znanemu RESULT_TOO_MANY już przy jedenastej próbie — czyli jedenaście żądań na adres
+		// czytało odpowiedź, której ten plan miał nie dawać.
+		$raised                         = SettingsRepository::get()->toArray();
+		$raised['login_limit_per_hour'] = 1000; // Próg per IP nie może odmówić pierwszy i zatrzeć różnicy.
+		SettingsRepository::save( Settings::fromArray( $raised ) );
+
+		$known   = $this->account();
+		$unknown = 'nikogo@przyklad.test';
+		$blind   = array(
+			LoginForm::IDENTITY => $unknown,
+			LoginForm::PASSWORD => 'cokolwiek',
+		);
+
+		for ( $i = 1; $i <= self::ACCOUNT_LIMIT; $i++ ) {
+			$this->assertSame( LoginHandler::RESULT_BAD, $this->submit( $this->credentials( $known, 'zle-haslo' ) ), 'Próba nr ' . $i . ' dla znanego adresu.' );
+			$this->assertSame( LoginHandler::RESULT_BAD, $this->submit( $blind ), 'Próba nr ' . $i . ' dla nieznanego adresu.' );
+		}
+
+		$knownRefusal   = $this->submit( $this->credentials( $known, 'zle-haslo' ) );
+		$unknownRefusal = $this->submit( $blind );
+
+		$this->assertSame( $knownRefusal, $unknownRefusal, 'Wyczerpany próg rozróżnia adres z kontem od adresu bez konta.' );
+		$this->assertSame( LoginHandler::message_for( $knownRefusal ), LoginHandler::message_for( $unknownRefusal ), 'Komunikaty obu odmów muszą być identyczne.' );
+		$this->assertNotSame( '', $knownRefusal, 'Odmowa bez kodu wyniku nie jest odmową.' );
+		$this->assertNotSame( '', LoginHandler::message_for( $knownRefusal ), 'Odmowa bez komunikatu to puste okienko błędu.' );
+		// Zrównanie obu odpowiedzi przez ZDJĘCIE progu per konto byłoby regresją, nie naprawą.
+		$this->assertNotSame( LoginHandler::RESULT_BAD, $knownRefusal, 'Po wyczerpaniu progu odmowa musi się różnić od odmowy ze złych danych.' );
+	}
+
+	public function test_the_identity_bucket_is_not_created_before_the_ip_gate_has_been_consumed(): void {
+		// Ograniczenie globalne: kubełek na NIESPRAWDZONY łańcuch z żądania może powstać wyłącznie
+		// za progiem per adres IP, który zużywa każde żądanie. Inaczej bot wysypałby do
+		// `wp_options` dowolną liczbę transientów, po jednym na wymyślony adres.
+		$identity = 'wymyslony@przyklad.test';
+		for ( $i = 0; $i < self::IP_LIMIT; $i++ ) {
+			RateLimiter::hit( LoginHandler::BUCKET_IP . self::IP );
+		}
+		$this->assertCount( 1, $this->limiterOptions(), 'Przesłanka: w bazie stoi tylko licznik per adres IP.' );
+
+		$result = $this->submit(
+			array(
+				LoginForm::IDENTITY => $identity,
+				LoginForm::PASSWORD => 'cokolwiek',
+			)
+		);
+
+		$this->assertSame( LoginHandler::RESULT_TOO_MANY, $result );
+		$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_IDENTITY . wp_hash( strtolower( $identity ) ) ), 'Kubełek identyfikatora powstał przed progiem per adres IP.' );
+		$this->assertCount( 1, $this->limiterOptions(), 'Za wyczerpanym progiem per adres IP nie wolno utworzyć żadnego nowego licznika.' );
+	}
+
+	public function test_a_successful_login_clears_the_account_bucket_but_not_the_ip_bucket(): void {
+		// Lekarz, który pomyli hasło kilka razy i w końcu wejdzie, nie może odejść z licznikiem
+		// stojącym pod progiem: jedna wpadka w tej samej godzinie zamykałaby go na resztę okna.
+		// Kubełek per adres IP zostaje — to jedyna obrona przed botem, który trafia jedno hasło na
+		// wiele prób, a zerowanie go dawałoby mu świeży budżet za każde trafienie.
+		$account = $this->account();
+		$this->assertSame( LoginHandler::RESULT_BAD, $this->submit( $this->credentials( $account, 'zle-haslo' ) ) );
+		$this->assertSame( 1, RateLimiter::count( LoginHandler::BUCKET_USER . $account['id'] ), 'Przesłanka: porażka musiała podbić kubełek konta.' );
+
+		$this->assertSame( '', $this->submit( $this->credentials( $account ) ), 'Logowanie miało się udać.' );
+
+		$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_USER . $account['id'] ), 'Udane logowanie nie wyczyściło kubełka konta.' );
+		$this->assertSame( 1, RateLimiter::count( LoginHandler::BUCKET_IP . self::IP ), 'Kubełek per adres IP musi przeżyć udane logowanie.' );
+	}
+
+	public function test_a_failed_attempt_keeps_the_destination_and_a_hostile_one_still_does_not(): void {
+		// `Redirects::login_url()` dokłada ten argument do KAŻDEGO rdzeniowego odnośnika logowania,
+		// więc wylogowany redaktor przyniesiony przez `auth_redirect()` z `/wp-admin/edit.php` nie
+		// może tracić celu przy pierwszej pomyłce w haśle i lądować na stronie po zalogowaniu.
+		$account = $this->account();
+
+		$this->assertSame( LoginHandler::RESULT_BAD, $this->submit( $this->credentials( $account, 'zle-haslo' ) + array( LoginForm::REDIRECT => '/wp-admin/edit.php' ) ) );
+		$this->assertSame( '/wp-admin/edit.php', $this->redirectOf( $this->redirected ), 'Nieudana próba zgubiła adres docelowy.' );
+
+		// Druga połowa: wartość wroga nie przeżywa odmowy tak samo jak nie przeżywa sukcesu.
+		$this->assertSame( LoginHandler::RESULT_BAD, $this->submit( $this->credentials( $account, 'zle-haslo' ) + array( LoginForm::REDIRECT => 'https://zly.example/przejecie' ) ) );
+		$this->assertStringNotContainsString( 'zly.example', $this->redirected );
+		$this->assertSame( '', $this->redirectOf( $this->redirected ), 'Adres z obcego hosta przeżył odmowę.' );
+
+		// Także odmowa stojąca PRZED sprawdzeniem hasła niesie cel dalej: to ta odmowa, którą
+		// dostaje człowiek z kartą otwartą od doby.
+		$this->assertSame( LoginHandler::RESULT_STALE, $this->submit( $this->credentials( $account ) + array( LoginForm::REDIRECT => '/wp-admin/edit.php' ), false ) );
+		$this->assertSame( '/wp-admin/edit.php', $this->redirectOf( $this->redirected ), 'Odmowa z nonce\'a zgubiła adres docelowy.' );
 	}
 
 	public function test_exhausting_the_account_threshold_does_not_block_another_account_from_the_same_address(): void {

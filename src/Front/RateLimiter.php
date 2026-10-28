@@ -109,8 +109,9 @@ final class RateLimiter {
 	}
 
 	/**
-	 * Zeruje licznik. Dla przyszłego przycisku zdejmującego blokadę w panelu; kod produkcyjny
-	 * nie woła tego dziś.
+	 * Zeruje licznik. Woła to udane logowanie dla kubełka per konto (`LoginHandler::succeed()`),
+	 * żeby człowiek, który w końcu wszedł, nie odchodził z licznikiem stojącym pod progiem; czeka
+	 * też na przycisk zdejmujący blokadę w panelu (Plan 6).
 	 *
 	 * @param string $bucket Nazwa kubełka.
 	 */

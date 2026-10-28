@@ -31,17 +31,31 @@ use WP_User;
  *    żądanie odcinałby ją przy normalnej pracy. Formularz rejestracji przeszedł dokładnie tę pomyłkę
  *    i próg trzeba było potem podnosić pięciokrotnie.
  *
- * 2. KUBEŁEK PER KONTO POWSTAJE WYŁĄCZNIE DLA KONTA ODNALEZIONEGO. Kubełek kluczowany surowym
- *    łańcuchem z żądania pozwoliłby botowi wysypać do `wp_options` dowolną liczbę transientów, więc
- *    gdy identyfikatora nie da się przypisać do konta, liczy się tylko kubełek per adres IP. Próg
- *    per konto jest przy tym zużywany PO odnalezieniu konta i tylko na porażce, żeby osoba trzecia
- *    nie wyczerpała właścicielowi budżetu samym wysyłaniem jego adresu; jej ruch absorbuje kubełek IP
- *    (ta sama reguła, co w `Confirmation::handle_resend()` i `PasswordSetup::handle()`).
+ * 2. KUBEŁEK PER KONTO ISTNIEJE TAKŻE DLA ŁAŃCUCHA BEZ KONTA, Z TYM SAMYM PROGIEM I TĄ SAMĄ ODMOWĄ.
+ *    Kubełek bierze identyfikator konta ODNALEZIONEGO, a gdy konta nie da się odnaleźć — SKRÓT
+ *    nadesłanego łańcucha (`wp_hash( strtolower( … ) )`). Kubełek tylko dla kont istniejących
+ *    zamieniał tę stronę w wyrocznię „czy ten adres ma tu konto": adres nieznany dostawał
+ *    `RESULT_BAD` aż do progu per adres IP, a znany `RESULT_TOO_MANY` już przy jedenastej próbie,
+ *    czyli jedenaście żądań na adres czytało odpowiedź, której cały plan miał nie dawać. Pozostałe
+ *    trzy powierzchnie kluczują po skrócie nadesłanego łańcucha właśnie po to
+ *    (`SpamGuard::BUCKET_EMAIL`, `PasswordReset::BUCKET_EMAIL`). Oba przypadki idą tu JEDNĄ
+ *    ścieżką kodu (`account_bucket()`) i jednym progiem, więc nie ma dwóch tekstów, które mogłyby
+ *    się rozjechać.
+ *
+ *    Ograniczenie globalne o zapychaniu `wp_options` transientami jest zaspokojone tak samo jak
+ *    tam: kubełek po nadesłanym łańcuchu powstaje WYŁĄCZNIE za progiem per adres IP, który zużywa
+ *    każde żądanie, więc liczba kubełków, jakie bot może założyć, jest ograniczona tym progiem.
+ *    Próg per konto jest przy tym zużywany tylko na porażce, żeby osoba trzecia nie wyczerpała
+ *    właścicielowi budżetu samym wysyłaniem jego adresu; jej ruch absorbuje kubełek IP (ta sama
+ *    reguła, co w `Confirmation::handle_resend()` i `PasswordSetup::handle()`). Lekarz, który myli
+ *    HASŁO, liczy się dalej w kubełku swojego konta — nowy kubełek dotyczy wyłącznie łańcuchów,
+ *    które konta nie mają, więc pomyłka w adresie zakłada własny kubełek i nie zabiera nikomu
+ *    niczego. Udane logowanie czyści kubełek konta (patrz `succeed()`).
  *
  * 3. JEDEN KOMUNIKAT OGÓLNY DLA ZŁYCH DANYCH. Nieznany adres i złe hasło dostają ten sam tekst.
  *    Rdzeń na `wp-login.php` rozróżnia `invalid_username` od `incorrect_password`, czyli sam
  *    enumeruje konta; na stronie wtyczki tego nie powtarzamy. Odmowy stanu z `LoginGateway`
- *    przechodzą WŁASNĄ treścią, bo na priorytecie 30 dochodzi do nich wyłącznie ktoś, kto podał
+ *    przechodzą WŁASNĄ treścią, bo na priorytecie 40 dochodzi do nich wyłącznie ktoś, kto podał
  *    poprawne hasło — i to jest jedyny powód, dla którego wolno im mówić prawdę o stanie konta.
  *
  * Odmowa stanu NIE zużywa progu i NIE pisze drugiego wiersza do logu: hasło było poprawne, więc nie
@@ -103,6 +117,19 @@ final class LoginHandler {
 	public const BUCKET_USER = 'login_user:';
 
 	/**
+	 * Kubełek progu nieudanych logowań per NADESŁANY IDENTYFIKATOR, dla łańcuchów, którym nie
+	 * odpowiada żadne konto; klucz to SKRÓT łańcucha, nie łańcuch jawny — klucz transientu trafia
+	 * do `wp_options`, a adres e-mail lekarza jest daną osobową (wzór z `PasswordReset::BUCKET_EMAIL`
+	 * i `SpamGuard::BUCKET_EMAIL`).
+	 *
+	 * Istnieje po to, żeby odmowa progowa nie rozróżniała adresu z kontem od adresu bez konta
+	 * (patrz reguła 2). Zamyka przy okazji konto, którego `user_login` jest adresem e-mail innym
+	 * niż `user_email`: `account_for()` szuka takiego łańcucha po adresie, konta nie znajduje,
+	 * więc do dziś nie miało ono ŻADNEGO kubełka per konto.
+	 */
+	public const BUCKET_IDENTITY = 'login_identity:';
+
+	/**
 	 * Podpina obsługę wysłanego formularza. Oba warianty akcji: zalogowany też wyśle ten formularz
 	 * (otwarta karta, powrót z historii przeglądarki), a `admin_post_nopriv_` jego żądania nie widzi.
 	 */
@@ -115,13 +142,21 @@ final class LoginHandler {
 	 * Obsługuje wysłany formularz logowania (kolejność bramek: patrz dokumentacja klasy).
 	 */
 	public static function handle(): void {
+		// Adres docelowy ustalamy PRZED bramkami: nie jest bramką i nic nie zmienia (kontrolę hosta
+		// robi `wp_validate_redirect()`), a KAŻDA odmowa ma go nieść dalej — także odmowa z nonce'a.
+		// Bez tego wylogowany redaktor, którego `auth_redirect()` przyniosło z `/wp-admin/edit.php`,
+		// tracił cel przy pierwszej pomyłce w haśle i po poprawnym logowaniu trafiał na stronę po
+		// zalogowaniu zamiast tam, gdzie szedł. Ta sama reguła, co ustalanie adresu klienta przed
+		// bramkami w `PasswordReset::handle_request()`.
+		$redirect = self::requested_redirect();
+
 		// 1. Nonce. Nonce starzeje się razem z sesją, więc człowiek z kartą otwartą od doby trafia
 		// właśnie tu: dostaje przez PRG komunikat „odśwież stronę”, a nie 403.
 		$nonce = isset( $_POST[ LoginForm::NONCE_FIELD ] ) && is_string( $_POST[ LoginForm::NONCE_FIELD ] ) // phpcs:ignore WordPress.Security.NonceVerification.Missing -- to jest weryfikacja nonce'a.
 			? sanitize_text_field( wp_unslash( $_POST[ LoginForm::NONCE_FIELD ] ) ) // phpcs:ignore WordPress.Security.NonceVerification.Missing
 			: '';
 		if ( '' === $nonce || false === wp_verify_nonce( $nonce, LoginForm::NONCE_ACTION ) ) {
-			self::refuse( self::RESULT_STALE );
+			self::refuse( self::RESULT_STALE, $redirect );
 			return;
 		}
 
@@ -134,7 +169,7 @@ final class LoginHandler {
 		// 3. Pułapka na boty i punkt rozszerzenia, PRZED sprawdzeniem hasła: odmowa nic nie kosztuje
 		// i nie liczy się do progu, więc bot nie zabiera budżetu nikomu.
 		if ( ! self::looks_human() ) {
-			self::refuse( self::RESULT_BAD );
+			self::refuse( self::RESULT_BAD, $redirect );
 			return;
 		}
 
@@ -144,7 +179,7 @@ final class LoginHandler {
 		// się nie liczy: ruch bez adresu zlany w jeden kubełek odciąłby cały portal.
 		$ip = IpAddress::from( $_SERVER, $settings->trustedProxyHeader );
 		if ( '' !== $ip && RateLimiter::count( self::BUCKET_IP . $ip ) >= $settings->loginLimitPerHour ) {
-			self::refuse( self::RESULT_TOO_MANY );
+			self::refuse( self::RESULT_TOO_MANY, $redirect );
 			return;
 		}
 
@@ -154,14 +189,18 @@ final class LoginHandler {
 		$user   = self::account_for( $identity );
 		$userId = null === $user ? 0 : $user->ID;
 
-		// 6. Próg per konto — wyłącznie dla konta odnalezionego (patrz reguła 2), też tylko czytany.
-		if ( 0 !== $userId && RateLimiter::count( self::BUCKET_USER . $userId ) >= $settings->loginLimitPerAccountPerHour ) {
-			self::refuse( self::RESULT_TOO_MANY );
+		// 6. Próg per konto, też tylko czytany. Kubełek bierze identyfikator konta odnalezionego, a
+		// gdy konta nie odnaleziono — skrót nadesłanego łańcucha; JEDNA ścieżka i JEDEN próg dla obu
+		// przypadków, żeby odmowa progowa nie rozróżniała adresu z kontem od adresu bez konta
+		// (patrz reguła 2).
+		$accountBucket = self::account_bucket( $userId, $identity );
+		if ( '' !== $accountBucket && RateLimiter::count( $accountBucket ) >= $settings->loginLimitPerAccountPerHour ) {
+			self::refuse( self::RESULT_TOO_MANY, $redirect );
 			return;
 		}
 
 		// 7. Hasło i stan konta: `wp_signon()` woła `wp_authenticate()`, czyli weryfikatory rdzenia
-		// (priorytet 20) i bramę stanu konta (priorytet 30).
+		// (priorytet 20), uwierzytelniacz ciasteczka (30) i bramę stanu konta (priorytet 40).
 		$signed = wp_signon(
 			array(
 				'user_login'    => $identity,
@@ -170,11 +209,11 @@ final class LoginHandler {
 			)
 		);
 		if ( $signed instanceof WP_Error ) {
-			self::refuse_signon( $signed, $identity, $ip, $userId );
+			self::refuse_signon( $signed, $identity, $ip, $userId, $redirect );
 			return;
 		}
 
-		self::succeed( $signed, $settings );
+		self::succeed( $signed, $settings, $redirect );
 	}
 
 	/**
@@ -229,19 +268,23 @@ final class LoginHandler {
 	 * @param string   $identity Identyfikator z formularza.
 	 * @param string   $ip       Adres klienta (`''` = nieustalony).
 	 * @param int      $userId   Konto odnalezione dla identyfikatora (0 = brak).
+	 * @param string   $redirect Adres docelowy po kontroli hosta (`''` = brak).
 	 */
-	private static function refuse_signon( WP_Error $error, string $identity, string $ip, int $userId ): void {
+	private static function refuse_signon( WP_Error $error, string $identity, string $ip, int $userId, string $redirect ): void {
 		$state = self::state_code( $error );
 		if ( '' !== $state ) {
-			self::refuse( $state );
+			self::refuse( $state, $redirect );
 			return;
 		}
 
 		if ( '' !== $ip ) {
 			RateLimiter::hit( self::BUCKET_IP . $ip );
 		}
-		if ( 0 !== $userId ) {
-			RateLimiter::hit( self::BUCKET_USER . $userId );
+		// Ten sam kubełek, który czytała bramka progu: dla konta odnalezionego kluczowany kontem,
+		// dla łańcucha bez konta — jego skrótem (patrz reguła 2).
+		$accountBucket = self::account_bucket( $userId, $identity );
+		if ( '' !== $accountBucket ) {
+			RateLimiter::hit( $accountBucket );
 		}
 
 		// W logu NIE MA hasła ani jego skrótu, a identyfikator wyłącznie skrótem — tak samo jak
@@ -258,7 +301,40 @@ final class LoginHandler {
 			)
 		);
 
-		self::refuse( self::RESULT_BAD );
+		self::refuse( self::RESULT_BAD, $redirect );
+	}
+
+	/**
+	 * Kubełek progu per konto dla tego żądania albo `''`, gdy nie ma czego liczyć.
+	 *
+	 * Konto odnalezione daje kubełek kluczowany jego identyfikatorem, a łańcuch, któremu żadne
+	 * konto nie odpowiada — kubełek kluczowany SKRÓTEM tego łańcucha (patrz reguła 2 i
+	 * `BUCKET_IDENTITY`). Pusty identyfikator nie daje kubełka: skrót pustego łańcucha byłby
+	 * jednym kubełkiem dla całego ruchu bez identyfikatora, czyli progiem odcinającym wszystkich.
+	 *
+	 * Funkcja jest czysta, więc bramka progu i zliczanie porażki wyliczają z tych samych danych
+	 * ten sam kubełek — bez przenoszenia nazwy przez trzy wywołania.
+	 *
+	 * @param int    $userId   Konto odnalezione dla identyfikatora (0 = brak).
+	 * @param string $identity Identyfikator z formularza.
+	 */
+	private static function account_bucket( int $userId, string $identity ): string {
+		if ( 0 !== $userId ) {
+			return self::BUCKET_USER . $userId;
+		}
+
+		return '' === $identity ? '' : self::BUCKET_IDENTITY . self::identity_key( $identity );
+	}
+
+	/**
+	 * Klucz kubełka dla nadesłanego identyfikatora: skrót, nigdy wartość jawna (ten sam wzór, co
+	 * `PasswordReset::email_key()`). Małe litery, bo `Jan@Szpital.pl` i `jan@szpital.pl` to jeden
+	 * i ten sam identyfikator — inaczej zmiana wielkości litery dawałaby świeży budżet prób.
+	 *
+	 * @param string $identity Identyfikator z formularza.
+	 */
+	private static function identity_key( string $identity ): string {
+		return wp_hash( strtolower( $identity ) );
 	}
 
 	/**
@@ -284,12 +360,21 @@ final class LoginHandler {
 	 * wtyczka kierująca po zalogowaniu musi działać także na tym formularzu. Jego wynik i tak
 	 * przechodzi przez kontrolę hosta, więc filtr nie wyprowadzi nikogo z witryny.
 	 *
-	 * @param WP_User  $user     Zalogowane konto.
-	 * @param Settings $settings Ustawienia odczytane już przez `handle()`.
+	 * UDANE LOGOWANIE ZERUJE KUBEŁEK PER KONTO. Lekarz, który pomyli hasło dziewięć razy i za
+	 * dziesiątym wejdzie, odchodziłby z licznikiem na dziewięciu i jedna wpadka w tej samej godzinie
+	 * zamykałaby go na resztę okna — czyli obrona trafiająca w człowieka, a nie w bota. Kubełek per
+	 * adres IP zostaje NIETKNIĘTY: to jedyna obrona przed botem, który trafia jedno hasło na wiele
+	 * prób, a wyzerowanie go dawałoby mu świeży budżet za każde trafienie. Kto zna hasło do konta,
+	 * może wyzerować licznik tego konta, czyli nic nowego nie zyskuje.
+	 *
+	 * @param WP_User  $user      Zalogowane konto.
+	 * @param Settings $settings  Ustawienia odczytane już przez `handle()`.
+	 * @param string   $requested Adres docelowy po kontroli hosta (`''` = brak).
 	 */
-	private static function succeed( WP_User $user, Settings $settings ): void {
-		$fallback  = PageUrl::for( $settings->afterLoginPageId );
-		$requested = self::requested_redirect();
+	private static function succeed( WP_User $user, Settings $settings, string $requested ): void {
+		RateLimiter::clear( self::BUCKET_USER . $user->ID );
+
+		$fallback = PageUrl::for( $settings->afterLoginPageId );
 
 		/**
 		 * Filtr rdzenia: adres po zalogowaniu.
@@ -304,12 +389,28 @@ final class LoginHandler {
 	}
 
 	/**
-	 * Przekierowuje na stronę logowania ze znacznikiem wyniku (PRG).
+	 * Przekierowuje na stronę logowania ze znacznikiem wyniku (PRG) i z ADRESEM DOCELOWYM, jeśli
+	 * żądanie go niosło.
 	 *
-	 * @param string $code Wynik (`RESULT_*`) albo kod odmowy bramy.
+	 * Adres docelowy musi przeżyć nieudaną próbę: `Redirects::login_url()` dokłada ten argument do
+	 * KAŻDEGO rdzeniowego odnośnika logowania, więc wylogowany redaktor przyniesiony przez
+	 * `auth_redirect()` z `/wp-admin/edit.php` tracił przy pierwszej pomyłce w haśle dokładnie ten
+	 * cel, który tamta podmiana miała zachować. Wartość jest już po `wp_validate_redirect()`
+	 * (patrz `requested_redirect()`), więc adres z obcego hosta nie ma czym tu przejść; widok
+	 * czyta go z adresu i tak samo poddaje kontroli hosta. Argument dokładamy dokładnie tak, jak
+	 * robi to `Redirects::login_url()` dla odnośników rdzenia — jedna konwencja na oba producenty
+	 * tego argumentu.
+	 *
+	 * @param string $code     Wynik (`RESULT_*`) albo kod odmowy bramy.
+	 * @param string $redirect Adres docelowy po kontroli hosta (`''` = brak).
 	 */
-	private static function refuse( string $code ): void {
-		self::redirect( add_query_arg( LoginForm::RESULT_ARG, $code, LoginForm::base_url() ) );
+	private static function refuse( string $code, string $redirect = '' ): void {
+		$url = add_query_arg( LoginForm::RESULT_ARG, $code, LoginForm::base_url() );
+		if ( '' !== $redirect ) {
+			$url = add_query_arg( LoginForm::REDIRECT, $redirect, $url );
+		}
+
+		self::redirect( $url );
 	}
 
 	/**
