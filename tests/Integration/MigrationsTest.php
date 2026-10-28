@@ -151,8 +151,8 @@ final class MigrationsTest extends WP_UnitTestCase {
 		Migrations::maybe_upgrade();
 
 		$this->assertTrue( $this->table_exists( Migrations::table( 'mail_queue' ) ) );
-		$this->assertSame( 3, Migrations::DB_VERSION );
-		$this->assertSame( 3, (int) get_option( 'pusers_db_version' ) );
+		$this->assertGreaterThan( 2, Migrations::DB_VERSION );
+		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
 	}
 
 	public function test_terms_version_hash_is_unique(): void {

@@ -18,12 +18,24 @@ use PortalUsers\Domain\Mail\QueueStatus;
  *
  * Wiersz zostaje po wysłaniu: kolejka jest też logiem wysyłek, który specyfikacja wymaga w panelu.
  * Wszystkie znaczniki czasu są w UTC. Zmiany stanu, o które mogą się ścigać dwa przebiegi crona,
- * są warunkowymi UPDATE-ami (`WHERE status = …`), nigdy odczytem i zapisem.
+ * są warunkowymi UPDATE-ami, nigdy odczytem i zapisem. Zajęcie wiersza podnosi licznik `attempts`
+ * i oddaje jego wartość; zapisy wyniku (`mark_sent`, `reschedule`, `mark_failed`) przechodzą tylko z tą
+ * wartością. Sam status nie wystarczy: wiersz odzyskany przez `recover_stale()` i zajęty ponownie też
+ * jest `sending`, a spóźniony zapis pierwszego przebiegu nie może odebrać go drugiemu.
  */
 final class MailQueueRepository {
 
 	/**
+	 * Nazwa tabeli bez prefiksu; pełną daje Migrations::table().
+	 */
+	private const TABLE = 'mail_queue';
+
+	/**
 	 * Wstawia wiersz w stanie queued. Duplikat `dedupe_key` jest po cichu pomijany.
+	 *
+	 * Klucz `dedupe_key` ma co najwyżej 191 znaków. wpdb zdejmuje tryby ścisłe SQL, więc dłuższy
+	 * MySQL obcina bez błędu: dwa różne klucze o wspólnych 191 znakach zderzyłyby się na indeksie,
+	 * insert() zwróciłby false, a wywołujący odczytałby to jako "już w kolejce" i mail by nie wyszedł.
 	 *
 	 * @param array{created_at:string,scheduled_at:string,kind:string,dedupe_key:string,user_id:int,recipient:string,subject:string,body:string} $row Dane wiersza.
 	 * @return bool True tylko gdy wiersz POWSTAŁ.
@@ -34,7 +46,7 @@ final class MailQueueRepository {
 		$wpdb->query(
 			$wpdb->prepare(
 				'INSERT IGNORE INTO %i (created_at, scheduled_at, kind, dedupe_key, user_id, recipient, subject, body, status, attempts, anonymized) VALUES (%s, %s, %s, %s, %d, %s, %s, %s, %s, 0, 0)',
-				Migrations::table( 'mail_queue' ),
+				Migrations::table( self::TABLE ),
 				$row['created_at'],
 				$row['scheduled_at'],
 				$row['kind'],
@@ -45,7 +57,7 @@ final class MailQueueRepository {
 				$row['body'],
 				QueueStatus::Queued->value
 			)
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery -- Zapis do własnej tabeli kolejki, nazwa z Migrations::table().
+		);
 
 		// Nie insert_id: przy pominiętym duplikacie zostaje w nim wartość z poprzedniego zapisu na tym połączeniu.
 		return 1 === $wpdb->rows_affected;
@@ -61,9 +73,9 @@ final class MailQueueRepository {
 		global $wpdb;
 
 		$row = $wpdb->get_row(
-			$wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', Migrations::table( 'mail_queue' ), $id ),
+			$wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', Migrations::table( self::TABLE ), $id ),
 			ARRAY_A
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Stan kolejki musi być świeży, cache pokazałby nieaktualny status.
+		);
 
 		return is_array( $row ) ? $row : null;
 	}
@@ -81,13 +93,13 @@ final class MailQueueRepository {
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
 				'SELECT * FROM %i WHERE status = %s AND scheduled_at <= %s ORDER BY id ASC LIMIT %d',
-				Migrations::table( 'mail_queue' ),
+				Migrations::table( self::TABLE ),
 				QueueStatus::Queued->value,
 				$nowUtc,
 				$limit
 			),
 			ARRAY_A
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Dyspozytor musi widzieć aktualną kolejkę, cache zgubiłby świeże wiersze.
+		);
 
 		return is_array( $rows ) ? array_values( $rows ) : array();
 	}
@@ -98,88 +110,119 @@ final class MailQueueRepository {
 	 *
 	 * @param int    $id     Identyfikator wiersza.
 	 * @param string $nowUtc Moment zajęcia (UTC).
-	 * @return bool True, gdy to wywołanie zajęło wiersz i ma do niego wyłączność.
+	 * @return int|null Numer próby, który identyfikuje właściciela wiersza (do `mark_*` i `reschedule`),
+	 *                  albo null, gdy zajęcie przegrano.
 	 */
-	public static function claim( int $id, string $nowUtc ): bool {
+	public static function claim( int $id, string $nowUtc ): ?int {
 		global $wpdb;
 
 		$wpdb->query(
 			$wpdb->prepare(
 				'UPDATE %i SET status = %s, attempts = attempts + 1, scheduled_at = %s WHERE id = %d AND status = %s',
-				Migrations::table( 'mail_queue' ),
+				Migrations::table( self::TABLE ),
 				QueueStatus::Sending->value,
 				$nowUtc,
 				$id,
 				QueueStatus::Queued->value
 			)
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Warunkowy UPDATE jest bramką współbieżności, nie ma tu czego buforować.
+		);
 
-		return 1 === $wpdb->rows_affected;
+		if ( 1 !== $wpdb->rows_affected ) {
+			return null;
+		}
+
+		// Odczyt jest bezpieczny, bo wiersz jest już nasz. Nie liczymy attempts + 1 z wcześniejszego odczytu:
+		// między due() a claim() inny przebieg mógł wiersz zająć, oblać i przełożyć.
+		$attempts = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT attempts FROM %i WHERE id = %d', Migrations::table( self::TABLE ), $id )
+		);
+
+		return (int) $attempts;
 	}
 
 	/**
-	 * Oznacza wiersz jako wysłany.
+	 * Oznacza wiersz jako wysłany, o ile nadal należy do tej próby.
 	 *
-	 * @param int    $id     Identyfikator wiersza.
-	 * @param string $nowUtc Moment wysyłki (UTC).
+	 * @param int    $id      Identyfikator wiersza.
+	 * @param string $nowUtc  Moment wysyłki (UTC).
+	 * @param int    $attempt Numer próby zwrócony przez claim().
+	 * @return bool False, gdy wiersz już do tej próby nie należy (zapis pominięty).
 	 */
-	public static function mark_sent( int $id, string $nowUtc ): void {
-		global $wpdb;
-
-		$wpdb->update(
-			Migrations::table( 'mail_queue' ),
+	public static function mark_sent( int $id, string $nowUtc, int $attempt ): bool {
+		return self::finish(
+			$id,
+			$attempt,
 			array(
 				'status'  => QueueStatus::Sent->value,
 				'sent_at' => $nowUtc,
-			),
-			array( 'id' => $id ),
-			array( '%s', '%s' ),
-			array( '%d' )
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Zapis do własnej tabeli kolejki.
+			)
+		);
 	}
 
 	/**
-	 * Zwraca wiersz do kolejki z nowym terminem i zapisanym błędem.
+	 * Zwraca wiersz do kolejki z nowym terminem i zapisanym błędem, o ile nadal należy do tej próby.
 	 *
 	 * @param int    $id             Identyfikator wiersza.
 	 * @param string $scheduledAtUtc Termin następnej próby (UTC).
 	 * @param string $error          Komunikat błędu.
+	 * @param int    $attempt        Numer próby zwrócony przez claim().
+	 * @return bool False, gdy wiersz już do tej próby nie należy (zapis pominięty).
 	 */
-	public static function reschedule( int $id, string $scheduledAtUtc, string $error ): void {
-		global $wpdb;
-
-		$wpdb->update(
-			Migrations::table( 'mail_queue' ),
+	public static function reschedule( int $id, string $scheduledAtUtc, string $error, int $attempt ): bool {
+		return self::finish(
+			$id,
+			$attempt,
 			array(
 				'status'       => QueueStatus::Queued->value,
 				'scheduled_at' => $scheduledAtUtc,
 				'last_error'   => $error,
-			),
-			array( 'id' => $id ),
-			array( '%s', '%s', '%s' ),
-			array( '%d' )
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Zapis do własnej tabeli kolejki.
+			)
+		);
 	}
 
 	/**
-	 * Oznacza wiersz jako definitywnie nieudany.
+	 * Oznacza wiersz jako definitywnie nieudany, o ile nadal należy do tej próby.
 	 *
-	 * @param int    $id    Identyfikator wiersza.
-	 * @param string $error Komunikat błędu.
+	 * @param int    $id      Identyfikator wiersza.
+	 * @param string $error   Komunikat błędu.
+	 * @param int    $attempt Numer próby zwrócony przez claim().
+	 * @return bool False, gdy wiersz już do tej próby nie należy (zapis pominięty).
 	 */
-	public static function mark_failed( int $id, string $error ): void {
-		global $wpdb;
-
-		$wpdb->update(
-			Migrations::table( 'mail_queue' ),
+	public static function mark_failed( int $id, string $error, int $attempt ): bool {
+		return self::finish(
+			$id,
+			$attempt,
 			array(
 				'status'     => QueueStatus::Failed->value,
 				'last_error' => $error,
+			)
+		);
+	}
+
+	/**
+	 * Zapisuje wynik próby, ale tylko właścicielowi: status `sending` i ten sam numer próby.
+	 * Status sam nie identyfikuje właściciela, bo odzyskany i ponownie zajęty wiersz też jest `sending`.
+	 *
+	 * @param int                  $id      Identyfikator wiersza.
+	 * @param int                  $attempt Numer próby zwrócony przez claim().
+	 * @param array<string,string> $values  Kolumny do zapisu.
+	 */
+	private static function finish( int $id, int $attempt, array $values ): bool {
+		global $wpdb;
+
+		$wpdb->update(
+			Migrations::table( self::TABLE ),
+			$values,
+			array(
+				'id'       => $id,
+				'status'   => QueueStatus::Sending->value,
+				'attempts' => $attempt,
 			),
-			array( 'id' => $id ),
-			array( '%s', '%s' ),
-			array( '%d' )
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Zapis do własnej tabeli kolejki.
+			array_fill( 0, count( $values ), '%s' ),
+			array( '%d', '%s', '%d' )
+		);
+
+		return 1 === $wpdb->rows_affected;
 	}
 
 	/**
@@ -194,12 +237,12 @@ final class MailQueueRepository {
 		$result = $wpdb->query(
 			$wpdb->prepare(
 				'UPDATE %i SET status = %s WHERE status = %s AND scheduled_at < %s',
-				Migrations::table( 'mail_queue' ),
+				Migrations::table( self::TABLE ),
 				QueueStatus::Queued->value,
 				QueueStatus::Sending->value,
 				$thresholdUtc
 			)
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Warunkowy UPDATE na własnej tabeli kolejki.
+		);
 
 		return is_int( $result ) ? $result : 0;
 	}
@@ -217,12 +260,12 @@ final class MailQueueRepository {
 		$result = $wpdb->query(
 			$wpdb->prepare(
 				'DELETE FROM %i WHERE status IN (%s, %s) AND created_at < %s',
-				Migrations::table( 'mail_queue' ),
+				Migrations::table( self::TABLE ),
 				QueueStatus::Sent->value,
 				QueueStatus::Failed->value,
 				$beforeUtc
 			)
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Czyszczenie retencyjne własnej tabeli kolejki.
+		);
 
 		return is_int( $result ) ? $result : 0;
 	}
@@ -238,7 +281,7 @@ final class MailQueueRepository {
 	public static function paginate( string $status, int $perPage, int $offset ): array {
 		global $wpdb;
 
-		$table = Migrations::table( 'mail_queue' );
+		$table = Migrations::table( self::TABLE );
 		if ( '' === $status ) {
 			$sql = $wpdb->prepare( 'SELECT * FROM %i ORDER BY id DESC LIMIT %d OFFSET %d', $table, $perPage, $offset );
 		} elseif ( null !== QueueStatus::tryFrom( $status ) ) {
@@ -247,7 +290,7 @@ final class MailQueueRepository {
 			return array();
 		}
 
-		$rows = $wpdb->get_results( $sql, ARRAY_A ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- Zapytanie przygotowane powyżej; lista w panelu ma pokazywać aktualny stan.
+		$rows = $wpdb->get_results( $sql, ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Zapytanie przygotowane powyżej; lista w panelu ma pokazywać aktualny stan.
 
 		return is_array( $rows ) ? array_values( $rows ) : array();
 	}
@@ -260,7 +303,7 @@ final class MailQueueRepository {
 	public static function count_by_status( string $status ): int {
 		global $wpdb;
 
-		$table = Migrations::table( 'mail_queue' );
+		$table = Migrations::table( self::TABLE );
 		if ( '' === $status ) {
 			$sql = $wpdb->prepare( 'SELECT COUNT(*) FROM %i', $table );
 		} elseif ( null !== QueueStatus::tryFrom( $status ) ) {
@@ -269,11 +312,11 @@ final class MailQueueRepository {
 			return 0;
 		}
 
-		return (int) $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching, WordPress.DB.PreparedSQL.NotPrepared -- Zapytanie przygotowane powyżej; licznik w panelu ma być aktualny.
+		return (int) $wpdb->get_var( $sql ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Zapytanie przygotowane powyżej; licznik w panelu ma być aktualny.
 	}
 
 	/**
-	 * Wznawia nieudany wiersz: zeruje próby i wraca do kolejki. Wiersz w innym stanie zostaje nietknięty.
+	 * Wznawia nieudany wiersz: zeruje próby i wraca do kolejki; `last_error` zostaje jako ślad poprzedniej próby. Wiersz w innym stanie zostaje nietknięty.
 	 *
 	 * @param int $id Identyfikator wiersza.
 	 * @return bool True, gdy wiersz był failed i wrócił do kolejki.
@@ -283,14 +326,14 @@ final class MailQueueRepository {
 
 		$wpdb->query(
 			$wpdb->prepare(
-				'UPDATE %i SET status = %s, attempts = 0, scheduled_at = %s, last_error = NULL WHERE id = %d AND status = %s',
-				Migrations::table( 'mail_queue' ),
+				'UPDATE %i SET status = %s, attempts = 0, scheduled_at = %s WHERE id = %d AND status = %s',
+				Migrations::table( self::TABLE ),
 				QueueStatus::Queued->value,
 				gmdate( 'Y-m-d H:i:s' ),
 				$id,
 				QueueStatus::Failed->value
 			)
-		); // phpcs:ignore WordPress.DB.DirectDatabaseQuery.DirectQuery, WordPress.DB.DirectDatabaseQuery.NoCaching -- Warunkowy UPDATE na własnej tabeli kolejki.
+		);
 
 		return 1 === $wpdb->rows_affected;
 	}

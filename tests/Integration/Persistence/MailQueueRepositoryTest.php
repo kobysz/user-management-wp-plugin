@@ -41,13 +41,13 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
 	}
 
-	public function test_only_the_first_claim_wins(): void {
+	public function test_a_second_claim_is_lost_and_attempts_rise_exactly_once(): void {
 		// Cron minutowy i zdarzenie natychmiastowe mogą trafić w ten sam wiersz. Lekarz nie może dostać
 		// dwóch linków potwierdzających, więc zajęcie jest warunkowym UPDATE-em, nie odczytem i zapisem.
 		MailQueueRepository::insert( $this->row( 'klucz-b' ) );
 		$id = (int) MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 )[0]['id'];
-		$this->assertTrue( MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
-		$this->assertFalse( MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
+		$this->assertSame( 1, MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
+		$this->assertNull( MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
 		$this->assertSame( 1, (int) MailQueueRepository::find( $id )['attempts'] );
 	}
 
@@ -70,9 +70,11 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		$id = (int) MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 )[0]['id'];
 		$this->assertFalse( MailQueueRepository::requeue_failed( $id ) );   // jeszcze queued.
 		MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) );
-		MailQueueRepository::mark_failed( $id, 'SMTP nie odpowiada' );
+		MailQueueRepository::mark_failed( $id, 'SMTP nie odpowiada', 1 );
 		$this->assertTrue( MailQueueRepository::requeue_failed( $id ) );
-		$this->assertSame( 0, (int) MailQueueRepository::find( $id )['attempts'] );
+		$row = MailQueueRepository::find( $id );
+		$this->assertSame( 0, (int) $row['attempts'] );
+		$this->assertSame( 'SMTP nie odpowiada', $row['last_error'], 'Powód poprzedniej porażki zostaje w logu.' );
 	}
 
 	public function test_retention_keeps_rows_still_waiting(): void {
@@ -91,9 +93,9 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		foreach ( $ids as $id ) {
 			MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) );
 		}
-		MailQueueRepository::mark_sent( $ids[0], gmdate( 'Y-m-d H:i:s' ) );
-		MailQueueRepository::mark_failed( $ids[1], 'błąd' );
-		MailQueueRepository::mark_sent( $ids[2], gmdate( 'Y-m-d H:i:s' ) );
+		MailQueueRepository::mark_sent( $ids[0], gmdate( 'Y-m-d H:i:s' ), 1 );
+		MailQueueRepository::mark_failed( $ids[1], 'błąd', 1 );
+		MailQueueRepository::mark_sent( $ids[2], gmdate( 'Y-m-d H:i:s' ), 1 );
 
 		$this->assertSame( 2, MailQueueRepository::purge_old( gmdate( 'Y-m-d H:i:s', time() - 90 * DAY_IN_SECONDS ) ) );
 		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
@@ -103,7 +105,7 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		MailQueueRepository::insert( $this->row( 'klucz-g' ) );
 		$id = (int) MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 )[0]['id'];
 		MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) );
-		MailQueueRepository::mark_sent( $id, '2026-01-02 03:04:05' );
+		$this->assertTrue( MailQueueRepository::mark_sent( $id, '2026-01-02 03:04:05', 1 ) );
 
 		$row = MailQueueRepository::find( $id );
 		$this->assertSame( QueueStatus::Sent->value, $row['status'] );
@@ -114,13 +116,34 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		MailQueueRepository::insert( $this->row( 'klucz-h' ) );
 		$id = (int) MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 )[0]['id'];
 		MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) );
-		MailQueueRepository::reschedule( $id, '2030-01-01 00:00:00', 'chwilowy błąd' );
+		$this->assertTrue( MailQueueRepository::reschedule( $id, '2030-01-01 00:00:00', 'chwilowy błąd', 1 ) );
 
 		$row = MailQueueRepository::find( $id );
 		$this->assertSame( QueueStatus::Queued->value, $row['status'] );
 		$this->assertSame( '2030-01-01 00:00:00', $row['scheduled_at'] );
 		$this->assertSame( 'chwilowy błąd', $row['last_error'] );
 		$this->assertSame( array(), MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 ) );
+	}
+
+	public function test_a_stalled_run_cannot_overwrite_a_row_claimed_again_after_recovery(): void {
+		// Przebieg A zajmuje wiersz i się zawiesza, recover_stale() oddaje go do kolejki, przebieg B zajmuje go ponownie.
+		// Spóźniony zapis A trafiłby w wiersz, który nadal jest sending, więc sam status go nie odrzuci: robi to numer próby.
+		MailQueueRepository::insert( $this->row( 'klucz-race' ) );
+		$id = (int) MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 )[0]['id'];
+		$first = MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s', time() - 3600 ) );
+		MailQueueRepository::recover_stale( gmdate( 'Y-m-d H:i:s', time() - 300 ) );
+		$second = MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) );
+
+		$this->assertSame( 1, $first );
+		$this->assertSame( 2, $second );
+		$this->assertFalse( MailQueueRepository::reschedule( $id, '2030-01-01 00:00:00', 'spóźniony błąd', (int) $first ) );
+		$this->assertFalse( MailQueueRepository::mark_sent( $id, gmdate( 'Y-m-d H:i:s' ), (int) $first ) );
+		$this->assertFalse( MailQueueRepository::mark_failed( $id, 'spóźniony błąd', (int) $first ) );
+		$row = MailQueueRepository::find( $id );
+		$this->assertSame( QueueStatus::Sending->value, $row['status'], 'Wiersz B pozostaje zajęty.' );
+		$this->assertNull( $row['last_error'] );
+
+		$this->assertTrue( MailQueueRepository::mark_sent( $id, gmdate( 'Y-m-d H:i:s' ), (int) $second ) );
 	}
 
 	public function test_recover_stale_leaves_fresh_sending_rows(): void {
