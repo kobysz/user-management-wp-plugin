@@ -205,6 +205,9 @@ final class Mailer {
 	 * Klucz niesie minutę i skrót powodu: podwójne kliknięcie nie wyśle dwóch maili, a ponowne odrzucenie
 	 * z INNYM powodem wyśle, bo człowiek ma wiedzieć, co się zmieniło.
 	 *
+	 * Wołający (ekran decyzji) jest winien NIEPUSTY powód: specyfikacja wymaga go przy odrzuceniu, a tu
+	 * pusty dałby mail z samym „Powód:". Mailer go nie osądza, bo nie on podejmuje decyzję.
+	 *
 	 * @param int    $userId Identyfikator użytkownika.
 	 * @param string $reason Powód odrzucenia.
 	 */
@@ -240,7 +243,8 @@ final class Mailer {
 	 * sprawdzić, że ta sama decyzja w tej samej minucie daje jeden wiersz, a w późniejszej drugi. Zwrócenie
 	 * z niego stałej na prawdziwej witrynie sprawi, że każda następna decyzja tego samego rodzaju (a przy
 	 * odrzuceniu z tym samym powodem) zostanie uznana za duplikat i wnioskodawca nigdy jej nie dostanie,
-	 * choć panel pokaże, że mail wyszedł.
+	 * choć panel pokaże, że mail wyszedł. Znane ograniczenie: podwójne kliknięcie na granicy minuty
+	 * kolejkuje dwa maile; to świadomy koszt kubełka, nie błąd.
 	 */
 	private static function minute_bucket(): string {
 		$bucket = apply_filters( 'pusers_internal_test_seam_minute_bucket', gmdate( 'YmdHi' ) );

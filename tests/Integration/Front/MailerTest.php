@@ -369,6 +369,14 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( '{', $this->first_body(), 'Żadna zmienna nie zostaje w treści dosłownie.' );
 	}
 
+	public function test_an_empty_rejection_reason_is_not_judged_by_the_mailer(): void {
+		// Kontrakt: niepusty powód jest obowiązkiem wołającego (ekran decyzji). Mailer kolejkuje to, co dostał.
+		$id = $this->account( 'lekarz' );
+
+		$this->assertTrue( Mailer::rejected( $id, '' ) );
+		$this->assertStringEndsWith( 'Powód:', trim( $this->first_body() ) );
+	}
+
 	public function test_a_re_rejection_with_another_reason_queues_again_but_the_same_reason_does_not(): void {
 		$id = $this->account( 'lekarz' );
 

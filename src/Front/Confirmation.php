@@ -303,20 +303,22 @@ final class Confirmation {
 	}
 
 	/**
-	 * Mail do wnioskodawcy po potwierdzeniu adresu. Rozstrzyga STAN konta odczytany z repozytorium, nie
-	 * ustawienie (tak samo jak `Mailer::editorial()`): „czeka na decyzję" wobec konta już zatwierdzonego
-	 * byłoby nieprawdą. Osobna metoda także dlatego, że analiza statyczna uznaje powtórny odczyt stanu
-	 * w `confirm()` za ten sam, który tuż wcześniej potwierdził `email_unconfirmed`.
+	 * Mail do wnioskodawcy po potwierdzeniu adresu. Rozstrzyga STAN konta czytany świeżo z repozytorium,
+	 * osobno od wartości, którą przed chwilą zapisało `confirm()` (tak samo jak `Mailer::editorial()`):
+	 * „czeka na decyzję" wobec konta zatwierdzonego byłoby nieprawdą.
+	 *
+	 * Inny stan (odrzucone między zapisem a odczytem, konto usunięte, nieczytelna metadana) nie daje
+	 * żadnego maila: brakujący mail wnioskodawca nadrobi pytaniem do redakcji, a fałszywe „konto
+	 * zatwierdzone" nie da się odkręcić.
 	 *
 	 * @param int $userId Identyfikator użytkownika.
 	 */
 	private static function notify_applicant( int $userId ): void {
-		if ( AccountStatus::Pending === AccountStatusRepository::get( $userId ) ) {
-			Mailer::application_received( $userId );
-			return;
-		}
-
-		Mailer::approved( $userId );
+		match ( AccountStatusRepository::get( $userId ) ) {
+			AccountStatus::Pending  => Mailer::application_received( $userId ),
+			AccountStatus::Approved => Mailer::approved( $userId ),
+			default                 => null,
+		};
 	}
 
 	/**

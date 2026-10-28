@@ -333,6 +333,26 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$this->assertSame( Mailer::KIND_APPLICATION_RECEIVED, $mails[0]['kind'] );
 	}
 
+	public function test_an_account_that_is_neither_pending_nor_approved_gets_no_applicant_mail(): void {
+		// Odrzucenie tuż po zapisie stanu, przed mailem do wnioskodawcy: fałszywe „zatwierdzone" jest gorsze niż brak maila.
+		$id = $this->account();
+		add_filter(
+			Mailer::FILTER_BODY,
+			static function ( $body, $kind ) use ( $id ) {
+				if ( Mailer::KIND_EDITORIAL === $kind ) {
+					AccountStatusRepository::set( $id, AccountStatus::Rejected );
+				}
+				return $body;
+			},
+			10,
+			2
+		);
+		Confirmation::try_confirm( $id, Confirmation::issue( $id ) );
+
+		$this->assertCount( 0, $this->mails_to( (string) get_userdata( $id )->user_email ) );
+		$this->assertCount( 1, $this->editorial_mails() );
+	}
+
 	public function test_with_approval_disabled_the_account_is_told_it_can_log_in(): void {
 		$loginPage = (int) self::factory()->post->create( array( 'post_type' => 'page', 'post_title' => 'Logowanie' ) );
 		$this->configure( false, array( 'login_page_id' => $loginPage ) );
@@ -345,7 +365,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( (string) get_permalink( $loginPage ), $mails[0]['message'] );
 	}
 
-	public function test_confirming_twice_does_not_queue_a_second_application_mail(): void {
+	public function test_a_consumed_token_queues_nothing_more_for_the_applicant(): void {
 		$id    = $this->account();
 		$token = Confirmation::issue( $id );
 		Confirmation::try_confirm( $id, $token );
@@ -416,6 +436,10 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		Confirmation::try_confirm( $id, Confirmation::issue( $id ) );
 
 		$this->assertSame( array(), $this->editorial_mails(), 'Brak odbiorców nie przechodzi na adres administratora witryny.' );
+		$this->assertCount( 0, $this->mails_to( 'admin-witryny@example.test' ), 'Pod żadnym rodzajem nic nie idzie do administratora witryny.' );
+		foreach ( $this->mails() as $mail ) {
+			$this->assertSame( array( (string) get_userdata( $id )->user_email ), $mail['to'], 'Jedyny mail to ten do wnioskodawcy.' );
+		}
 		$actions = array_map( static fn ( object $row ): string => (string) $row->action, $this->log_rows() );
 		$this->assertContains( Mailer::NO_RECIPIENTS_LOG_ACTION, $actions );
 		$this->assertSame( AccountStatus::Pending, $this->status( $id ), 'Przejście stanu nie zależy od powodzenia maila.' );
