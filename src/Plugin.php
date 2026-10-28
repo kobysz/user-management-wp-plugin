@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers;
 
+use PortalUsers\Admin\MailTemplatesScreen;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
@@ -104,6 +105,7 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( SettingsScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( ProfessionsScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MatrixScreen::class, 'register' ) );
+		add_action( 'pusers_register_features', array( MailTemplatesScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginHandler::class, 'register' ) );
