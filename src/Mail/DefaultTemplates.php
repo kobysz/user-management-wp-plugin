@@ -119,8 +119,7 @@ final class DefaultTemplates {
 	/**
 	 * Próba rejestracji na adres, który ma już konto. Zdania „nic się nie zmieniło" i „nie musisz nic robić" zostają.
 	 *
-	 * Rodzaj nie deklaruje zmiennej z adresem odzyskiwania hasła, więc odsyłamy na stronę logowania,
-	 * z której odzyskiwanie jest dostępne.
+	 * Odnośnik do odzyskania hasła to osobna zmienna rodzaju: właściciel adresu dostaje go wprost.
 	 */
 	private static function existing_account(): MailTemplate {
 		return new MailTemplate(
@@ -132,7 +131,8 @@ final class DefaultTemplates {
 					'',
 					__( 'Jeżeli to byłeś Ty, zaloguj się na istniejące konto:', 'portal-users' ),
 					'{link_logowania}',
-					__( 'Jeżeli nie pamiętasz hasła, możesz je odzyskać na stronie logowania.', 'portal-users' ),
+					__( 'Jeżeli nie pamiętasz hasła, możesz je odzyskać:', 'portal-users' ),
+					'{link_odzyskiwania}',
 					'',
 					__( 'Jeżeli to nie Ty, zignoruj tę wiadomość. Nie musisz nic robić.', 'portal-users' ),
 				)

@@ -40,7 +40,8 @@ enum MailKind: string {
 			self::Editorial, self::EditorialAuto => array( 'link_wniosku', 'pola_zgloszenia' ),
 			self::Rejected                       => array( 'powod_odrzucenia' ),
 			self::PasswordReset                  => array( 'link_hasla' ),
-			self::ExistingAccount, self::ApplicationReceived, self::Approved => array(),
+			self::ExistingAccount                => array( 'link_odzyskiwania' ),
+			self::ApplicationReceived, self::Approved => array(),
 		};
 
 		return array_merge(

@@ -27,6 +27,14 @@ final class MailKindTest extends TestCase {
 		$this->assertNotContains( 'powod_odrzucenia', MailKind::Approved->variables() );
 	}
 
+	public function test_the_recovery_link_belongs_to_the_existing_account_mail_only(): void {
+		// Mail do osoby, której adres ktoś zgłosił, ma dawać bezpośredni odnośnik do odzyskania hasła
+		// (asercja z Planu 3). W pozostałych rodzajach byłby szumem.
+		$this->assertContains( 'link_odzyskiwania', MailKind::ExistingAccount->variables() );
+		$this->assertNotContains( 'link_odzyskiwania', MailKind::Editorial->variables() );
+		$this->assertNotContains( 'link_odzyskiwania', MailKind::PasswordReset->variables() );
+	}
+
 	public function test_the_three_kinds_that_already_have_a_public_filter_value_keep_it(): void {
 		// Wartości 'confirmation', 'editorial', 'existing_account' są od Planu 3 CZĘŚCIĄ KONTRAKTU
 		// filtrów pusers_mail_body / pusers_mail_subject. Zmiana którejkolwiek zepsułaby cudzy kod.
