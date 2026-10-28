@@ -271,6 +271,20 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 		// Jedna mapa komunikatów stanu: tekst przychodzi z bramy, a nie z drugiej kopii.
 		$this->assertSame( LoginGateway::message_for( LoginGateway::CODE_PENDING ), LoginHandler::message_for( $result ) );
 		$this->assertNotSame( LoginHandler::message_for( LoginHandler::RESULT_BAD ), LoginHandler::message_for( $result ) );
+
+		// Odmowa stanu NIE zużywa żadnego progu: hasło było poprawne, więc nie jest to zgadywanie,
+		// a zużyty próg zamieniłby lekarzowi „zgłoszenie czeka na rozpatrzenie” na „zbyt wiele prób”
+		// po kilku odświeżeniach strony.
+		$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_IP . self::IP ), 'Odmowa stanu zużyła próg per adres IP.' );
+		$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_USER . $account['id'] ), 'Odmowa stanu zużyła próg per konto.' );
+		$this->assertSame( array(), $this->limiterOptions(), 'Odmowa stanu nie tworzy żadnego licznika.' );
+
+		// Jedno zdarzenie, jeden wiersz: ten od bramy. Drugi wiersz pod inną nazwą akcji
+		// rozjechałby audyt, a brama zapisała swój, zanim żądanie tu wróciło.
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows, 'Odmowa stanu zostawia dokładnie jeden wiersz w logu.' );
+		$this->assertSame( LoginGateway::LOG_ACTION, $rows[0]->action, 'Wiersz należy do bramy, nie do obsługi formularza.' );
+		$this->assertSame( array(), array_values( array_filter( $rows, static fn ( $row ): bool => LoginHandler::LOG_ACTION === $row->action ) ), 'Odmowa bramy nie jest odmową obsługi formularza.' );
 	}
 
 	public function test_a_successful_login_does_not_consume_the_threshold(): void {
@@ -377,7 +391,10 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 		// Rozszerzenie sprawdza pole captchy, nie poświadczenia, a typowo wysyła to, co dostanie,
 		// do usługi zewnętrznej.
 		$this->assertArrayNotHasKey( LoginForm::PASSWORD, $seen, 'Hasło nie może trafić do rozszerzenia.' );
+		// Nonce jest żetonem, nie danymi, których potrzebuje reguła antyspamowa.
+		$this->assertArrayNotHasKey( LoginForm::NONCE_FIELD, $seen, 'Nonce nie może trafić do rozszerzenia.' );
 		$this->assertNotSame( array(), $seen, 'Filtr musi dostać dane żądania.' );
+		$this->assertArrayHasKey( LoginForm::IDENTITY, $seen, 'Identyfikator zostaje: reguła antyspamowa może go potrzebować.' );
 		$this->assertStringNotContainsString( self::PASSWORD, implode( '|', array_map( 'strval', $seen ) ), 'Hasło w danych podanych rozszerzeniu.' );
 	}
 
@@ -458,11 +475,15 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 		// Odczyt wyniku z adresu nie wymaga nonce'a: pokazanie komunikatu nic nie zmienia.
 		$_GET[ LoginForm::RESULT_ARG ] = LoginHandler::RESULT_BAD;
 		$html                          = LoginForm::render();
+		// Pusty komunikat zawiera się w KAŻDYM łańcuchu, więc bez tej asercji sprawdzenie niżej
+		// przechodziłoby samo z siebie, gdyby tekst kiedyś zniknął z mapy.
+		$this->assertNotSame( '', LoginHandler::message_for( LoginHandler::RESULT_BAD ) );
 		$this->assertStringContainsString( esc_html( LoginHandler::message_for( LoginHandler::RESULT_BAD ) ), $html );
 		$this->assertStringContainsString( '<form', $html, 'Komunikat nie może zabrać formularza.' );
 
 		// Odmowa stanu przechodzi na stronę WŁASNĄ treścią z mapy bramy.
 		$_GET[ LoginForm::RESULT_ARG ] = LoginGateway::CODE_PENDING;
+		$this->assertNotSame( '', LoginGateway::message_for( LoginGateway::CODE_PENDING ) );
 		$this->assertStringContainsString( esc_html( LoginGateway::message_for( LoginGateway::CODE_PENDING ) ), LoginForm::render() );
 
 		// Kod, którego wtyczka nie zna, nie rysuje pustego okienka alertu.
@@ -479,7 +500,23 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'value="' . esc_attr( LoginHandler::ACTION ) . '"', LoginForm::render() );
 	}
 
-	public function test_the_handler_receives_the_form_from_logged_out_and_logged_in_senders(): void {
+	public function test_a_logged_in_sender_gets_the_stale_result_because_the_nonce_changes_with_the_user(): void {
+		// To jest DOKŁADNA wartość drugiego hooka: nadawca z otwartej karty albo z powrotu
+		// z historii przychodzi z nonce'em wybitym jako NIEZALOGOWANY, a ten po zalogowaniu się
+		// nie weryfikuje (`wp_verify_nonce()` liczy z identyfikatorem użytkownika). Żądanie jest
+		// więc obsłużone i odesłane z „odśwież stronę”, a nie zignorowane z pustą odpowiedzią.
+		// Widok dla zalogowanego nonce'a nie wystawia wcale, więc innej drogi tu nie ma.
+		$account              = $this->account();
+		$nonce                = wp_create_nonce( LoginForm::NONCE_ACTION );
+		$this->passwordChecks = 0;
+		wp_set_current_user( $account['id'] );
+
+		$this->assertSame( LoginHandler::RESULT_STALE, $this->submit( $this->credentials( $account ), $nonce ) );
+		$this->assertSame( 0, $this->passwordChecks, 'Przedawniony nonce stoi przed wp_signon().' );
+		$this->assertSame( array(), $this->limiterOptions(), 'Odmowa nonce\'a nie zużywa progu.' );
+	}
+
+	public function test_the_handler_is_registered_for_logged_out_and_logged_in_senders(): void {
 		// Zalogowany też wyśle ten formularz: otwarta karta, powrót z historii.
 		LoginHandler::register();
 

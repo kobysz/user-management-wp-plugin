@@ -11,6 +11,7 @@ namespace PortalUsers\Front;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Spam\IpAddress;
 use PortalUsers\Persistence\EventLog;
 use PortalUsers\Persistence\SettingsRepository;
@@ -173,7 +174,7 @@ final class LoginHandler {
 			return;
 		}
 
-		self::succeed( $signed );
+		self::succeed( $signed, $settings );
 	}
 
 	/**
@@ -283,10 +284,11 @@ final class LoginHandler {
 	 * wtyczka kierująca po zalogowaniu musi działać także na tym formularzu. Jego wynik i tak
 	 * przechodzi przez kontrolę hosta, więc filtr nie wyprowadzi nikogo z witryny.
 	 *
-	 * @param WP_User $user Zalogowane konto.
+	 * @param WP_User  $user     Zalogowane konto.
+	 * @param Settings $settings Ustawienia odczytane już przez `handle()`.
 	 */
-	private static function succeed( WP_User $user ): void {
-		$fallback  = PageUrl::for( SettingsRepository::get()->afterLoginPageId );
+	private static function succeed( WP_User $user, Settings $settings ): void {
+		$fallback  = PageUrl::for( $settings->afterLoginPageId );
 		$requested = self::requested_redirect();
 
 		/**
@@ -338,17 +340,18 @@ final class LoginHandler {
 
 		$unslashed = wp_unslash( $_POST ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce sprawdzony wyżej.
 		$request   = is_array( $unslashed ) ? $unslashed : array();
-		// HASŁA filtrowi NIE podajemy. Rozszerzenie antyspamowe sprawdza pole captchy, a nie
-		// poświadczenia, i typowo wysyła to, co dostanie, do usługi zewnętrznej — hasło nie ma po
-		// co opuszczać tej metody.
-		unset( $request[ LoginForm::PASSWORD ] );
+		// HASŁA ani NONCE'A filtrowi NIE podajemy. Rozszerzenie antyspamowe sprawdza swoje pole
+		// (captcha), a nie poświadczenia, i typowo wysyła to, co dostanie, do usługi zewnętrznej:
+		// hasło jest poświadczeniem, a nonce żetonem, i żadne z nich nie ma po co opuszczać tej
+		// metody. Identyfikator zostaje — reguła antyspamowa może go sensownie potrzebować.
+		unset( $request[ LoginForm::PASSWORD ], $request[ LoginForm::NONCE_FIELD ] );
 
 		/**
 		 * Punkt rozszerzenia antyspamu logowania (pełny opis przy stałej `SPAM_FILTER`, nazwa hooka:
 		 * pusers_login_spam_check). Zwrócenie fałszu zamienia przepustkę na odmowę.
 		 *
 		 * @param bool                 $passed  Przepustka własnych reguł wtyczki.
-		 * @param array<string, mixed> $request Dane żądania bez ukośników i BEZ hasła.
+		 * @param array<string, mixed> $request Dane żądania bez ukośników, bez hasła i bez nonce'a.
 		 */
 		return false !== apply_filters( self::SPAM_FILTER, true, $request ); // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej SPAM_FILTER, która ma prefiks pusers_.
 	}
