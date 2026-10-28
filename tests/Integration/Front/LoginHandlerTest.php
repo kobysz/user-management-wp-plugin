@@ -172,6 +172,39 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Konto, którego `user_login` jest adresem e-mail INNYM niż `user_email`, o znanym haśle.
+	 *
+	 * Taki łańcuch `account_for()` szuka wyłącznie po adresie (`is_email()` jest dla niego prawdą),
+	 * więc konta NIE odnajduje i porażki lądują w kubełku identyfikatora — a `wp_signon()` wpuszcza
+	 * je i tak, przez `wp_authenticate_username_password`. Rejestracja wtyczki takiego konta nie
+	 * zrobi (nadaje loginy losowe), ale zrobi je ręka w panelu.
+	 *
+	 * @return array{id: int, login: string, email: string}
+	 */
+	private function account_with_an_email_shaped_login(): array {
+		++self::$sequence;
+		$login = 'logowanie' . self::$sequence . '@inny.test';
+		$email = 'poczta' . self::$sequence . '@przyklad.test';
+		$id    = (int) self::factory()->user->create(
+			array(
+				'user_login' => $login,
+				'user_email' => $email,
+				'user_pass'  => self::PASSWORD,
+			)
+		);
+		$stored = get_userdata( $id );
+		$this->assertNotFalse( $stored );
+		$this->assertSame( $login, $stored->user_login, 'WordPress zmienił login testowy; test straciłby sens.' );
+		$this->assertNotSame( $login, $stored->user_email, 'Login i adres muszą się różnić, inaczej konto zostanie odnalezione po adresie.' );
+
+		return array(
+			'id'    => $id,
+			'login' => $login,
+			'email' => $email,
+		);
+	}
+
+	/**
 	 * Wysyła formularz logowania i zwraca znacznik wyniku z adresu przekierowania
 	 * (pusty znaczy: bez znacznika, czyli logowanie się udało).
 	 *
@@ -419,6 +452,43 @@ final class LoginHandlerTest extends WP_UnitTestCase {
 
 		$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_USER . $account['id'] ), 'Udane logowanie nie wyczyściło kubełka konta.' );
 		$this->assertSame( 1, RateLimiter::count( LoginHandler::BUCKET_IP . self::IP ), 'Kubełek per adres IP musi przeżyć udane logowanie.' );
+
+		// Druga klasa kont, dla której próg per konto istnieje dopiero od kubełka identyfikatora:
+		// `user_login` w kształcie adresu e-mail INNYM niż `user_email`. Takiego konta
+		// `account_for()` nie odnajduje, więc jego porażki liczą się w kubełku identyfikatora,
+		// a `wp_signon()` wpuszcza je i tak — po loginie. Zerowanie samego kubełka konta
+		// zostawiałoby tego lekarza po UDANYM logowaniu z licznikiem stojącym pod progiem, czyli
+		// z dokładnie tą krzywdą, którą zerowanie ma zdejmować.
+		$odd    = $this->account_with_an_email_shaped_login();
+		$bucket = LoginHandler::BUCKET_IDENTITY . wp_hash( strtolower( $odd['login'] ) );
+
+		$this->assertSame(
+			LoginHandler::RESULT_BAD,
+			$this->submit(
+				array(
+					LoginForm::IDENTITY => $odd['login'],
+					LoginForm::PASSWORD => 'zle-haslo',
+				)
+			)
+		);
+		$this->assertSame( 1, RateLimiter::count( $bucket ), 'Przesłanka: porażka musiała wylądować w kubełku identyfikatora.' );
+		$this->assertSame( 0, RateLimiter::count( LoginHandler::BUCKET_USER . $odd['id'] ), 'Przesłanka: konta nie odnaleziono, więc kubełka per konto nie ma.' );
+		$ipBefore = RateLimiter::count( LoginHandler::BUCKET_IP . self::IP );
+		$this->assertGreaterThan( 0, $ipBefore, 'Przesłanka: kubełek per adres IP musi coś liczyć.' );
+
+		$this->assertSame(
+			'',
+			$this->submit(
+				array(
+					LoginForm::IDENTITY => $odd['login'],
+					LoginForm::PASSWORD => self::PASSWORD,
+				)
+			),
+			'Logowanie loginem w kształcie adresu miało się udać.'
+		);
+
+		$this->assertSame( 0, RateLimiter::count( $bucket ), 'Udane logowanie nie wyczyściło kubełka identyfikatora.' );
+		$this->assertSame( $ipBefore, RateLimiter::count( LoginHandler::BUCKET_IP . self::IP ), 'Kubełek per adres IP musi przeżyć także to udane logowanie.' );
 	}
 
 	public function test_a_failed_attempt_keeps_the_destination_and_a_hostile_one_still_does_not(): void {

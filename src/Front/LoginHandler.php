@@ -213,7 +213,7 @@ final class LoginHandler {
 			return;
 		}
 
-		self::succeed( $signed, $settings, $redirect );
+		self::succeed( $signed, $settings, $redirect, $accountBucket );
 	}
 
 	/**
@@ -360,19 +360,35 @@ final class LoginHandler {
 	 * wtyczka kierująca po zalogowaniu musi działać także na tym formularzu. Jego wynik i tak
 	 * przechodzi przez kontrolę hosta, więc filtr nie wyprowadzi nikogo z witryny.
 	 *
-	 * UDANE LOGOWANIE ZERUJE KUBEŁEK PER KONTO. Lekarz, który pomyli hasło dziewięć razy i za
+	 * UDANE LOGOWANIE ZERUJE LICZNIK PRÓB PER KONTO. Lekarz, który pomyli hasło dziewięć razy i za
 	 * dziesiątym wejdzie, odchodziłby z licznikiem na dziewięciu i jedna wpadka w tej samej godzinie
 	 * zamykałaby go na resztę okna — czyli obrona trafiająca w człowieka, a nie w bota. Kubełek per
 	 * adres IP zostaje NIETKNIĘTY: to jedyna obrona przed botem, który trafia jedno hasło na wiele
 	 * prób, a wyzerowanie go dawałoby mu świeży budżet za każde trafienie. Kto zna hasło do konta,
 	 * może wyzerować licznik tego konta, czyli nic nowego nie zyskuje.
 	 *
-	 * @param WP_User  $user      Zalogowane konto.
-	 * @param Settings $settings  Ustawienia odczytane już przez `handle()`.
-	 * @param string   $requested Adres docelowy po kontroli hosta (`''` = brak).
+	 * Zerowane są OBA kubełki per konto: i ten kluczowany ZALOGOWANYM kontem, i ten, który dla tego
+	 * żądania czytała bramka progu. Te dwa nie muszą być tym samym kubełkiem: konta, którego
+	 * `user_login` jest adresem e-mail innym niż `user_email`, `account_for()` NIE odnajduje
+	 * (łańcuch w kształcie adresu szuka się wyłącznie po adresie), więc jego porażki lądują
+	 * w `BUCKET_IDENTITY` — a `wp_signon()` wpuszcza je i tak, przez
+	 * `wp_authenticate_username_password`. Zerowanie samego kubełka konta zostawiałoby takiego
+	 * lekarza po UDANYM logowaniu z licznikiem stojącym pod progiem, czyli dokładnie z tą krzywdą,
+	 * którą to zerowanie ma zdejmować. Rejestracja wtyczki takiego konta nie zrobi (nadaje loginy
+	 * losowe), ale zrobi je ręka w panelu.
+	 *
+	 * @param WP_User  $user          Zalogowane konto.
+	 * @param Settings $settings      Ustawienia odczytane już przez `handle()`.
+	 * @param string   $requested     Adres docelowy po kontroli hosta (`''` = brak).
+	 * @param string   $accountBucket Kubełek progu per konto czytany dla tego żądania (`''` = brak).
 	 */
-	private static function succeed( WP_User $user, Settings $settings, string $requested ): void {
-		RateLimiter::clear( self::BUCKET_USER . $user->ID );
+	private static function succeed( WP_User $user, Settings $settings, string $requested, string $accountBucket ): void {
+		$signedIn = self::BUCKET_USER . $user->ID;
+		RateLimiter::clear( $signedIn );
+		// Kubełek bramki zerujemy osobno tylko wtedy, gdy jest inny niż kubełek zalogowanego konta.
+		if ( '' !== $accountBucket && $accountBucket !== $signedIn ) {
+			RateLimiter::clear( $accountBucket );
+		}
 
 		$fallback = PageUrl::for( $settings->afterLoginPageId );
 
@@ -401,10 +417,14 @@ final class LoginHandler {
 	 * robi to `Redirects::login_url()` dla odnośników rdzenia — jedna konwencja na oba producenty
 	 * tego argumentu.
 	 *
+	 * Wartości domyślnej ten parametr NIE MA świadomie: domyślne `''` byłoby zaproszeniem, żeby
+	 * kolejne miejsce wywołania po cichu zgubiło cel — czyli dokładnie ta usterka, którą przenoszenie
+	 * celu przez odmowę zamknęło.
+	 *
 	 * @param string $code     Wynik (`RESULT_*`) albo kod odmowy bramy.
 	 * @param string $redirect Adres docelowy po kontroli hosta (`''` = brak).
 	 */
-	private static function refuse( string $code, string $redirect = '' ): void {
+	private static function refuse( string $code, string $redirect ): void {
 		$url = add_query_arg( LoginForm::RESULT_ARG, $code, LoginForm::base_url() );
 		if ( '' !== $redirect ) {
 			$url = add_query_arg( LoginForm::REDIRECT, $redirect, $url );
@@ -494,12 +514,18 @@ final class LoginHandler {
 
 	/**
 	 * Adres docelowy z pola formularza po kontroli hosta; `''`, gdy go brak albo wskazuje inny serwis.
+	 *
+	 * Ten odczyt stoi PRZED bramką nonce'a, świadomie: cel ma przeżyć KAŻDĄ odmowę, także odmowę
+	 * z samego nonce'a (patrz `handle()`). Nie jest to obejście bramki, bo wartość niczym nie
+	 * steruje: nie wybiera akcji, nie dotyka bazy i nie trafia do odpowiedzi inaczej niż jako
+	 * argument adresu, a kontrola hosta razem z sanityzacją siedzi w `wp_validate_redirect()`,
+	 * czyli adres do obcego serwisu wychodzi stąd jako `''`.
 	 */
 	private static function requested_redirect(): string {
-		if ( ! isset( $_POST[ LoginForm::REDIRECT ] ) || ! is_string( $_POST[ LoginForm::REDIRECT ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- nonce sprawdzony wyżej.
+		if ( ! isset( $_POST[ LoginForm::REDIRECT ] ) || ! is_string( $_POST[ LoginForm::REDIRECT ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- odczyt PRZED bramką nonce'a, świadomie (patrz opis metody); wartość niczym nie steruje.
 			return '';
 		}
 
-		return wp_validate_redirect( wp_unslash( $_POST[ LoginForm::REDIRECT ] ), '' ); // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sanityzacja i kontrola hosta w wp_validate_redirect().
+		return wp_validate_redirect( wp_unslash( $_POST[ LoginForm::REDIRECT ] ), '' ); // phpcs:ignore WordPress.Security.NonceVerification.Missing, WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- odczyt PRZED bramką nonce'a, świadomie (patrz opis metody); sanityzacja i kontrola hosta w wp_validate_redirect().
 	}
 }
