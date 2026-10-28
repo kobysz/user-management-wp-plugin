@@ -59,16 +59,40 @@ final class DispatchMail {
 
 		$out[ self::SCHEDULE ] = array(
 			'interval' => self::INTERVAL,
-			'display'  => __( 'Co minutę (Portal Users)', 'portal-users' ),
+			'display'  => self::display(),
 		);
 
 		return $out;
 	}
 
 	/**
+	 * Nazwa harmonogramu dla ekranów listujących crona (np. WP Crontrol).
+	 *
+	 * Tłumaczenia wolno żądać dopiero od `init`, a tu wchodzi się także wcześniej: jednorazowy krok
+	 * migracji woła `wp_schedule_event()` na `plugins_loaded`, a ten przez `wp_get_schedules()`
+	 * dojeżdża do `add_schedule()`. `__()` w tej chwili każe rdzeniowi doładować text domain
+	 * „just in time", co od WP 6.7 podnosi `_doing_it_wrong` (sprawdzone w tym środowisku: nota
+	 * faktycznie padała, patrz test drogi aktualizacji w MigrationsTest). Napis zapasowy jest tym
+	 * samym napisem co msgid, bo językiem źródłowym wtyczki jest polski; ekrany, które tę nazwę
+	 * pokazują, biegną długo po `init` i dostają ją przetłumaczoną.
+	 */
+	private static function display(): string {
+		if ( ! did_action( 'init' ) ) {
+			return 'Co minutę (Portal Users)';
+		}
+
+		return __( 'Co minutę (Portal Users)', 'portal-users' );
+	}
+
+	/**
 	 * Zakłada harmonogram cykliczny, o ile jeszcze go nie ma. Pierwszy przebieg od razu: wiersze
 	 * mogą już leżeć w kolejce (aktualizacja wtyczki nie odpala aktywacji), a opóźnienie startu
 	 * trzymałoby w bazie linki, na które ktoś czeka.
+	 *
+	 * WYMAGA, by `register()` już się wykonało: `wp_schedule_event()` oddaje false, gdy nazwy
+	 * harmonogramu nie ma w `wp_get_schedules()`, a `Migrations::run()` zapisuje wersję schematu
+	 * PRZED tym wywołaniem — zbyt wczesne wywołanie byłoby więc cichym no-opem, którego
+	 * `maybe_upgrade()` nigdy nie ponowi. Trzyma to test drogi aktualizacji w MigrationsTest.
 	 */
 	public static function schedule(): void {
 		if ( false === wp_next_scheduled( self::HOOK ) ) {

@@ -156,15 +156,30 @@ final class MigrationsTest extends WP_UnitTestCase {
 		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
 	}
 
-	public function test_run_schedules_the_mail_dispatcher(): void {
-		// Instalacja, która przeszła już migrację tabeli kolejki, nie przechodzi hooka aktywacji:
-		// bez tego kroku cron nigdy by nie powstał, a zakolejkowane maile nie wyszłyby nigdy.
+	public function test_the_upgrade_from_version_three_schedules_the_dispatcher_before_init(): void {
+		// Instalacja, która przeszła migrację tabeli kolejki, nie przechodzi hooka aktywacji: bez tego
+		// kroku cron nigdy by nie powstał, a zakolejkowane maile nie wyszłyby nigdy.
+		//
+		// Test idzie całą drogą aktualizacji i trzyma dwie rzeczy, które ją niosą:
+		// 1. `wp_schedule_event()` oddaje false, gdy harmonogramu nie ma w `wp_get_schedules()`, a
+		//    `run()` zapisuje DB_VERSION PRZED tym wywołaniem. Krok wykonany za wcześnie (przed
+		//    `DispatchMail::register()`) byłby cichym no-opem, wersja i tak by się zapisała,
+		//    `maybe_upgrade()` nigdy by nie ponowił, a kolejka nie miałaby konsumenta.
+		// 2. Na prawdziwym żądaniu ta droga biegnie na `plugins_loaded`, czyli PRZED
+		//    `after_setup_theme` i `init`, na którym I18n ładuje tłumaczenia. Gdyby `__()` w
+		//    `add_schedule()` wymusiło ładowanie „just in time”, rdzeń podniósłby _doing_it_wrong,
+		//    a suita testowa zamienia je w pad.
+		unset( $GLOBALS['wp_actions']['after_setup_theme'], $GLOBALS['wp_actions']['init'] );
+		$this->assertSame( 0, did_action( 'after_setup_theme' ), 'Stan wyjściowy ma odwzorowywać plugins_loaded.' );
 		$this->fresh_install();
+		update_option( 'pusers_db_version', 3 );
 		wp_clear_scheduled_hook( DispatchMail::HOOK );
 
-		Migrations::run();
+		Migrations::maybe_upgrade();
 
-		$this->assertNotFalse( wp_next_scheduled( DispatchMail::HOOK ) );
+		$this->assertSame( 4, (int) get_option( 'pusers_db_version' ) );
+		$this->assertNotFalse( wp_next_scheduled( DispatchMail::HOOK ), 'Krok jednorazowy musi założyć zdarzenie cykliczne.' );
+		$this->assertSame( DispatchMail::SCHEDULE, wp_get_schedule( DispatchMail::HOOK ) );
 	}
 
 	public function test_terms_version_hash_is_unique(): void {

@@ -37,6 +37,13 @@ final class Dispatcher {
 	public const DEFAULT_BATCH = 20;
 
 	/**
+	 * Górna granica paczki, niezależna od filtra. Paczka na całą tabelę skończyłaby się timeoutem
+	 * PHP w jej środku, a to zostawia wiersz w stanie `sending` — czyli w tym jednym stanie, który
+	 * wymaga odzysku i grozi powtórną wysyłką. Lepiej wyjść z przebiegu i wrócić za minutę.
+	 */
+	public const MAX_BATCH = 200;
+
+	/**
 	 * Odzyskuje porzucone wiersze i wysyła paczkę gotowych do wysyłki.
 	 */
 	public static function run(): void {
@@ -53,6 +60,7 @@ final class Dispatcher {
 			// linki potwierdzające. Obca wtyczka nie może tego zrobić po cichu: wracamy na domyślną.
 			$batch = self::DEFAULT_BATCH;
 		}
+		$batch = min( $batch, self::MAX_BATCH );
 
 		foreach ( MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), $batch ) as $row ) {
 			self::dispatch( $row );
@@ -85,8 +93,16 @@ final class Dispatcher {
 		// Nasłuch powodu i opakowanie HTML zakładamy TUŻ PRZED jednym wywołaniem i zdejmujemy
 		// w `finally`. Filtr zostawiony na stałe zmieniłby typ treści mailom innych wtyczek w tym
 		// samym żądaniu, a `wp_mail()` potrafi rzucić wyjątkiem z PHPMailera.
+		//
+		// Priorytet PHP_INT_MAX, nie domyślny: `wp_mail()` czyta typ treści NAJPIERW z nagłówków,
+		// a filtr stosuje po nich, więc własny nagłówek `Content-Type` byłby tu SŁABSZY od filtra,
+		// nie mocniejszy — przegrałby z filtrem obcej wtyczki na dowolnym priorytecie. Wygranie
+		// bezwarunkowe jest bezpieczne, bo filtr żyje przez dokładnie jedno `wp_mail()` na mailu
+		// tej wtyczki, a cena przegranej jest widoczna dla człowieka: lekarz dostaje `<!DOCTYPE html>`
+		// jako tekst. Wtyczka SMTP, która podmienia całe `wp_mail()`, może filtr zignorować —
+		// to już poza naszym zasięgiem.
 		add_action( 'wp_mail_failed', $failed );
-		add_filter( 'wp_mail_content_type', array( self::class, 'html_content_type' ) );
+		add_filter( 'wp_mail_content_type', array( self::class, 'html_content_type' ), PHP_INT_MAX );
 		try {
 			$sent = wp_mail( self::text( $row, 'recipient' ), self::text( $row, 'subject' ), HtmlBody::wrap( self::text( $row, 'body' ) ) );
 		} catch ( \Throwable $e ) {
@@ -95,10 +111,16 @@ final class Dispatcher {
 			$sent   = false;
 			$reason = $e->getMessage();
 		} finally {
-			remove_filter( 'wp_mail_content_type', array( self::class, 'html_content_type' ) );
+			remove_filter( 'wp_mail_content_type', array( self::class, 'html_content_type' ), PHP_INT_MAX );
 			remove_action( 'wp_mail_failed', $failed );
 		}
 
+		// Wyniku zapisów (`mark_sent`, `reschedule`, `mark_failed`) celowo nie sprawdzamy, ale cisza
+		// jest właściwa tylko dla jednej z dwóch przyczyn odmowy. Pierwsza: wiersz należy już do
+		// innego przebiegu — wtedy nie ma tu nic do robienia i tak ma być. Druga: zapis padł na
+		// bazie — wtedy wiersz zostaje w `sending`, a log wysyłek nie odpowiada na pytanie „czy mail
+		// wyszedł", dopóki `recover_stale()` nie zwróci wiersza do kolejki. Rozróżnienia tych dwóch
+		// przypadków repozytorium nie oddaje, więc nie udajemy, że je mamy.
 		if ( $sent ) {
 			MailQueueRepository::mark_sent( $id, gmdate( 'Y-m-d H:i:s' ), $attempt );
 			return;

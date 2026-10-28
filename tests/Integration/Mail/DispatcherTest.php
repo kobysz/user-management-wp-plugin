@@ -15,6 +15,11 @@ use WP_UnitTestCase;
 
 final class DispatcherTest extends WP_UnitTestCase {
 
+	/**
+	 * Limit z zapytania `due()` przechwycony z ostatniego przebiegu.
+	 */
+	private int $dueLimit = 0;
+
 	public function set_up(): void {
 		parent::set_up();
 		// Środowisko testowe ma nadawcę `wordpress@localhost`, a PHPMailer odrzuca adres bez domeny
@@ -70,15 +75,20 @@ final class DispatcherTest extends WP_UnitTestCase {
 	}
 
 	/**
-	 * Sprawdza, że kolejna próba stoi o tyle sekund w przyszłość (z tolerancją na upływ czasu testu).
+	 * Sprawdza, że kolejna próba stoi dokładnie o tyle sekund za momentem startu przebiegu.
 	 *
-	 * @param int                 $delay Oczekiwane opóźnienie w sekundach.
-	 * @param array<string,mixed> $row   Wiersz kolejki.
+	 * Punktem odniesienia jest `$startedAt` zdjęty tuż przed `run()`, nie `time()` z chwili asercji:
+	 * luźny margines przepuściłby politykę, która zjechała z 60 s na 55 s.
+	 *
+	 * @param int                 $delay     Oczekiwane opóźnienie w sekundach.
+	 * @param int                 $startedAt Znacznik czasu zdjęty tuż przed przebiegiem.
+	 * @param array<string,mixed> $row       Wiersz kolejki.
 	 */
-	private function assert_retry_delay( int $delay, array $row ): void {
-		$actual = (int) strtotime( (string) $row['scheduled_at'] . ' UTC' ) - time();
-		$this->assertGreaterThan( $delay - 10, $actual, 'Termin ponowienia: oczekiwano ok. ' . $delay . ' s.' );
-		$this->assertLessThanOrEqual( $delay, $actual, 'Termin ponowienia: oczekiwano ok. ' . $delay . ' s.' );
+	private function assert_retry_delay( int $delay, int $startedAt, array $row ): void {
+		$actual = (int) strtotime( (string) $row['scheduled_at'] . ' UTC' );
+		$this->assertGreaterThanOrEqual( $startedAt + $delay, $actual, 'Termin ponowienia: oczekiwano ' . $delay . ' s.' );
+		// Zapas dwóch sekund tylko na upływ czasu MIĘDZY zdjęciem znacznika a zapisem wiersza.
+		$this->assertLessThanOrEqual( $startedAt + $delay + 2, $actual, 'Termin ponowienia: oczekiwano ' . $delay . ' s.' );
 	}
 
 	public function test_a_due_row_is_sent_and_marked(): void {
@@ -92,24 +102,63 @@ final class DispatcherTest extends WP_UnitTestCase {
 		$this->assertSame( 1, (int) $row['attempts'] );
 	}
 
+	public function test_a_row_abandoned_in_sending_is_recovered_and_sent(): void {
+		// Przebieg ubity timeoutem PHP zostawia wiersz w `sending`, a sam z niego nie wyjdzie: do
+		// kolejki wraca go dopiero odzysk na początku przebiegu. Bez tego kroku mail nie wyszedłby
+		// nigdy, a lekarz czekałby na link, który leży w bazie.
+		$id = $this->queue( 'd-stale' );
+		$this->assertSame( 1, MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS ) ) );
+
+		Dispatcher::run();
+
+		$row = $this->row( $id );
+		$this->assertSame( QueueStatus::Sent->value, $row['status'], 'Mail nie wyszedł; powód z logu: ' . (string) $row['last_error'] );
+		$this->assertSame( 2, (int) $row['attempts'], 'Odzyskany wiersz jest zajmowany ponownie, więc licznik prób rośnie.' );
+	}
+
+	public function test_a_row_another_run_has_just_claimed_survives_the_pass(): void {
+		// Odzysk celuje WYŁĄCZNIE w wiersze zajęte dawniej niż STALE_AFTER. Gdyby próg szedł
+		// w drugą stronę, przebieg oddawałby do kolejki wiersze, które żywy przebieg trzyma właśnie
+		// teraz — i ten sam link potwierdzający poszedłby do lekarza dwa razy.
+		$sends = 0;
+		add_filter(
+			'pre_wp_mail',
+			static function () use ( &$sends ) {
+				++$sends;
+				return true;
+			}
+		);
+		$id = $this->queue( 'd-fresh-claim' );
+		$this->assertSame( 1, MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
+
+		Dispatcher::run();
+
+		$row = $this->row( $id );
+		$this->assertSame( 0, $sends, 'Wiersz trzymany przez inny przebieg nie może zostać wysłany.' );
+		$this->assertSame( QueueStatus::Sending->value, $row['status'], 'Świeże zajęcie musi przeżyć przebieg.' );
+		$this->assertSame( 1, (int) $row['attempts'] );
+	}
+
 	public function test_a_failing_send_is_rescheduled_then_fails_with_a_readable_reason(): void {
 		// Lekarz nie dostał maila, bo SMTP nie odpowiada. Odpowiedź na „czy wyszedł" musi być w logu.
 		add_filter( 'pre_wp_mail', static fn () => false );
 		$id = $this->queue( 'd-retry' );
 
+		$startedAt = time();
 		Dispatcher::run();
 		$row = $this->row( $id );
 		$this->assertSame( QueueStatus::Queued->value, $row['status'], 'Próba 1 => ponowienie.' );
 		$this->assertSame( 1, (int) $row['attempts'] );
 		$this->assertNotSame( '', (string) $row['last_error'], 'Powód musi być w logu także wtedy, gdy transport go nie podał.' );
-		$this->assert_retry_delay( 60, $row );
+		$this->assert_retry_delay( 60, $startedAt, $row );
 
 		$this->make_due( $id );
+		$startedAt = time();
 		Dispatcher::run();
 		$row = $this->row( $id );
 		$this->assertSame( QueueStatus::Queued->value, $row['status'], 'Próba 2 => ponowienie.' );
 		$this->assertSame( 2, (int) $row['attempts'] );
-		$this->assert_retry_delay( 300, $row );
+		$this->assert_retry_delay( 300, $startedAt, $row );
 
 		$this->make_due( $id );
 		Dispatcher::run();
@@ -201,6 +250,23 @@ final class DispatcherTest extends WP_UnitTestCase {
 		$this->assertSame( 'text/plain', apply_filters( 'wp_mail_content_type', 'text/plain' ) );
 	}
 
+	public function test_the_failure_listener_is_removed_even_when_the_send_throws(): void {
+		// Druga połowa pary ze `finally`. Nasłuch zostawiony po wyjątku zapisywałby powód cudzej
+		// porażki do domknięcia zakończonej już próby, którego nikt nie czyta.
+		add_filter(
+			'pre_wp_mail',
+			static function () {
+				throw new \RuntimeException( 'nie ma gniazda' );
+			}
+		);
+		$this->queue( 'd-listener-throw' );
+		$this->assertFalse( has_action( 'wp_mail_failed' ), 'Stan wyjściowy: nikt nie nasłuchuje.' );
+
+		Dispatcher::run();
+
+		$this->assertFalse( has_action( 'wp_mail_failed' ) );
+	}
+
 	public function test_a_row_already_claimed_by_another_run_is_skipped(): void {
 		// Między due() a claim() wiersz zajmuje drugi przebieg, więc nasz warunkowy UPDATE nie trafia
 		// w nic. Lekarz nie może dostać dwóch linków potwierdzających: bez wysyłki, bez zapisu.
@@ -236,6 +302,8 @@ final class DispatcherTest extends WP_UnitTestCase {
 
 	public function test_the_body_in_the_queue_stays_plain_text(): void {
 		// Opakowanie HTML zakłada dispatcher przy wysyłce; log wysyłek ma pokazywać czytelny tekst.
+		// Przedmiotem testu jest zapisana treść, nie transport: zaślepka zamiast prawdziwej wysyłki.
+		add_filter( 'pre_wp_mail', static fn () => true );
 		$id = $this->queue( 'd-plain', "Linia 1\nLinia 2 & reszta" );
 
 		Dispatcher::run();
@@ -245,6 +313,8 @@ final class DispatcherTest extends WP_UnitTestCase {
 	}
 
 	public function test_the_batch_size_filter_caps_the_run_and_ignores_a_useless_value(): void {
+		// Przedmiotem testu jest rozmiar paczki, nie transport: zaślepka zamiast prawdziwej wysyłki.
+		add_filter( 'pre_wp_mail', static fn () => true );
 		$first  = $this->queue( 'd-batch-1' );
 		$second = $this->queue( 'd-batch-2' );
 		add_filter( 'pusers_mail_batch_size', static fn (): int => 1 );
@@ -261,5 +331,30 @@ final class DispatcherTest extends WP_UnitTestCase {
 		Dispatcher::run();
 
 		$this->assertSame( QueueStatus::Sent->value, $this->row( $second )['status'] );
+	}
+
+	public function test_the_batch_size_filter_cannot_raise_the_limit_above_the_ceiling(): void {
+		// Paczka na całą tabelę skończyłaby się timeoutem PHP w jej środku, a to zostawia wiersz
+		// w stanie `sending` — jedynym, który wymaga odzysku i grozi powtórną wysyłką.
+		add_filter( 'pusers_mail_batch_size', static fn (): int => 100000 );
+		add_filter( 'query', array( $this, 'capture_due_limit' ) );
+
+		Dispatcher::run();
+
+		remove_filter( 'query', array( $this, 'capture_due_limit' ) );
+		$this->assertSame( Dispatcher::MAX_BATCH, $this->dueLimit );
+	}
+
+	/**
+	 * Filtr zapytań: zapamiętuje LIMIT z zapytania o wiersze gotowe do wysyłki.
+	 *
+	 * @param string $query Zapytanie SQL.
+	 */
+	public function capture_due_limit( $query ): string {
+		if ( 1 === preg_match( '/ORDER BY id ASC LIMIT (\d+)/', (string) $query, $m ) ) {
+			$this->dueLimit = (int) $m[1];
+		}
+
+		return (string) $query;
 	}
 }
