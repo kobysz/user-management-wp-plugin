@@ -16,6 +16,7 @@ use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Front\Confirmation;
+use PortalUsers\Front\LoginGateway;
 use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
@@ -70,6 +71,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'password setup' => array( PasswordSetup::class ),
 			'terms binding' => array( TermsBinding::class ),
 			'purge unconfirmed' => array( PurgeUnconfirmed::class ),
+			'login gateway' => array( LoginGateway::class ),
 		);
 	}
 
@@ -166,6 +168,16 @@ final class WiringTest extends WP_UnitTestCase {
 		PasswordSetup::register();
 		$this->assertNotFalse( has_action( 'admin_post_nopriv_' . PasswordSetup::ACTION, array( PasswordSetup::class, 'handle' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_' . PasswordSetup::ACTION, array( PasswordSetup::class, 'handle' ) ) );
+	}
+
+	public function test_login_gateway_register_hooks_the_gate_behind_the_core_password_check(): void {
+		// Rdzeń trzyma swoje weryfikatory hasła na priorytecie 20 (wp-includes/default-filters.php),
+		// więc brama MUSI stać za nimi. Na filtrze `wp_authenticate_user` dostawałaby konto jeszcze
+		// PRZED `wp_check_password()` i sama zdradzałaby stan konta temu, kto zna sam adres.
+		LoginGateway::register();
+		$this->assertSame( LoginGateway::PRIORITY, has_filter( 'authenticate', array( LoginGateway::class, 'gate' ) ) );
+		$this->assertGreaterThan( 20, LoginGateway::PRIORITY );
+		$this->assertFalse( has_filter( 'wp_authenticate_user', array( LoginGateway::class, 'gate' ) ) );
 	}
 
 	public function test_the_resend_form_posts_to_the_registered_action(): void {
