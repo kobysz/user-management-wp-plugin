@@ -378,8 +378,15 @@ final class PasswordReset {
 		// 6. Akcja: rdzeń generuje klucz, zapisuje go i wysyła maila (treść podmieniają filtry tej
 		// klasy, a samą wysyłkę przejmuje kolejka — patrz `CoreCapture`). Jego `WP_Error`
 		// POCHŁANIAMY — zwłaszcza `invalid_email` dla adresu, którego rdzeń nie zna (patrz reguła 1).
-		// Kod błędu zostaje w logu, więc awaria wysyłki jest widoczna administratorowi, choć nie
+		// Kod błędu zostaje w logu, więc odmowa rdzenia jest widoczna administratorowi, choć nie
 		// jest widoczna pytającemu.
+		//
+		// O AWARII WYSYŁKI ten kod już nie mówi i mówić nie może: odkąd mail idzie przez kolejkę,
+		// `retrieve_password()` nie dochodzi do transportu poczty, więc nie zna
+		// `retrieve_password_email_failure` i oddaje `true` także wtedy, gdy wiersz w kolejce nie
+		// powstał. Awarię zgłasza wiersz `CoreCapture::LOG_ACTION_NOT_QUEUED`, pisany tam, gdzie
+		// odmowa jest widoczna — a od Planu 5 na pytanie „czy ten mail wyszedł" odpowiada log
+		// wysyłek, nie ten wiersz.
 		//
 		// Rozbrojenie w `finally`, bo uzbraja je filtr treści, a między filtrem i `wp_mail()` rdzeń
 		// ma własne wyjścia (pusta treść po cudzym filtrze, wyjątek z obcego kodu). Uzbrojenie,
@@ -587,16 +594,21 @@ final class PasswordReset {
 	 * wywołanie uboższe o argument (wtyczka obca) dostaje temat ze zmiennymi samego portalu, a nie
 	 * angielski temat rdzenia nad naszą polską treścią.
 	 *
-	 * @param mixed  $title     Temat ustalony przez rdzeń.
-	 * @param string $userLogin Login konta, do którego klucz należy.
+	 * Argument loginu jest NULLOWALNY i rzutowany: obca wtyczka potrafi zawołać
+	 * `apply_filters( 'retrieve_password_title', $temat, null )`, a typ `string` zamieniał takie
+	 * wywołanie w `TypeError`, czyli w błąd 500 na ścieżce, która miała tylko przepuścić wartość
+	 * dalej. To ta sama ostrożność, co wartości domyślne w `mail_message()`.
+	 *
+	 * @param mixed       $title     Temat ustalony przez rdzeń.
+	 * @param string|null $userLogin Login konta, do którego klucz należy.
 	 * @return mixed Nasz temat albo wejście nietknięte.
 	 */
-	public static function mail_title( mixed $title, string $userLogin = '' ): mixed {
+	public static function mail_title( mixed $title, ?string $userLogin = null ): mixed {
 		if ( '' === self::link_page() ) {
 			return $title;
 		}
 
-		$user    = self::account_for( $userLogin );
+		$user    = self::account_for( (string) $userLogin );
 		$subject = self::render_field(
 			MailTemplateRepository::get( MailKind::PasswordReset )->subject,
 			null === $user ? 0 : $user->ID,
@@ -619,11 +631,12 @@ final class PasswordReset {
 	 * rdzenia (`wp-login.php?action=rp`) działa, bo `wp-login.php` zostaje świadomie otwarte. To ta
 	 * sama reguła, którą po swojej stronie trzyma `Redirects::lostpassword_url()`.
 	 *
-	 * Argumenty 2 i 3 mają wartości domyślne, a bez któregokolwiek z nich treść wraca NIETKNIĘTA:
-	 * obca wtyczka potrafi zawołać `apply_filters( 'retrieve_password_message', $tresc )` z jednym
-	 * argumentem, a wymagane argumenty zamieniały takie wywołanie w `ArgumentCountError`, czyli
-	 * w błąd 500 na ścieżce, która miała tylko przepuścić treść dalej. To ta sama ostrożność, co
-	 * typ `mixed` przy pierwszym argumencie.
+	 * Argumenty 2 i 3 mają wartości domyślne, są NULLOWALNE i rzutowane, a bez któregokolwiek z nich
+	 * treść wraca NIETKNIĘTA: obca wtyczka potrafi zawołać
+	 * `apply_filters( 'retrieve_password_message', $tresc )` z jednym argumentem albo podstawić pod
+	 * nie `null`, a argumenty wymagane dawały `ArgumentCountError`, zaś typ `string` — `TypeError`,
+	 * czyli w obu razach błąd 500 na ścieżce, która miała tylko przepuścić treść dalej. To ta sama
+	 * ostrożność, co typ `mixed` przy pierwszym argumencie.
 	 *
 	 * Treść bierze SZABLON rodzaju `MailKind::PasswordReset` (edytowalny w panelu jak każdy inny
 	 * mail wtyczki), a odnośnik jedzie do niego zmienną `{link_hasla}`. KONTO ustala login z
@@ -635,16 +648,25 @@ final class PasswordReset {
 	 * i przy pustej treści KOŃCZY z wynikiem „wysłano", nie wysyłając nic: żądanie raportowałoby
 	 * sukces, a lekarz nie dostałby maila. Lepsza treść rdzenia niż żadna.
 	 *
+	 * Tej bramki nie da się rozciągnąć na CAŁĄ drogę wiadomości i trzeba o tym wiedzieć: filtr
+	 * `retrieve_password_notification_email` jest WYWOŁYWANY PO sprawdzeniu `! $message` i potrafi
+	 * wyczyścić treść już za nim, a rdzeń woła wtedy `wp_mail()` mimo wszystko. Przechwytywanie
+	 * takiej wiadomości nie dotknie (treść nie będzie już tą, którą uzbrojenie wyrenderowało), więc
+	 * wyśle ją rdzeń — pustą — i to na odpowiedzialność tej obcej wtyczki, nie naszą.
+	 *
 	 * TA METODA UZBRAJA PRZECHWYTYWANIE wysyłki (patrz `CoreCapture`), bo jest jedynym miejscem,
 	 * które zna klucz, a klucz jest tym, co odróżnia dwa żądania tego samego konta: rdzeń generuje
-	 * go za każdym razem nowy, więc każde żądanie dostaje własny wiersz w kolejce.
+	 * go za każdym razem nowy, więc każde żądanie dostaje własny wiersz w kolejce. Uzbrojenie niesie
+	 * też SAMĄ TREŚĆ, bo zakres adresem nie wystarcza (patrz `CoreCapture`).
 	 *
-	 * @param mixed  $message   Treść ustalona przez rdzeń.
-	 * @param string $key       Klucz wygenerowany przez rdzeń.
-	 * @param string $userLogin Login konta, do którego klucz należy.
+	 * @param mixed       $message   Treść ustalona przez rdzeń.
+	 * @param string|null $key       Klucz wygenerowany przez rdzeń.
+	 * @param string|null $userLogin Login konta, do którego klucz należy.
 	 * @return mixed Nasza treść albo wejście nietknięte.
 	 */
-	public static function mail_message( mixed $message, string $key = '', string $userLogin = '' ): mixed {
+	public static function mail_message( mixed $message, ?string $key = null, ?string $userLogin = null ): mixed {
+		$key       = (string) $key;
+		$userLogin = (string) $userLogin;
 		if ( '' === $key || '' === $userLogin ) {
 			return $message;
 		}
@@ -673,7 +695,8 @@ final class PasswordReset {
 			MailKind::PasswordReset,
 			$user->ID,
 			(string) $user->user_email,
-			MailKind::PasswordReset->value . ':' . $user->ID . ':' . substr( wp_hash( $key ), 0, 16 )
+			MailKind::PasswordReset->value . ':' . $user->ID . ':' . substr( wp_hash( $key ), 0, 16 ),
+			$body
 		);
 
 		return $body;

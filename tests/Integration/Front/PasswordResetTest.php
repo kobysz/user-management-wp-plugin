@@ -811,6 +811,16 @@ final class PasswordResetTest extends WP_UnitTestCase {
 
 		$this->assertSame( $core, apply_filters( 'retrieve_password_message', $core ) );
 		$this->assertSame( $core, apply_filters( 'retrieve_password_message', $core, 'klucz' ) );
+		// To samo dotyczy argumentów podstawionych jako `null`: typ `string` dawał tu `TypeError`,
+		// czyli znowu błąd 500 na ścieżce, która miała tylko przepuścić wartość dalej.
+		$this->assertSame( $core, apply_filters( 'retrieve_password_message', $core, null, null ) );
+		$this->assertSame( $core, apply_filters( 'retrieve_password_message', $core, 'klucz', null ) );
+
+		// Filtr tematu znosi to samo. Temat ma OSOBNĄ regułę (nie ma bramki na brak loginu), więc
+		// przy `null` dalej podmienia temat — ale nie wolno mu się wywrócić.
+		$coreTitle = 'Temat rdzenia 123';
+		$this->assertNotSame( $coreTitle, apply_filters( 'retrieve_password_title', $coreTitle, null ), 'Filtr tematu nie zniósł pustego loginu.' );
+
 		// Wywołanie rdzenia (trzy argumenty) dalej podmienia treść: ustępstwo dotyczy TYLKO
 		// wejścia, którego nie rozumiemy.
 		$account = $this->account();

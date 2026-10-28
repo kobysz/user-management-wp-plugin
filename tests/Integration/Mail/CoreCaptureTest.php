@@ -18,6 +18,7 @@ use PortalUsers\Mail\CoreCapture;
 use PortalUsers\Mail\MailQueue;
 use PortalUsers\Persistence\MailQueueRepository;
 use PortalUsers\Persistence\MailTemplateRepository;
+use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Plugin;
 use WP_UnitTestCase;
@@ -119,6 +120,27 @@ final class CoreCaptureTest extends WP_UnitTestCase {
 		return MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 20 );
 	}
 
+	/**
+	 * @return list<object> Wiersze logu zdarzeń, od najstarszego.
+	 */
+	private function logRows(): array {
+		global $wpdb;
+		$table = Migrations::table( 'event_log' );
+		return (array) $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC" );
+	}
+
+	/**
+	 * Zawartość kontekstu wiersza logu.
+	 *
+	 * @param object $row Wiersz logu.
+	 * @return array<string, mixed>
+	 */
+	private function contextOf( object $row ): array {
+		$context = json_decode( (string) ( $row->context ?? '' ), true );
+
+		return is_array( $context ) ? $context : array();
+	}
+
 	public function test_the_recovery_mail_lands_in_the_queue_with_the_template_content(): void {
 		$account = $this->account();
 		MailTemplateRepository::save( MailKind::PasswordReset, new MailTemplate( 'Hasło dla {login}', 'Otwórz: {link_hasla}' ) );
@@ -155,7 +177,7 @@ final class CoreCaptureTest extends WP_UnitTestCase {
 	public function test_a_foreign_plugin_mail_sent_while_armed_is_not_captured(): void {
 		// Przechwycenie zabrałoby cudzej wtyczce wysyłkę i zapisało jej treść w naszym logu wysyłek.
 		$account = $this->account();
-		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], 'klucz' );
+		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], 'klucz', 'Treść maila.' );
 
 		$this->assertNull(
 			CoreCapture::capture(
@@ -169,6 +191,60 @@ final class CoreCaptureTest extends WP_UnitTestCase {
 			'Wiadomość do innego adresu musi wyjść z filtra nietknięta.'
 		);
 		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ), 'Cudza wiadomość nie może trafić do naszej kolejki.' );
+	}
+
+	public function test_a_mail_to_the_armed_address_with_another_message_is_not_captured(): void {
+		// Zakres ADRESEM nie wystarcza: uzbrojenie, które przeżyło (ścieżka `wp-login.php` nie ma
+		// naszego `finally`), zabrałoby następną wiadomość WordPressa na ten sam adres — a przy
+		// kluczu odporności już obecnym w bazie PORZUCIŁOby ją, oddając rdzeniowi „wysłano".
+		$account = $this->account();
+		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], 'klucz', 'Treść maila.' );
+
+		$this->assertNull(
+			CoreCapture::capture(
+				null,
+				array(
+					'to'      => $account['email'],
+					'subject' => 'Zupełnie inny mail',
+					'message' => 'Zupełnie inna treść.',
+				)
+			),
+			'Przechwytywanie musi być zakresowane wiadomością, nie samym adresem.'
+		);
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+		$this->assertSame( array(), $this->logRows(), 'Wiadomości, której nie dotykamy, nie wolno logować.' );
+	}
+
+	public function test_a_mail_the_queue_refuses_leaves_a_row_in_the_log(): void {
+		// Odmowa kolejki znaczy mail PORZUCONY, a odpowiedź dla człowieka musi zostać ta sama
+		// (inaczej formularz stałby się czytnikiem „czy ten adres ma konto"). Wiersz w logu jest
+		// więc jedynym śladem: rdzeń zgłaszał awarię wysyłki `retrieve_password_email_failure`,
+		// a przejęta wysyłka zwraca `true` i tej drogi już nie ma.
+		$account = $this->account();
+		$atts    = array(
+			'to'      => $account['email'],
+			'subject' => 'Ustawienie nowego hasła',
+			'message' => 'Treść maila.',
+		);
+		$dedupe  = 'reset:' . $account['id'];
+
+		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], $dedupe, 'Treść maila.' );
+		$this->assertTrue( CoreCapture::capture( null, $atts ) );
+		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
+		$this->assertSame( array(), $this->logRows(), 'Udane zakolejkowanie nie dopisuje wiersza do logu zdarzeń.' );
+
+		// TEN SAM klucz odporności: kolejka wiersza nie przyjmie.
+		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], $dedupe, 'Treść maila.' );
+		$this->assertTrue( CoreCapture::capture( null, $atts ), 'Odmowa kolejki nie może zmienić wyniku dla rdzenia.' );
+
+		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ), 'Odmowa nie może dołożyć wiersza do kolejki.' );
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows, 'Porzucony mail musi zostawić dokładnie jeden wiersz w logu.' );
+		$this->assertSame( CoreCapture::LOG_ACTION_NOT_QUEUED, $rows[0]->action );
+		$this->assertSame( $account['id'], (int) $rows[0]->subject_user_id, 'Wiersz nie wskazuje konta, którego mail przepadł.' );
+		$this->assertSame( MailKind::PasswordReset->value, $this->contextOf( $rows[0] )['kind'] ?? '' );
+		// Adresu jawnego w logu NIE MA NIGDZIE (ta sama higiena, co w logu żądań o link).
+		$this->assertStringNotContainsString( $account['email'], (string) $rows[0]->context );
 	}
 
 	public function test_nothing_is_captured_when_not_armed(): void {
@@ -190,7 +266,7 @@ final class CoreCaptureTest extends WP_UnitTestCase {
 			'subject' => 'Ustawienie nowego hasła',
 			'message' => 'Treść maila.',
 		);
-		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], 'reset:' . $account['id'] );
+		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], 'reset:' . $account['id'], 'Treść maila.' );
 
 		$this->assertTrue( CoreCapture::capture( null, $atts ), 'Pierwsza wiadomość ma zostać przechwycona.' );
 		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
@@ -200,21 +276,36 @@ final class CoreCaptureTest extends WP_UnitTestCase {
 	}
 
 	public function test_the_core_password_change_notification_is_left_alone(): void {
-		// Specyfikacja każe zostawić ten mail standardowym, WordPressowym. Idzie poza uzbrojeniem,
-		// więc nie jest ani przechwytywany, ani logowany — a uzbrojenie na inne konto go nie tyka,
-		// bo jedzie na adres administratora, nie na adres uzbrojonego konta.
+		// Specyfikacja każe zostawić ten mail standardowym, WordPressowym — to jedyna wiadomość,
+		// którą ten mechanizm mógłby połknąć przez przypadek, bo powstaje na tej samej ścieżce.
 		$account = $this->account();
+		$admin   = (string) get_option( 'admin_email' );
+		$this->assertNotSame( strtolower( $admin ), strtolower( $account['email'] ), 'Test wymaga konta INNEGO niż administrator.' );
 
+		// 1. Poza uzbrojeniem: ani przechwycenia, ani wiersza w logu wysyłek.
 		wp_password_change_notification( get_userdata( $account['id'] ) );
 
 		$this->assertCount( 1, $this->mails, 'Powiadomienie o zmianie hasła musi dojść do transportu poczty.' );
 		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ), 'Powiadomienia o zmianie hasła nie wolno zapisać w kolejce.' );
 
-		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], 'reset:' . $account['id'] );
+		// 2. Uzbrojenie na adres KONTA: powiadomienie jedzie na adres administratora, więc odcina
+		// je zapora odbiorcy.
+		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $account['email'], 'reset:' . $account['id'], 'Treść maila odzyskiwania.' );
 		wp_password_change_notification( get_userdata( $account['id'] ) );
 
-		$this->assertCount( 2, $this->mails, 'Uzbrojenie na inne konto nie może zabrać tego powiadomienia.' );
+		$this->assertCount( 2, $this->mails, 'Uzbrojenie na adres konta nie może zabrać tego powiadomienia.' );
 		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+
+		// 3. Uzbrojenie na adres ADMINISTRATORA, czyli DOKŁADNIE na adres, na który to powiadomienie
+		// idzie. Tu zapora odbiorcy już nie pomaga i broni sama zapora treści: powiadomienie nie ma
+		// treści, którą uzbrojenie wyrenderowało. To jest właściwy dowód, że ten mail zostaje
+		// rdzeniowy — zakres adresem by go połknął.
+		CoreCapture::arm( MailKind::PasswordReset, $account['id'], $admin, 'reset:' . $account['id'] . ':admin', 'Treść maila odzyskiwania.' );
+		wp_password_change_notification( get_userdata( $account['id'] ) );
+
+		$this->assertCount( 3, $this->mails, 'Powiadomienie o zmianie hasła zostało połknięte przez przechwytywanie.' );
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+		$this->assertSame( array(), $this->logRows(), 'Rdzeniowego powiadomienia nie wolno nigdzie logować.' );
 	}
 
 	public function test_the_capture_is_registered_without_acf(): void {
