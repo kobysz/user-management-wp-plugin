@@ -22,6 +22,11 @@ final class OptionStore {
 	public const OPTION_MATRIX      = 'pusers_field_matrix';
 
 	/**
+	 * Nadpisania szablonów maili wpisane przez admina, kluczowane `MailKind::value`.
+	 */
+	public const OPTION_MAIL_TEMPLATES = 'pusers_mail_templates';
+
+	/**
 	 * Znaczniki czasu throttlingu wpisów do logu zdarzeń. Nie są tablicami, więc nie przechodzą
 	 * przez `read()` ani `write()` — ich właściciele czytają i zapisują je sami, zawsze
 	 * z `autoload = false`. Spis `all()` musi je jednak znać, bo inaczej odinstalowanie
@@ -72,6 +77,7 @@ final class OptionStore {
 			self::OPTION_SETTINGS,
 			self::OPTION_PROFESSIONS,
 			self::OPTION_MATRIX,
+			self::OPTION_MAIL_TEMPLATES,
 			self::OPTION_ROLE_REFUSAL_AT,
 			self::OPTION_LIMITER_FAILURE_AT,
 			self::OPTION_PURGE_SKIP_AT,
