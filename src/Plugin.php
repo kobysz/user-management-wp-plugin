@@ -43,8 +43,8 @@ final class Plugin {
 	private static ?string $version = null;
 
 	/**
-	 * Zapamiętuje plik główny i podpina hooki. Komunikat o zależnościach oraz
-	 * tłumaczenia działają zawsze; reszta wtyczki tylko przy spełnionych zależnościach.
+	 * Zapamiętuje plik główny i podpina hooki. Komunikat o zależnościach, tłumaczenia oraz
+	 * brama logowania działają zawsze; reszta wtyczki tylko przy spełnionych zależnościach.
 	 *
 	 * @param string $pluginFile Ścieżka pliku głównego wtyczki.
 	 */
@@ -54,6 +54,14 @@ final class Plugin {
 
 		Dependencies::register();
 		I18n::register();
+
+		// Brama logowania NIE jedzie przez `pusers_register_features`: ten hook odpala się tylko
+		// przy spełnionych zależnościach, więc wyłączone (albo zepsute aktualizacją) ACF Pro
+		// zdejmowałoby zamek z drzwi wejściowych i każde konto `email_unconfirmed`, `pending`,
+		// `rejected` oraz z nierozpoznanym stanem logowałoby się normalnie. „Wtyczka bezczynna,
+		// nie fatal" jest dobrą polityką dla ekranów panelu i złą dla bramy. Brama nie potrzebuje
+		// ACF do niczego: czyta metadaną stanu i pisze do logu zdarzeń.
+		LoginGateway::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.
@@ -69,7 +77,6 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( Confirmation::class, 'register' ) );
 		add_action( 'pusers_register_features', array( PasswordSetup::class, 'register' ) );
 		add_action( 'pusers_register_features', array( TermsBinding::class, 'register' ) );
-		add_action( 'pusers_register_features', array( LoginGateway::class, 'register' ) );
 		add_action( 'pusers_register_features', array( PurgeUnconfirmed::class, 'register' ) );
 	}
 

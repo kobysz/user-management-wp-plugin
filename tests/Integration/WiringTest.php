@@ -14,6 +14,7 @@ use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Cron\PurgeUnconfirmed;
+use PortalUsers\Dependencies;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\LoginGateway;
@@ -71,7 +72,6 @@ final class WiringTest extends WP_UnitTestCase {
 			'password setup' => array( PasswordSetup::class ),
 			'terms binding' => array( TermsBinding::class ),
 			'purge unconfirmed' => array( PurgeUnconfirmed::class ),
-			'login gateway' => array( LoginGateway::class ),
 		);
 	}
 
@@ -178,6 +178,34 @@ final class WiringTest extends WP_UnitTestCase {
 		$this->assertSame( LoginGateway::PRIORITY, has_filter( 'authenticate', array( LoginGateway::class, 'gate' ) ) );
 		$this->assertGreaterThan( 20, LoginGateway::PRIORITY );
 		$this->assertFalse( has_filter( 'wp_authenticate_user', array( LoginGateway::class, 'gate' ) ) );
+
+		// Druga droga wejścia: REST. Rdzeń trzyma tam swoje weryfikatory na 90 i 100
+		// (`rest_application_password_check_errors`, `rest_cookie_check_errors`), więc brama
+		// musi stać za nimi, czyli wyżej niż 100.
+		$this->assertSame( LoginGateway::REST_PRIORITY, has_filter( 'rest_authentication_errors', array( LoginGateway::class, 'gate_rest' ) ) );
+		$this->assertGreaterThan( 100, LoginGateway::REST_PRIORITY );
+	}
+
+	public function test_boot_registers_the_login_gate_even_when_acf_pro_is_missing(): void {
+		// Zamek na drzwiach wejściowych nie może zależeć od wtyczki od pól. Gdyby brama jechała
+		// przez `pusers_register_features` (hook odpala się tylko przy spełnionych zależnościach),
+		// wyłączone albo zepsute aktualizacją ACF Pro wpuszczałoby każde konto `email_unconfirmed`,
+		// `pending`, `rejected` i z nierozpoznanym stanem.
+		add_filter( 'pusers_acf_pro_loaded', '__return_false' );
+		remove_filter( 'authenticate', array( LoginGateway::class, 'gate' ), LoginGateway::PRIORITY );
+		remove_filter( 'rest_authentication_errors', array( LoginGateway::class, 'gate_rest' ), LoginGateway::REST_PRIORITY );
+		$this->assertFalse( Dependencies::satisfied(), 'Test ma działać przy NIEspełnionych zależnościach.' );
+		$this->assertFalse( has_filter( 'authenticate', array( LoginGateway::class, 'gate' ) ), 'Brama miała być zdjęta przed próbą.' );
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		$this->assertFalse(
+			has_action( 'pusers_register_features', array( LoginGateway::class, 'register' ) ),
+			'Brama nie może jechać przez hook zależny od ACF Pro.'
+		);
+		$this->assertSame( LoginGateway::PRIORITY, has_filter( 'authenticate', array( LoginGateway::class, 'gate' ) ) );
+		$this->assertSame( LoginGateway::REST_PRIORITY, has_filter( 'rest_authentication_errors', array( LoginGateway::class, 'gate_rest' ) ) );
 	}
 
 	public function test_the_resend_form_posts_to_the_registered_action(): void {

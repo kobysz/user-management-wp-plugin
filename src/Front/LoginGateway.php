@@ -33,8 +33,25 @@ use WP_User;
  * każdego, kto zna sam adres — i brama sama stawałaby się sondą ujawniającą, że adres jest zajęty.
  * Na priorytecie 30 do bramy nie dochodzi nikt, kto nie zna hasła, więc każdy stan może mieć
  * WŁASNY, PRAWDZIWY komunikat: człowiek wie, czy ma szukać maila, czy czekać na decyzję redakcji.
- * Priorytet 30 stoi też za hasłem aplikacyjnym, więc konto bez stanu `approved` nie wejdzie także
- * przez REST.
+ *
+ * Filtr `authenticate` NIE wystarcza jednak na REST. `wp_validate_application_password()` siedzi
+ * na `determine_current_user` (priorytet 20, `default-filters.php:522`) i woła
+ * `wp_authenticate_application_password()` WPROST, ze swojego ciała (`user.php:521-536`) —
+ * `apply_filters( 'authenticate' )` nie odpala się tam ani razu. `wp_authenticate()` wołają tylko
+ * `wp_signon()` (`user.php:109`) i XML-RPC (`class-wp-xmlrpc-server.php:308`). Brama na
+ * `authenticate` zamyka więc formularz logowania i XML-RPC, a REST po haśle aplikacyjnym
+ * zostawiałaby otwarty — a hasło aplikacyjne jest poświadczeniem TRWAŁYM: konto zatwierdzone,
+ * które je sobie wystawiło, a potem zostało odrzucone (albo dostało uszkodzoną metadaną stanu),
+ * czytałoby REST bez końca, bo nic mu nie wygasa.
+ *
+ * Dlatego ta sama decyzja jedzie drugi raz, na filtrze `rest_authentication_errors`, na
+ * priorytecie 110, czyli za weryfikatorami rdzenia (`rest_application_password_check_errors`
+ * na 90 i `rest_cookie_check_errors` na 100 — `default-filters.php:345-346`). Reguła obejmuje
+ * KAŻDE uwierzytelnione żądanie REST, nie tylko ścieżkę hasła aplikacyjnego: zawężenie do
+ * `rest_get_authenticated_app_password()` zostawiałoby REST po ciasteczku otwarty dla tego
+ * samego niezatwierdzonego konta. Żądanie anonimowe brama przepuszcza bez zmian — tam o dostępie
+ * decydują uprawnienia trasy, nie stan konta. Obie drogi liczą jedną decyzją
+ * (`refusal_code()`) i mają jedną mapę komunikatów; drugiej kopii reguły tu nie ma.
  *
  * Konto BEZ stanu brama wpuszcza (tak rozstrzyga `LoginGate::decide( null )`): administrator
  * dodany ręcznie w panelu stanu nie ma, a odmowa zamknęłaby właściciela portalu poza portalem.
@@ -51,6 +68,12 @@ final class LoginGateway {
 	public const PRIORITY = 30;
 
 	/**
+	 * Priorytet filtra `rest_authentication_errors`. Rdzeń trzyma swoje weryfikatory na 90 i 100,
+	 * więc 110 znaczy: „po tym, jak rdzeń ustalił, kto pyta".
+	 */
+	public const REST_PRIORITY = 110;
+
+	/**
 	 * Zdarzenie w logu: brama odmówiła wejścia.
 	 */
 	public const LOG_ACTION = 'login_denied';
@@ -61,47 +84,70 @@ final class LoginGateway {
 	public const CODE_UNRECOGNISED = 'pusers_status_unrecognised';
 
 	/**
-	 * Podpina bramę za weryfikatory hasła rdzenia.
+	 * Status HTTP odmowy na REST: konto jest rozpoznane, ale dostępu nie ma, więc 403, nie 401.
+	 * Bez tej danej `WP_Error` z filtra `rest_authentication_errors` kończyłby się odpowiedzią 500.
+	 */
+	private const REST_STATUS = 403;
+
+	/**
+	 * Podpina bramę: za weryfikatory hasła rdzenia na logowaniu i za ustalenie użytkownika na REST.
 	 *
-	 * Ostatni argument (liczba przyjmowanych argumentów) to świadome 1: filtr `authenticate`
+	 * Ostatni argument (liczba przyjmowanych argumentów) to przy `authenticate` świadome 1: filtr
 	 * podaje też login i HASŁO JAWNE, a brama patrzy wyłącznie na stan konta, więc hasło nie ma
 	 * po co do niej docierać.
 	 */
 	public static function register(): void {
 		add_filter( 'authenticate', array( self::class, 'gate' ), self::PRIORITY, 1 );
+		add_filter( 'rest_authentication_errors', array( self::class, 'gate_rest' ), self::REST_PRIORITY, 1 );
 	}
 
 	/**
-	 * Wpuszcza albo odmawia na podstawie stanu konta.
-	 *
-	 * Kolejność jest wymuszona: najpierw „czy to w ogóle użytkownik" (inaczej oddajemy wyrok
-	 * rdzenia bez zmian), potem wartość nierozpoznana, a na końcu decyzja domeny.
+	 * Wpuszcza albo odmawia na podstawie stanu konta (filtr `authenticate`).
 	 *
 	 * @param mixed $user Wynik poprzednich filtrów: `WP_User`, `WP_Error` albo null.
 	 * @return mixed `WP_User` przy wejściu, `WP_Error` przy odmowie, w pozostałych razach wejście bez zmian.
 	 */
 	public static function gate( mixed $user ): mixed {
 		if ( ! $user instanceof WP_User ) {
-			return $user;
+			return $user; // Wyrok rdzenia (złe hasło) albo brak kandydata: nie nasza sprawa, nie nasz wpis w logu.
 		}
 
-		if ( AccountStatusRepository::isUnrecognised( $user->ID ) ) {
-			return self::refuse( $user->ID, self::CODE_UNRECOGNISED );
+		$code = self::refusal_code( $user->ID );
+
+		return null === $code ? $user : self::refuse( $user->ID, $code );
+	}
+
+	/**
+	 * Ta sama decyzja na REST (filtr `rest_authentication_errors`).
+	 *
+	 * Rdzeń woła ten filtr raz, z wartością null (`class-wp-rest-server.php:197`), a jego własne
+	 * weryfikatory oddają null, true albo `WP_Error`. Gotową odmowę oddajemy bez dotykania i bez
+	 * wpisu do logu (to nie nasza odmowa), a `true` i null znaczą „rdzeń nie ma zastrzeżeń" —
+	 * wtedy pytamy o stan konta, które już zostało ustalone.
+	 *
+	 * @param mixed $errors Dotychczasowy wynik uwierzytelnienia REST: null, true albo `WP_Error`.
+	 * @return mixed `WP_Error` przy odmowie, w pozostałych razach wejście bez zmian.
+	 */
+	public static function gate_rest( mixed $errors ): mixed {
+		if ( is_wp_error( $errors ) ) {
+			return $errors;
 		}
 
-		$decision = LoginGate::decide( AccountStatusRepository::get( $user->ID ) );
-		if ( $decision->allowed() ) {
-			return $user;
+		$userId = get_current_user_id();
+		if ( 0 === $userId ) {
+			return $errors; // Żądanie anonimowe: o dostępie decydują uprawnienia trasy, nie stan konta.
 		}
 
-		return self::refuse( $user->ID, self::code_for( $decision->code() ) );
+		$code = self::refusal_code( $userId );
+
+		return null === $code ? $errors : self::refuse( $userId, $code, self::REST_STATUS );
 	}
 
 	/**
 	 * Tekst odmowy dla kodu. Kod spoza czwórki `CODE_*` daje `''`: mapa nie ma komunikatu
 	 * domyślnego, bo taki worek odpowiadałby na kod, którego wtyczka nie zna. Odmowa z bramy
-	 * zawsze niesie jeden z czterech kodów (patrz `code_for()`), więc pusty tekst nie wychodzi
-	 * do człowieka.
+	 * zawsze niesie jeden z czterech kodów (patrz `code_for()`), a gdyby kiedyś nie niosła,
+	 * `refuse()` podstawia komunikat zamiast wypuścić puste okienko błędu.
 	 *
 	 * @param string $code Kod odmowy (`CODE_*`).
 	 */
@@ -120,6 +166,24 @@ final class LoginGateway {
 			default:
 				return '';
 		}
+	}
+
+	/**
+	 * Kod odmowy dla konta albo null, gdy konto ma wejść. Jedna decyzja dla obu dróg wejścia.
+	 *
+	 * Kolejność jest wymuszona: wartość nierozpoznana PRZED decyzją domeny, bo czyta się ona jako
+	 * brak stanu, a `LoginGate::decide( null )` WPUSZCZA.
+	 *
+	 * @param int $userId Konto, o które pytamy.
+	 */
+	private static function refusal_code( int $userId ): ?string {
+		if ( AccountStatusRepository::isUnrecognised( $userId ) ) {
+			return self::CODE_UNRECOGNISED;
+		}
+
+		$decision = LoginGate::decide( AccountStatusRepository::get( $userId ) );
+
+		return $decision->allowed() ? null : self::code_for( $decision->code() );
 	}
 
 	/**
@@ -150,12 +214,24 @@ final class LoginGateway {
 	 * Wykonawcą jest 0, nie konto odmówione: żądanie logowania przychodzi od odwiedzającego,
 	 * który w tym momencie nikim jeszcze nie jest.
 	 *
-	 * @param int    $userId Konto, któremu odmówiono.
-	 * @param string $code   Kod odmowy (`CODE_*`).
+	 * Pusty komunikat podmienia się na komunikat `CODE_UNRECOGNISED`: `WP_Error` bez treści to
+	 * logowanie kończące się pustym okienkiem błędu, czyli awaria najtrudniejsza do zgłoszenia.
+	 * Umowa `message_for()` („nieznany kod daje `''`") zostaje przy tym nietknięta.
+	 *
+	 * @param int      $userId     Konto, któremu odmówiono.
+	 * @param string   $code       Kod odmowy (`CODE_*`).
+	 * @param int|null $httpStatus Status HTTP dołączany do błędu (tylko REST) albo null.
 	 */
-	private static function refuse( int $userId, string $code ): WP_Error {
+	private static function refuse( int $userId, string $code, ?int $httpStatus = null ): WP_Error {
 		EventLog::write( self::LOG_ACTION, $userId, 0, array( 'code' => $code ) );
 
-		return new WP_Error( $code, self::message_for( $code ) );
+		$message = self::message_for( $code );
+		if ( '' === $message ) {
+			$message = self::message_for( self::CODE_UNRECOGNISED );
+		}
+
+		return null === $httpStatus
+			? new WP_Error( $code, $message )
+			: new WP_Error( $code, $message, array( 'status' => $httpStatus ) );
 	}
 }

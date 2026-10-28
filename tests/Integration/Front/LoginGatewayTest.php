@@ -13,6 +13,7 @@ use PortalUsers\Persistence\AccountStatusRepository;
 use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\UserMeta;
 use ReflectionClass;
+use WP_Application_Passwords;
 use WP_Error;
 use WP_UnitTestCase;
 use WP_User;
@@ -32,6 +33,12 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 		// Podpięcie jest idempotentne (ten sam callback i ten sam priorytet), więc wołamy je
 		// niezależnie od tego, czy wtyczka zarejestrowała bramę już przy starcie suity.
 		LoginGateway::register();
+	}
+
+	public function tear_down(): void {
+		// Nagłówki uwierzytelnienia hasłem aplikacyjnym nie mogą przeciekać do innych testów.
+		unset( $_SERVER['PHP_AUTH_USER'], $_SERVER['PHP_AUTH_PW'] );
+		parent::tear_down();
 	}
 
 	/**
@@ -181,6 +188,84 @@ final class LoginGatewayTest extends WP_UnitTestCase {
 			'Komunikat dla złego hasła zdradził stan konta.'
 		);
 		$this->assertSame( array(), $this->logRows(), 'Brama zapisała odmowę, choć w ogóle nie została osiągnięta.' );
+	}
+
+	public function test_an_unapproved_account_is_refused_rest_even_with_a_valid_application_password(): void {
+		// Filtr `authenticate` NIE pokrywa REST: `wp_validate_application_password()` siedzi na
+		// `determine_current_user` i woła `wp_authenticate_application_password()` wprost, bez
+		// `apply_filters( 'authenticate' )`. Hasło aplikacyjne jest przy tym poświadczeniem
+		// TRWAŁYM, więc konto odrzucone po jego wystawieniu czytałoby REST bez końca.
+		$account = $this->account( AccountStatus::Pending );
+		add_filter( 'wp_is_application_passwords_available', '__return_true' );
+		add_filter( 'application_password_is_api_request', '__return_true' );
+		$created = WP_Application_Passwords::create_new_application_password( $account['id'], array( 'name' => 'klient-rest' ) );
+		$this->assertIsArray( $created );
+
+		$_SERVER['PHP_AUTH_USER'] = $account['login'];
+		$_SERVER['PHP_AUTH_PW']   = (string) $created[0];
+
+		// Hasło aplikacyjne jest POPRAWNE: rdzeń ustala z niego konto...
+		$determined = apply_filters( 'determine_current_user', false );
+		$this->assertSame( $account['id'], $determined, 'Hasło aplikacyjne miało uwierzytelnić konto przez determine_current_user.' );
+		// ...i do tego momentu brama z `authenticate` nie odezwała się ani razu.
+		$this->assertSame( array(), $this->logRows(), 'Brama z filtra authenticate w ogóle nie bierze udziału w tej ścieżce.' );
+
+		wp_set_current_user( (int) $determined );
+		$result = apply_filters( 'rest_authentication_errors', null );
+
+		$this->assertInstanceOf( WP_Error::class, $result, 'Konto `pending` z ważnym hasłem aplikacyjnym musi dostać odmowę na REST.' );
+		$this->assertSame( LoginGateway::CODE_PENDING, $result->get_error_code() );
+		$this->assertSame( LoginGateway::message_for( LoginGateway::CODE_PENDING ), $result->get_error_message() );
+		// Bez statusu w danych błędu REST odpowiedziałby 500 zamiast 403.
+		$data = $result->get_error_data();
+		$this->assertIsArray( $data );
+		$this->assertSame( 403, $data['status'] ?? 0 );
+
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows, 'Odmowa na REST zostawia wpis w logu zdarzeń.' );
+		$this->assertSame( LoginGateway::LOG_ACTION, $rows[0]->action );
+		$this->assertSame( array( 'code' => LoginGateway::CODE_PENDING ), json_decode( (string) $rows[0]->context, true ) );
+	}
+
+	public function test_an_approved_account_passes_rest_authentication(): void {
+		$account = $this->account( AccountStatus::Approved );
+		add_filter( 'wp_is_application_passwords_available', '__return_true' );
+		add_filter( 'application_password_is_api_request', '__return_true' );
+		$created = WP_Application_Passwords::create_new_application_password( $account['id'], array( 'name' => 'klient-rest' ) );
+		$this->assertIsArray( $created );
+
+		$_SERVER['PHP_AUTH_USER'] = $account['login'];
+		$_SERVER['PHP_AUTH_PW']   = (string) $created[0];
+
+		$determined = apply_filters( 'determine_current_user', false );
+		$this->assertSame( $account['id'], $determined );
+
+		wp_set_current_user( (int) $determined );
+
+		$result = apply_filters( 'rest_authentication_errors', null );
+		$this->assertNotInstanceOf( WP_Error::class, $result, 'Konto zatwierdzone musi dalej wchodzić na REST.' );
+		// Rdzeń oddaje dla uwierzytelnionego hasła aplikacyjnego `true`
+		// (`rest_application_password_check_errors`), a brama przepuszcza tę wartość bez zmian.
+		$this->assertTrue( $result );
+		$this->assertSame( array(), $this->logRows(), 'Wpuszczenie nie jest odmową, więc nie ma czego zapisywać w logu.' );
+	}
+
+	public function test_the_rest_gate_does_not_touch_an_anonymous_request_or_a_core_error(): void {
+		$account = $this->account( AccountStatus::Pending );
+
+		wp_set_current_user( 0 );
+		// Anonim: o dostępie decydują uprawnienia trasy, nie stan konta. Oba wejścia rdzenia
+		// (null — nikt nie sprawdzał, true — rdzeń nie ma zastrzeżeń) wracają bez zmian.
+		$this->assertNull( LoginGateway::gate_rest( null ) );
+		$this->assertTrue( LoginGateway::gate_rest( true ) );
+
+		// Gotowa odmowa rdzenia (np. zły nonce ciasteczka) wraca bez zmian i bez wpisu do logu,
+		// bo to nie nasza odmowa — mimo że konto jest niezatwierdzone.
+		wp_set_current_user( $account['id'] );
+		$coreError = new WP_Error( 'rest_cookie_invalid_nonce', 'Cookie check failed.' );
+		$this->assertSame( $coreError, LoginGateway::gate_rest( $coreError ), 'Brama REST oddała inny obiekt niż błąd rdzenia.' );
+
+		$this->assertSame( array(), $this->logRows(), 'Brama REST zapisała do logu odmowę, która nie jest jej odmową.' );
 	}
 
 	public function test_every_code_has_a_message_and_no_message_is_orphaned(): void {
