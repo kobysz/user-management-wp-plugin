@@ -7,8 +7,10 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration\Admin;
 
+use PortalUsers\Admin\IssueMessages;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\SettingsScreen;
+use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Domain\Fields\FieldMatrix;
@@ -387,6 +389,35 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		$page = self::factory()->post->create( array( 'post_type' => 'page', 'post_status' => 'publish' ) );
 		SettingsRepository::save( Settings::fromArray( array( 'reset_page_id' => $page ) ) );
 		$this->assertSame( array(), SettingsScreen::page_issues() );
+	}
+
+	public function test_the_after_login_page_is_checked_like_the_other_three(): void {
+		// Strona po zalogowaniu była w liście wyboru, ale nie w sprawdzeniu. `PageUrl::for()`
+		// świadomie zachowuje dawną semantykę i oddaje odnośnik strony ROBOCZEJ, więc
+		// administrator wskazujący szkic nie dostawał ostrzeżenia, a KAŻDE konto bez uprawnień
+		// redakcyjnych było po zalogowaniu kierowane na stronę, której nie zobaczy.
+		$draft = self::factory()->post->create(
+			array(
+				'post_type'   => 'page',
+				'post_status' => 'draft',
+			)
+		);
+		SettingsRepository::save( Settings::fromArray( array( 'after_login_page_id' => $draft ) ) );
+
+		$this->assertSame( array( 'after_login_page_id' => 'page_not_published' ), SettingsScreen::page_issues() );
+
+		SettingsRepository::save( Settings::fromArray( array( 'after_login_page_id' => 999999 ) ) );
+		$this->assertSame( array( 'after_login_page_id' => 'page_missing' ), SettingsScreen::page_issues() );
+
+		// Ostrzeżenie nazywa stronę po ludzku, a nie kluczem ustawienia: mapa etykiet musi znać
+		// nowy klucz, inaczej administrator czyta w panelu „after_login_page_id”.
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+		ob_start();
+		SettingsScreen::render();
+		$html = (string) ob_get_clean();
+		$expected = IssueMessages::text( SettingsIssue::warning( 'page_missing', array( 'page' => __( 'Strona po zalogowaniu', 'portal-users' ) ) ) );
+		$this->assertStringContainsString( esc_html( $expected ), $html );
+		$this->assertStringNotContainsString( 'after_login_page_id:', $html, 'Ostrzeżenie nazywa stronę kluczem ustawienia, bo mapa etykiet nie zna nowego klucza.' );
 	}
 
 	public function test_a_post_that_is_not_a_page_is_reported_as_missing(): void {

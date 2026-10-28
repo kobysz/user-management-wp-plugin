@@ -29,6 +29,32 @@ final class PageUrlTest extends WP_UnitTestCase {
 		$this->assertNotSame( '', PageUrl::for( $deleted ) );
 	}
 
+	public function test_a_draft_or_trashed_page_still_gives_an_address_not_the_home_page(): void {
+		// Ta semantyka jest ŚWIADOMA (zachowanie `Confirmation::base_url()` z Planu 3) i od
+		// poprawki `page_issues()` jest NOŚNA: ostrzeżenie w panelu istnieje właśnie dlatego, że
+		// strona robocza albo w koszu daje tu odnośnik, a nie odwrót na stronę główną. Gdyby
+		// `PageUrl` zaczęło traktować szkic jak brak strony, ostrzeżenie przestałoby być potrzebne
+		// i nikt by nie zauważył, że zniknął jego powód.
+		$draft = self::factory()->post->create(
+			array(
+				'post_type'   => 'page',
+				'post_status' => 'draft',
+			)
+		);
+		$trash = self::factory()->post->create(
+			array(
+				'post_type'   => 'page',
+				'post_status' => 'trash',
+			)
+		);
+
+		foreach ( array( $draft, $trash ) as $pageId ) {
+			$this->assertNotSame( '', PageUrl::for( $pageId ) );
+			$this->assertNotSame( home_url( '/' ), PageUrl::for( $pageId ), 'Strona nieopublikowana nie wraca na stronę główną: o tym ostrzega ekran ustawień.' );
+			$this->assertSame( PageUrl::for( $pageId ), PageUrl::existing( $pageId ), 'Oba warianty muszą czytać stan strony tak samo.' );
+		}
+	}
+
 	public function test_the_variant_without_the_fallback_says_when_there_is_no_page(): void {
 		// Dla odnośnika w mailu strona główna jest złą odpowiedzią, więc `existing()` oddaje `''`
 		// i wywołujący sam decyduje, co z brakiem strony zrobić.

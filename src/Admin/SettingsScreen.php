@@ -140,9 +140,15 @@ final class SettingsScreen {
 	public static function page_issues(): array {
 		$settings = SettingsRepository::get();
 		$pages    = array(
-			'login_page_id'    => $settings->loginPageId,
-			'register_page_id' => $settings->registerPageId,
-			'reset_page_id'    => $settings->resetPageId,
+			'login_page_id'       => $settings->loginPageId,
+			'register_page_id'    => $settings->registerPageId,
+			'reset_page_id'       => $settings->resetPageId,
+			// Strona po zalogowaniu należy do tego sprawdzenia tak samo jak trzy pozostałe:
+			// `PageUrl::for()` świadomie zachowuje dawną semantykę i oddaje odnośnik strony
+			// ROBOCZEJ albo w koszu, więc administrator wskazujący szkic nie dostawał ostrzeżenia,
+			// a KAŻDE konto bez uprawnień redakcyjnych było po zalogowaniu — i przy wyjściu
+			// z `wp-admin` — kierowane na stronę, której nie zobaczy.
+			'after_login_page_id' => $settings->afterLoginPageId,
 		);
 		$issues   = array();
 
@@ -205,9 +211,10 @@ final class SettingsScreen {
 	 */
 	private static function render_page_issues(): void {
 		$labels = array(
-			'login_page_id'    => __( 'Strona logowania', 'portal-users' ),
-			'register_page_id' => __( 'Strona rejestracji', 'portal-users' ),
-			'reset_page_id'    => __( 'Strona resetu hasła', 'portal-users' ),
+			'login_page_id'       => __( 'Strona logowania', 'portal-users' ),
+			'register_page_id'    => __( 'Strona rejestracji', 'portal-users' ),
+			'reset_page_id'       => __( 'Strona resetu hasła', 'portal-users' ),
+			'after_login_page_id' => __( 'Strona po zalogowaniu', 'portal-users' ),
 		);
 		foreach ( self::page_issues() as $key => $code ) {
 			$issue = SettingsIssue::warning( $code, array( 'page' => $labels[ $key ] ?? $key ) );
