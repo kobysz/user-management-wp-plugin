@@ -345,10 +345,7 @@ final class Confirmation {
 	 * „skąd się bierze adres strony rejestracji” rozjechałyby się przy pierwszej zmianie ustawień.
 	 */
 	public static function base_url(): string {
-		$page = SettingsRepository::get()->registerPageId;
-		$link = $page > 0 ? get_permalink( $page ) : false;
-
-		return false === $link ? home_url( '/' ) : $link;
+		return PageUrl::for( SettingsRepository::get()->registerPageId );
 	}
 
 	/**
