@@ -72,6 +72,18 @@ final class ApplicationsScreen {
 			wp_die( esc_html__( 'Nie masz uprawnień do wykonania tej operacji.', 'portal-users' ), '', array( 'response' => 403 ) );
 		}
 
+		// Obecność argumentu użytkownika przełącza na szczegóły, także gdy wniosku nie ma: pusta strona nie powie, co poszło nie tak.
+		if ( '' !== self::query_arg( self::ARG_USER ) ) {
+			$row = ApplicationRepository::one( absint( self::query_arg( self::ARG_USER ) ) );
+			if ( null === $row ) {
+				echo '<div class="wrap"><h1>' . esc_html__( 'Portal: wnioski', 'portal-users' ) . '</h1><p>' . esc_html__( 'Nie ma takiego wniosku.', 'portal-users' ) . '</p>';
+				echo '<p><a href="' . esc_url( Menu::url( Menu::SLUG_APPLICATIONS ) ) . '">' . esc_html__( '← Wróć do listy wniosków', 'portal-users' ) . '</a></p></div>';
+				return;
+			}
+			ApplicationDetails::render( $row );
+			return;
+		}
+
 		$status     = self::current_status();
 		$profession = self::current_profession();
 		$total      = ApplicationRepository::total( $status, $profession );
