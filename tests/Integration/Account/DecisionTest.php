@@ -198,6 +198,8 @@ final class DecisionTest extends WP_UnitTestCase {
 		$failed = $this->logRows( Decision::LOG_STORAGE_FAILED );
 		$this->assertCount( 1, $failed );
 		$this->assertSame( $this->admin, (int) $failed[0]->actor_user_id );
+		$this->assertSame( AccountStatus::Pending->value, $this->context( $failed[0] )['previous_status'] ?? null );
+		$this->assertSame( AccountStatus::Approved->value, $this->context( $failed[0] )['target_status'] ?? null );
 	}
 
 	public function test_odmowa_kolejki_mailowej_nie_cofa_stanu(): void {
@@ -214,6 +216,25 @@ final class DecisionTest extends WP_UnitTestCase {
 		$this->assertSame( Decision::RESULT_MAIL_FAILED, $result );
 		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $id ), 'Stan konta jest prawdą, mail tylko powiadomieniem.' );
 		$this->assertCount( 1, $this->logRows( Decision::LOG_APPROVED ) );
+	}
+
+	public function test_ponowne_odrzucenie_z_innym_powodem_nie_zmienia_niczego(): void {
+		$id = $this->account( AccountStatus::Pending );
+		Decision::reject( $id, $this->admin, 'stary powód' );
+		$logs  = count( $this->logRows( Decision::LOG_REJECTED ) );
+		$mails = count( $this->mails() );
+
+		$this->assertSame( Decision::RESULT_UNCHANGED, Decision::reject( $id, $this->admin, 'nowy powód' ) );
+
+		$this->assertSame( 'stary powód', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		$this->assertCount( $logs, $this->logRows( Decision::LOG_REJECTED ) );
+		$this->assertCount( $mails, $this->mails() );
+	}
+
+	public function test_ponowne_odrzucenie_z_pustym_powodem_daje_unchanged_nie_empty_reason(): void {
+		$id = $this->account( AccountStatus::Rejected );
+
+		$this->assertSame( Decision::RESULT_UNCHANGED, Decision::reject( $id, $this->admin, '' ) );
 	}
 
 	public function test_odrzucenie_konta_zatwierdzonego_jest_dozwolone(): void {

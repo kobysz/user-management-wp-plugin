@@ -89,7 +89,9 @@ final class Decision {
 		}
 
 		// Dwa różne fakty, nie jeden zapisany dwa razy: metadana mówi, dlaczego konto jest odrzucone
-		// dziś (przy ponownym odrzuceniu jest nadpisywana), log mówi, kto i z jakim powodem to zrobił.
+		// dziś, log mówi, kto i z jakim powodem to zrobił. Powód zapisuje się przy odrzuceniu konta, które
+		// odrzucone nie było; powtórne odrzucenie kończy się wcześniej jako UNCHANGED i nie zmienia ani
+		// metadanej, ani logu, ani maila (nadpisanie zdarza się dopiero po drodze rejected, approved, rejected).
 		// Metadana idzie dopiero po potwierdzeniu stanu, żeby nieudana decyzja nie zostawiła powodu.
 		update_user_meta( $userId, UserMeta::REJECTION_REASON, $clean );
 		EventLog::write(
