@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers;
 
+use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\MailLogScreen;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MailTemplatesScreen;
@@ -102,6 +103,14 @@ final class Plugin {
 		// do niczego: rozbrojone przepuszcza każdą wiadomość nietkniętą, a uzbraja je filtr treści
 		// z `PasswordReset`, który sam jedzie już za sprawdzeniem zależności.
 		CoreCapture::register();
+
+		// Ekran wniosków też stoi poza hookiem zależnym od ACF Pro, choć reszta ekranów panelu jedzie za nim.
+		// Brama logowania działa bez ACF Pro i dalej trzyma ludzi na zewnątrz, maile do redakcji już wyszły,
+		// a konta czekają w stanie `pending`: gdyby ekran znikał razem z ACF, awaria ACF zamykałaby portal
+		// dla każdego oczekującego lekarza bez żadnej drogi ratunku z panelu. Egzekwowanie zostaje, funkcje
+		// się bramkuje, a rozstrzyganie wniosków należy do egzekwowania. Jedynie panel szczegółów potrzebuje
+		// ACF i sam mówi, gdy go nie ma.
+		ApplicationsScreen::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.

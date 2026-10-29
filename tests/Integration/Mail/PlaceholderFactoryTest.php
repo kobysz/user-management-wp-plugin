@@ -82,8 +82,16 @@ final class PlaceholderFactoryTest extends WP_UnitTestCase {
 		$this->assertSame( 'Lekarz', $values->get( 'profesja' ) );
 		$this->assertSame( home_url( '/' ), $values->get( 'adres_portalu' ) );
 		$this->assertSame( home_url( '/' ), $values->get( 'link_logowania' ), 'Bez strony logowania w ustawieniach: strona główna.' );
-		$this->assertSame( admin_url( 'user-edit.php?user_id=' . $id ), $values->get( 'link_wniosku' ) );
 		$this->assertSame( wp_lostpassword_url(), $values->get( 'link_odzyskiwania' ) );
+	}
+
+	public function test_link_wniosku_wskazuje_ekran_wnioskow_nie_edycje_uzytkownika(): void {
+		$id   = $this->account();
+		$link = (string) PlaceholderFactory::for_user( $id )->get( 'link_wniosku' );
+
+		$this->assertStringContainsString( 'page=pusers-applications', $link );
+		$this->assertStringContainsString( 'user=' . $id, $link );
+		$this->assertStringNotContainsString( 'user-edit.php', $link );
 	}
 
 	public function test_a_registration_field_is_available_as_pole_prefix(): void {

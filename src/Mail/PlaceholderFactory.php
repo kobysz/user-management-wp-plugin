@@ -11,6 +11,7 @@ namespace PortalUsers\Mail;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Domain\Application\CredentialVerdict;
 use PortalUsers\Domain\Credentials\CredentialType;
 use PortalUsers\Domain\Mail\Placeholders;
@@ -99,8 +100,7 @@ final class PlaceholderFactory {
 			'profesja'        => null === $profession ? $key : $profession->label,
 			'numer_uprawnien' => $number,
 			'wynik_walidacji' => self::validation_result( $profession, $number ),
-			// Do Planu 6: ekran wniosków wskaże tu własny adres, a edycja użytkownika jest tylko zastępstwem.
-			'link_wniosku'    => admin_url( 'user-edit.php?user_id=' . $userId ),
+			'link_wniosku'    => ApplicationsScreen::detail_url( $userId ),
 			'pola_zgloszenia' => self::as_list( $fields ),
 		);
 		foreach ( $fields as $name => $value ) {

@@ -389,7 +389,7 @@ final class ConfirmationTest extends WP_UnitTestCase {
 		$pendingMails = $this->mails_to( self::GLOBAL_RECIPIENT );
 		$this->assertCount( 1, $pendingMails );
 		$this->assertStringContainsString( 'czeka na decyzję', (string) $pendingMails[0]['message'] );
-		$this->assertStringContainsString( 'user_id=' . $id, (string) $pendingMails[0]['message'], 'Odnośnik do wniosku.' );
+		$this->assertStringContainsString( 'page=pusers-applications&user=' . $id, (string) $pendingMails[0]['message'], 'Odnośnik do wniosku.' );
 
 		$this->forget_mails();
 		$this->configure( false );

@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration;
 
+use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
@@ -116,6 +117,18 @@ final class WiringTest extends WP_UnitTestCase {
 		$this->assertNotFalse( has_action( 'admin_menu', array( ProfessionsScreen::class, 'add_page' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_' . ProfessionsScreen::ACTION, array( ProfessionsScreen::class, 'handle_save' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_' . ProfessionsScreen::ACTION_DELETE, array( ProfessionsScreen::class, 'handle_delete' ) ) );
+	}
+
+	public function test_applications_screen_hooks_its_page_outside_the_features_hook(): void {
+		// Ekran wniosków jest ostatnią drogą ratunku, gdy ACF Pro zniknie: brama logowania dalej
+		// trzyma oczekujących na zewnątrz, więc ekran nie może zniknąć razem z zależnością.
+		ApplicationsScreen::register();
+		$this->assertNotFalse( has_action( 'admin_menu', array( ApplicationsScreen::class, 'add_page' ) ) );
+
+		remove_all_actions( 'admin_menu' );
+		Plugin::boot( Plugin::plugin_file() );
+		$this->assertFalse( has_action( 'pusers_register_features', array( ApplicationsScreen::class, 'register' ) ) );
+		$this->assertNotFalse( has_action( 'admin_menu', array( ApplicationsScreen::class, 'add_page' ) ) );
 	}
 
 	public function test_matrix_register_hooks_page_and_both_handlers(): void {
