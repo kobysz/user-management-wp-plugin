@@ -1,6 +1,6 @@
 <?php
 /**
- * Integracja z narzędziami danych osobowych WordPressa: eksporter (a w kolejnym zadaniu eraser).
+ * Integracja z narzędziami danych osobowych WordPressa: eksporter i eraser.
  *
  * @package PortalUsers
  */
@@ -35,10 +35,45 @@ final class PrivacyProvider {
 	public const PER_PAGE = 50;
 
 	/**
+	 * Górna granica przebiegów erasera. Rdzeń woła eraser, aż dostanie `done`, a `done` czeka na przebieg
+	 * pusty; przy trwałej awarii zapisu wiersz wracałby w nieskończoność. Lepiej skończyć i powiedzieć prawdę.
+	 */
+	public const MAX_PASSES = 10;
+
+	/**
+	 * Metadane konta kasowane przez eraser: dane osobowe i jednorazowe sekrety. Wartości pól zgłoszenia
+	 * (przedrostek `UserMeta::ACF_PREFIX`) kasowane są osobno, bo ich klucze zależą od grupy ACF.
+	 */
+	public const ERASE_META = array(
+		UserMeta::REGISTRATION_IP,
+		UserMeta::REJECTION_REASON,
+		UserMeta::CONFIRM_HASH,
+		UserMeta::CONFIRM_EXPIRES,
+		UserMeta::PASSWORD_TICKET_HASH,
+		UserMeta::PASSWORD_TICKET_EXPIRES,
+	);
+
+	/**
+	 * Metadane, które eraser świadomie zostawia. Lista dokumentuje decyzję i pilnuje jej w teście.
+	 *
+	 * STATUS: brama logowania wpuszcza konta BEZ zapisanego stanu (żeby nie zamknąć poza portalem
+	 * administratora dodanego ręcznie), więc skasowanie stanu zmieniłoby konto odrzucone albo oczekujące
+	 * w konto, które się loguje. PROFESSION: bez niej konto przestaje być wnioskiem i znika z panelu.
+	 * TERMS_VERSION i CONSENT_AT: zapis zgody zostaje na podstawie obowiązku jej wykazania.
+	 */
+	public const RETAIN_META = array(
+		UserMeta::STATUS,
+		UserMeta::PROFESSION,
+		UserMeta::TERMS_VERSION,
+		UserMeta::CONSENT_AT,
+	);
+
+	/**
 	 * Podpina eksporter pod filtr rdzenia.
 	 */
 	public static function register(): void {
 		add_filter( 'wp_privacy_personal_data_exporters', array( self::class, 'register_exporter' ) );
+		add_filter( 'wp_privacy_personal_data_erasers', array( self::class, 'register_eraser' ) );
 	}
 
 	/**
@@ -54,6 +89,21 @@ final class PrivacyProvider {
 		);
 
 		return $exporters;
+	}
+
+	/**
+	 * Dopisuje eraser wtyczki do listy rdzenia.
+	 *
+	 * @param array<string, mixed> $erasers Zarejestrowane erasery.
+	 * @return array<string, mixed>
+	 */
+	public static function register_eraser( array $erasers ): array {
+		$erasers[ self::SLUG ] = array(
+			'eraser_friendly_name' => __( 'Portal użytkowników', 'portal-users' ),
+			'callback'             => array( self::class, 'erase' ),
+		);
+
+		return $erasers;
 	}
 
 	/**
@@ -97,6 +147,81 @@ final class PrivacyProvider {
 			'data' => $data,
 			'done' => count( $events ) < self::PER_PAGE && count( $mails ) < self::PER_PAGE,
 		);
+	}
+
+	/**
+	 * Usuwa dane osobowe konta o danym adresie, a zostawia stan, profesję i zapis zgody.
+	 *
+	 * Rdzeń woła tę metodę w pętli, aż dostanie `done === true`. Anonimizacja wyjmuje wiersze ze zbioru
+	 * dopasowań, więc nie ma offsetu: `$page` służy tylko do przycięcia pętli. `done` znaczy „ten przebieg
+	 * nie miał już czego anonimizować", a nie „zmieniono mniej niż strona": repozytoria po cichu pomijają
+	 * wiersz, którego UPDATE zawiódł, i reguła oparta na rozmiarze strony zostawiłaby w nim dane osobowe.
+	 *
+	 * @param string $email Adres e-mail z żądania.
+	 * @param int    $page  Numer przebiegu, od 1.
+	 * @return array{items_removed: bool, items_retained: bool, messages: array<int, string>, done: bool}
+	 */
+	public static function erase( string $email, int $page = 1 ): array {
+		$user = get_user_by( 'email', $email );
+		if ( false === $user ) {
+			return array(
+				'items_removed'  => false,
+				'items_retained' => false,
+				'messages'       => array(),
+				'done'           => true,
+			);
+		}
+
+		$messages = array();
+		if ( $page > self::MAX_PASSES ) {
+			$messages[] = __( 'Nie udało się zanonimizować części wpisów logu zdarzeń lub wysyłek tego konta. Powtórz żądanie albo zgłoś sprawę administratorowi.', 'portal-users' );
+
+			return array(
+				'items_removed'  => false,
+				'items_retained' => true,
+				'messages'       => $messages,
+				'done'           => true,
+			);
+		}
+
+		$removed    = self::erase_meta( $user->ID );
+		$anonymized = EventLog::anonymize_subject( $user->ID ) + MailQueueRepository::anonymize_user( $user->ID );
+
+		// Informację o zachowanych danych niesie pierwszy przebieg; rdzeń zbiera komunikaty ze wszystkich.
+		if ( $page <= 1 ) {
+			$messages[] = __( 'Zostawiono stan konta, profesję oraz zapis zgody na regulamin (wersja i czas): stan decyduje o dostępie do portalu, a zgodę trzeba umieć wykazać. Pełne usunięcie konta to skasowanie użytkownika, czyli osobna operacja administratora.', 'portal-users' );
+		}
+
+		return array(
+			'items_removed'  => $removed || $anonymized > 0,
+			'items_retained' => true,
+			'messages'       => $messages,
+			'done'           => 0 === $anonymized,
+		);
+	}
+
+	/**
+	 * Kasuje metadane z `ERASE_META` i wszystkie wartości pól zgłoszenia, także te ukryte dziś w macierzy.
+	 *
+	 * @param int $userId Konto.
+	 * @return bool Czy cokolwiek faktycznie usunięto.
+	 */
+	private static function erase_meta( int $userId ): bool {
+		$keys = self::ERASE_META;
+		foreach ( array_keys( (array) get_user_meta( $userId ) ) as $key ) {
+			if ( str_starts_with( (string) $key, UserMeta::ACF_PREFIX ) ) {
+				$keys[] = (string) $key;
+			}
+		}
+
+		$removed = false;
+		foreach ( $keys as $key ) {
+			if ( delete_user_meta( $userId, $key ) ) {
+				$removed = true;
+			}
+		}
+
+		return $removed;
 	}
 
 	/**

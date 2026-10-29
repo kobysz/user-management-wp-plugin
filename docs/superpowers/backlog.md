@@ -117,25 +117,9 @@ Zachowanie domeny jest przypięte testem `LoginGateTest::test_unrecognised_store
 
 ---
 
-## Plan 7 — Eksport, RODO, import, aktywacja
+## Plan 7 — Eksport i RODO: co zostało po realizacji
 
-### Kolumna `anonymized` w tabeli logu zdarzeń
-
-Istnieje od pierwszej migracji, mimo że nic jej jeszcze nie używa. Żądanie usunięcia danych osobowych ma **anonimizować** log zdarzeń, nie kasować go — log wykazuje, kto i kiedy zatwierdził konto. Nie usuwać jako „nieużywanej".
-
-### `EventLog::write()` połyka porażkę zapisu
-
-`src/Persistence/EventLog.php`, metoda `write()`, zwraca `void` i ignoruje wynik `$wpdb->insert()`. Gdy zapis logu zawiedzie po udanej zmianie stanu (`Decision::approve()` / `reject()` piszą log po zapisie stanu, a mail idzie po logu), rozstrzygnięcie jest już wysłane mailem i zgłoszone redaktorowi jako sukces, a po audycie nie ma śladu. Specyfikacja opiera na tym logu całe „kto zatwierdził i kiedy" i wymaga jego anonimizacji zamiast kasowania, więc brakujący wiersz to dziura w jedynym dowodzie decyzji. `write()` powinno zwracać `bool`, a `Decision` traktować porażkę jak `RESULT_STORAGE_FAILED` albo osobny wynik, który ekran policzy i pokaże; ta sama zmiana dotyczy pozostałych miejsc zapisu do logu (rejestracja, most ACF).
-
-### Backfill stanów przy aktywacji
-
-Konta istniejące na portalu przed wdrożeniem nie mają stanu. Dziś nie powoduje to utraty dostępu, bo brama logowania nie jest podłączona (Plan 4), ale po jej podłączeniu backfill musi już działać.
-
-### Anonimizacja logu wysyłek musi nadpisać `recipient`, `subject` i `body`
-
-Tabela `mail_queue` ma kolumnę `anonymized` od pierwszej migracji, ale samo postawienie jej na `1` nie anonimizuje niczego: dane zostają w wierszu. Treść maila do redakcji niesie imię i nazwisko wnioskodawcy, adres, profesję, numer uprawnień, werdykt walidacji i **każde widoczne pole zgłoszenia**; treść odrzucenia niesie powód wpisany ręcznie przez redakcję. Żądanie usunięcia danych musi więc **nadpisać** `recipient`, `subject` i `body` wiersza, a nie tylko go oznaczyć. Wiersz zostaje, bo log wysyłek wykazuje, że mail wyszedł — to jest w nim wartością, a nie treść.
-
-Pytanie otwarte, na które eksporter musi odpowiedzieć **przed** napisaniem anonimizacji: czy treści wierszy kolejki są danymi osobowymi do **wydania** w eksporcie, czy własnym zapisem administratora danych o tym, co i kiedy wysłał? Od odpowiedzi zależy, czy eksport w ogóle te kolumny czyta.
+Plan 7 zrobił eksport CSV, eksporter i eraser danych osobowych oraz anonimizację logu zdarzeń i kolejki maili. Import i backfill stanów przeszły do Planu 8 (osobna sekcja niżej), bo dzielą mapowanie metadanych starej wtyczki. Zostaje tu jedna pozycja, która czeka na decyzję właściciela.
 
 ### Wiersz kolejki trzyma żywy sekret jednorazowy — decyzja o retencji należy do właściciela
 
@@ -143,13 +127,25 @@ Snapshot rodzaju `confirmation` zawiera **token potwierdzenia adresu ważny 48 g
 
 Do rozstrzygnięcia przez właściciela, nie przez wykonawcę: czy te dwa rodzaje maili mają mieć okno retencji liczone w **dniach** zamiast w 90 dniach — albo czy po wysyłce ma być czyszczona sama kolumna `body`? Pierwsze jest tańsze, drugie zostawia dłuższy ślad „czy ten mail wyszedł". Dopóki odpowiedzi nie ma, obowiązuje 90 dni dla wszystkich rodzajów.
 
-### Eraser musi czyścić dane osobowe powstałe w Planie 6
+---
 
-Kasowanie danych osobowych (eraser WordPressa) musi usuwać `UserMeta::REGISTRATION_IP` i `UserMeta::REJECTION_REASON`: oba powstały w Planie 6 i oba są danymi osobowymi przy koncie. Wiersze `credential_changed` w logu zdarzeń (`ProfileSync::LOG_CREDENTIAL_CHANGED`) niosą numer uprawnień w `context` (klucze `old` i `new`) i podlegają anonimizacji logu (kolumna `anonymized`), nie usunięciu.
+## Plan 8 — Import i backfill stanów
+
+Ta sekcja jest nowa: import z poprzedniej wtyczki i backfill stanów przy aktywacji wydzielono z Planu 7 (decyzja właściciela z 2026-10-29), a dawny Plan 8 (Aktualizacje i release) stał się Planem 9.
+
+### Backfill stanów przy aktywacji
+
+Konta istniejące na portalu przed wdrożeniem nie mają stanu. Dziś nie powoduje to utraty dostępu, bo brama logowania nie jest podłączona (Plan 4), ale po jej podłączeniu backfill musi już działać.
+
+### Eksport CSV i eksporter danych osobowych widzą tylko pola z grupy ACF
+
+Oba czytają pola przez grupę ACF wskazaną w ustawieniach (`AcfFieldSource`) i metadane z przedrostkiem `UserMeta::ACF_PREFIX`. Import, który wpisze wartości pod metadane spoza grupy albo bez przedrostka, będzie dla obu **niewidoczny**: eksport CSV nie da ich w kolumnach, a eksporter i eraser danych osobowych ich nie wydadzą ani nie skasują. Import musi zapisywać wartości pod `UserMeta::ACF_PREFIX . <nazwa pola z grupy>` albo rozszerzyć oba narzędzia razem z importem.
 
 ---
 
-## Plan 8 — Aktualizacje i release
+## Plan 9 — Aktualizacje i release
+
+Numer zmieniony: dawniej Plan 8; import i backfill stanów zajęły Plan 8 (zob. wyżej).
 
 ### CI woła `composer analyse`, nie gołe `phpstan analyse`
 
