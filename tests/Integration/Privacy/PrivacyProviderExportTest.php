@@ -176,6 +176,26 @@ final class PrivacyProviderExportTest extends WP_UnitTestCase {
 		$this->assertSame( 'wartosc-bez-etykiety', $pairs['nieznane_pole'] ?? null, 'Pole bez etykiety wychodzi pod nazwą metadanej.' );
 	}
 
+	public function test_konto_bez_pol_zgloszenia_dostaje_jedna_pare_zamiast_pustej_tabeli(): void {
+		$user = $this->account();
+		delete_user_meta( $user->ID, UserMeta::ACF_PREFIX . 'pwz' );
+		delete_user_meta( $user->ID, UserMeta::ACF_PREFIX . 'zainteresowania' );
+
+		$result = PrivacyProvider::export( 'lekarz@example.com' );
+
+		$groups = $this->groups( $result['data'], 'pusers-fields' );
+		$this->assertCount( 1, $groups );
+		$this->assertSame(
+			array(
+				array(
+					'name'  => 'Pola zgłoszenia',
+					'value' => 'Brak zapisanych pól zgłoszenia',
+				),
+			),
+			$groups[0]['data']
+		);
+	}
+
 	public function test_eksport_niesie_wiersze_logu_zdarzen(): void {
 		$user = $this->account();
 		EventLog::write( 'application_approved', $user->ID, 1, array( 'powod' => 'komplet' ) );

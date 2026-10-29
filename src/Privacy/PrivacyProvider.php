@@ -56,7 +56,9 @@ final class PrivacyProvider {
 	);
 
 	/**
-	 * Metadane, które eraser świadomie zostawia. Lista dokumentuje decyzję i pilnuje jej w teście.
+	 * Metadane, które eraser świadomie zostawia. Kod jej nie czyta: dokumentuje decyzję, a pilnuje jej test, który
+	 * wymaga, by suma tej listy i `ERASE_META` była dokładnie `UserMeta::all()` i by listy się nie przecinały,
+	 * więc nowa metadana wtyczki nie przeżyje żądania usunięcia bez świadomej decyzji.
 	 *
 	 * STATUS: brama logowania wpuszcza konta BEZ zapisanego stanu (żeby nie zamknąć poza portalem
 	 * administratora dodanego ręcznie), więc skasowanie stanu zmieniłoby konto odrzucone albo oczekujące
@@ -329,6 +331,11 @@ final class PrivacyProvider {
 			}
 			$name    = substr( (string) $key, strlen( UserMeta::ACF_PREFIX ) );
 			$pairs[] = self::pair( $labels[ $name ] ?? $name, self::text( is_array( $values ) ? ( $values[0] ?? '' ) : '' ) );
+		}
+
+		// Pusta para jest odpowiedzią dla żądającego, ale pusta tabela w pliku eksportu wygląda jak awaria.
+		if ( array() === $pairs ) {
+			$pairs[] = self::pair( __( 'Pola zgłoszenia', 'portal-users' ), __( 'Brak zapisanych pól zgłoszenia', 'portal-users' ) );
 		}
 
 		return self::group( 'pusers-fields', __( 'Pola zgłoszenia', 'portal-users' ), 'pusers-fields', $pairs );

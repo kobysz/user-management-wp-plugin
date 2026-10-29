@@ -26,6 +26,8 @@ final class ExportHandlerTest extends WP_UnitTestCase {
 		$this->originalMethod = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
 		// Szew testowy: bez tego `exit` zabiłby przebieg phpunita.
 		add_filter( ExportHandler::FILTER_EXIT, '__return_false' );
+		// Szew testowy: phpunit już wypisał treść, więc headers_sent() jest tu zawsze prawdą.
+		add_filter( ExportHandler::FILTER_HEADERS_SENT, '__return_false' );
 	}
 
 	public function tear_down(): void {
@@ -125,12 +127,27 @@ final class ExportHandlerTest extends WP_UnitTestCase {
 	public function test_stan_spoza_zakladek_zawsze_daje_oczekujace(): void {
 		$id = (int) self::factory()->user->create( array( 'user_login' => 'niepotwierdzony' ) );
 		update_user_meta( $id, UserMeta::STATUS, 'email_unconfirmed' );
+		$pending = (int) self::factory()->user->create( array( 'user_login' => 'oczekujacy_fallback' ) );
+		update_user_meta( $pending, UserMeta::STATUS, 'pending' );
+		update_user_meta( $pending, UserMeta::PROFESSION, 'student' );
 		$this->asAdminPosting( ExportHandler::ACTION, array() );
 		$this->withPlainField( ApplicationsScreen::ARG_STATUS, 'email_unconfirmed' );
 
 		$out = $this->run_handler();
 
 		$this->assertStringNotContainsString( 'niepotwierdzony', $out, 'Niepotwierdzone nie są wnioskiem i nie wychodzą w pliku.' );
+		$this->assertStringContainsString( 'oczekujacy_fallback', $out, 'Fallback ma wydać zakładkę oczekujących, a nie pusty plik.' );
+	}
+
+	public function test_wyjscie_wypisane_przed_eksportem_konczy_sie_odmowa_a_nie_trescia_bez_naglowkow(): void {
+		$id = (int) self::factory()->user->create( array( 'user_login' => 'jan_kowalski' ) );
+		update_user_meta( $id, UserMeta::STATUS, 'pending' );
+		update_user_meta( $id, UserMeta::PROFESSION, 'student' );
+		$this->asAdminPosting( ExportHandler::ACTION, array() );
+		// Obcy bajt z innej wtyczki: nagłówki pobierania już nie wyjdą, więc plik z danymi osobowymi nie może pójść do strony.
+		add_filter( ExportHandler::FILTER_HEADERS_SENT, '__return_true', 20 );
+
+		$this->assertRefused( 500 );
 	}
 
 	public function test_nazwa_pliku_niesie_stan_i_date(): void {

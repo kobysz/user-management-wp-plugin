@@ -27,6 +27,9 @@ use RuntimeException;
 /**
  * Zamienia konta z filtra ekranu wniosków w gotowy tekst pliku. Neutralizację komórek robi `CsvDocument`,
  * więc tu wartości idą surowe: druga neutralizacja dałaby w arkuszu podwójny apostrof.
+ *
+ * Zasada „surowy kod, nie etykieta" obowiązuje WYŁĄCZNIE kolumnę stanu konta. Werdykt numeru i profesja są
+ * etykietami z konieczności: pierwszy nie ma kodu w domenie, a druga jest tekstem wpisanym przez administratora.
  */
 final class UserCsvExport {
 

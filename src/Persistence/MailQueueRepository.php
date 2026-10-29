@@ -475,6 +475,11 @@ final class MailQueueRepository {
 	 * drugi raz, a unikalny indeks jest jedyną odpornością kolejki na duplikaty.
 	 * Operacja jest idempotentna: rusza tylko wiersze z `anonymized = 0`, bo rdzeń woła eraser w pętli.
 	 *
+	 * Dla maila rodzaju `editorial` nadpisywany `recipient` jest adresem redakcji, nie lekarza, więc log wysyłek traci
+	 * informację, do kogo poszło powiadomienie. Jest to przyjęte świadomie, a nie przeoczone: wiersz nie niesie
+	 * rodzaju adresata i rozróżnianie go kosztowałoby osobną ścieżkę zapisu w operacji, która ma być prosta i wyczerpująca.
+	 * Zanonimizowane wiersze mają status `failed`, więc zasilają też licznik „Nieudane" na ekranie logu wysyłek.
+	 *
 	 * @param int $userId Konto.
 	 * @return int Liczba wierszy faktycznie zmienionych.
 	 */

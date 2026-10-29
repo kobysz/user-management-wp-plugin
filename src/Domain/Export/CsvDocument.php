@@ -75,9 +75,11 @@ final class CsvDocument {
 			throw new RuntimeException( 'Nie udało się otworzyć bufora w pamięci do złożenia pliku CSV.' );
 		}
 
-		fputcsv( $handle, $this->headers, ',', '"', '\\' );
+		// Pusty znak ucieczki = czyste RFC 4180: domyślny backslash rozsypywał wiersz przy odczycie w PHP, gdy wartość
+		// kończyła się nim albo miała go przed cudzysłowem. Excel i LibreOffice czytają oba warianty tak samo.
+		fputcsv( $handle, $this->headers, ',', '"', '' );
 		foreach ( $this->rows as $row ) {
-			fputcsv( $handle, $row, ',', '"', '\\' );
+			fputcsv( $handle, $row, ',', '"', '' );
 		}
 
 		rewind( $handle );

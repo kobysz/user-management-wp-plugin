@@ -90,10 +90,22 @@ final class PrivacyProviderEraseTest extends WP_UnitTestCase {
 
 		$result = PrivacyProvider::erase( 'lekarz@example.com' );
 
-		foreach ( PrivacyProvider::ERASE_META as $key ) {
+		// Klucze wypisane z palca: pętla po ERASE_META asertowałaby listę przeciw sobie samej.
+		foreach ( array( 'pusers_registration_ip', 'pusers_rejection_reason', 'pusers_confirm_hash', 'pusers_confirm_expires', 'pusers_password_ticket_hash', 'pusers_password_ticket_expires' ) as $key ) {
 			$this->assertFalse( metadata_exists( 'user', $id, $key ), $key );
 		}
 		$this->assertTrue( $result['items_removed'] );
+	}
+
+	public function test_listy_usuwane_i_zachowane_pokrywaja_wszystkie_metadane_wtyczki_bez_wspolnych(): void {
+		// Nowa stała w UserMeta::all() bez decyzji „kasować czy zostawić" ma wywalić ten test, a nie przeżyć żądanie usunięcia w ciszy.
+		$decided = array_merge( PrivacyProvider::ERASE_META, PrivacyProvider::RETAIN_META );
+		$all     = UserMeta::all();
+		sort( $decided );
+		sort( $all );
+
+		$this->assertSame( $all, $decided );
+		$this->assertSame( array(), array_values( array_intersect( PrivacyProvider::ERASE_META, PrivacyProvider::RETAIN_META ) ) );
 	}
 
 	public function test_eraser_usuwa_wszystkie_wartosci_pol_zgloszenia(): void {

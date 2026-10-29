@@ -27,10 +27,10 @@ final class CsvDocumentTest extends TestCase {
 		$handle = fopen( 'php://temp', 'r+' );
 		fwrite( $handle, $body );
 		rewind( $handle );
-		$row = fgetcsv( $handle, null, ',', '"', '\\' );
+		$row = fgetcsv( $handle, null, ',', '"', '' );
 		while ( false !== $row ) {
 			$rows[] = $row;
-			$row    = fgetcsv( $handle, null, ',', '"', '\\' );
+			$row    = fgetcsv( $handle, null, ',', '"', '' );
 		}
 		fclose( $handle );
 
@@ -65,6 +65,18 @@ final class CsvDocumentTest extends TestCase {
 
 		$this->assertCount( 2, $parsed, 'Nagłówek i dokładnie jeden wiersz danych.' );
 		$this->assertCount( 3, $parsed[1] );
+		$this->assertSame( $cells, $parsed[1] );
+	}
+
+	public function test_wartosc_z_backslashem_przechodzi_pelny_round_trip(): void {
+		// Czyste RFC 4180 nie ma znaku ucieczki: backslash przed cudzysłowem albo na końcu komórki nie może rozsypać wiersza.
+		$cells = array( 'konczy sie na \\', 'a\\"b', 'zwykla' );
+		$doc   = new CsvDocument( array( 'X', 'Y', 'Z' ) );
+		$doc->addRow( $cells );
+
+		$parsed = $this->parse( $doc->render() );
+
+		$this->assertCount( 2, $parsed );
 		$this->assertSame( $cells, $parsed[1] );
 	}
 

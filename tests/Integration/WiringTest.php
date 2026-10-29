@@ -149,9 +149,11 @@ final class WiringTest extends WP_UnitTestCase {
 	public function test_privacy_exporter_is_hooked_outside_the_features_hook(): void {
 		// Żądanie RODO ma termin ustawowy: eksporter nie może czekać na naprawę wtyczki pól.
 		remove_all_filters( 'wp_privacy_personal_data_exporters' );
+		remove_all_filters( 'wp_privacy_personal_data_erasers' );
 		Plugin::boot( Plugin::plugin_file() );
 		$this->assertFalse( has_action( 'pusers_register_features', array( PrivacyProvider::class, 'register' ) ) );
 		$this->assertNotFalse( has_filter( 'wp_privacy_personal_data_exporters', array( PrivacyProvider::class, 'register_exporter' ) ) );
+		$this->assertNotFalse( has_filter( 'wp_privacy_personal_data_erasers', array( PrivacyProvider::class, 'register_eraser' ) ) );
 	}
 
 	public function test_matrix_register_hooks_page_and_both_handlers(): void {

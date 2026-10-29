@@ -29,6 +29,11 @@ final class ExportHandler {
 	public const FILTER_EXIT = 'pusers_export_exit';
 
 	/**
+	 * Filtr, którym test podaje, czy wyjście już ruszyło (w phpunit z konsoli `headers_sent()` jest zawsze prawdą).
+	 */
+	public const FILTER_HEADERS_SENT = 'pusers_export_headers_sent';
+
+	/**
 	 * Podpina uchwyt pobierania. Wołane z `Plugin::boot()` poza bramką zależności ACF Pro, tak jak ekran wniosków.
 	 */
 	public static function register(): void {
@@ -53,8 +58,16 @@ final class ExportHandler {
 		// przeglądarka dostałaby plik do pobrania z fatalem PHP w środku.
 		$csv = UserCsvExport::for_filter( $status, self::posted_profession() );
 
-		if ( ! headers_sent() ) {
-			foreach ( self::headers( $status ) as $header ) {
+		// Gdy coś wypisało treść przed eksportem, nagłówków pobierania nie da się już wysłać. Wydanie samej treści
+		// wyrenderowałoby dane osobowe wszystkich kont zakładki wewnątrz strony panelu, bez `Content-Disposition`
+		// i bez `no-store`, czyli w stronie do zapamiętania w pamięci podręcznej. Odmowa jest głośna, bo cichy brak pliku nic by nie powiedział.
+		if ( apply_filters( self::FILTER_HEADERS_SENT, headers_sent() ) ) { // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej FILTER_HEADERS_SENT, która ma prefiks pusers_.
+			wp_die( esc_html__( 'Coś wypisało treść przed eksportem, więc plik nie został wydany. Wyłącz wtyczkę, która wypisuje treść na każdej stronie panelu, albo zgłoś sprawę administratorowi serwera, i spróbuj ponownie.', 'portal-users' ), '', array( 'response' => 500 ) );
+		}
+		foreach ( self::headers( $status ) as $header ) {
+			// Natywne sprawdzenie zostaje osobno od szwu powyżej: header() po wyjściu tylko sypie ostrzeżeniem,
+			// a w teście z konsoli szew mówi „nie wysłano", choć wyjście ruszyło.
+			if ( ! headers_sent() ) {
 				header( $header );
 			}
 		}

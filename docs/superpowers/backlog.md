@@ -127,6 +127,16 @@ Snapshot rodzaju `confirmation` zawiera **token potwierdzenia adresu ważny 48 g
 
 Do rozstrzygnięcia przez właściciela, nie przez wykonawcę: czy te dwa rodzaje maili mają mieć okno retencji liczone w **dniach** zamiast w 90 dniach — albo czy po wysyłce ma być czyszczona sama kolumna `body`? Pierwsze jest tańsze, drugie zostawia dłuższy ślad „czy ten mail wyszedł". Dopóki odpowiedzi nie ma, obowiązuje 90 dni dla wszystkich rodzajów.
 
+### Adres IP w wierszach logu z podmiotem 0 przeżywa żądanie usunięcia danych
+
+`EventLog::anonymize_subject()` szuka po `subject_user_id`, a `src/Front/PasswordReset.php` (okolice linii 405 i 1016) oraz `src/Front/SpamGuard.php` (okolice 179) piszą do logu z podmiotem `0`, bo na ścieżce odzyskiwania hasła wtyczka świadomie nie ustala, czy adres należy do konta. Kontekst tych wierszy niesie adres IP oraz `email_hash`, który jest wyliczalny z adresu (komentarz w `PasswordReset` mówi to wprost), więc wtyczka umie powiązać te wiersze z osobą, a eraser ich nie rusza. Dodatkowo `event_log` nie ma żadnego okna retencji, więc wiersze zostają bezterminowo.
+
+To defekt planu, nie wykonania; nie jest zamknięty w gałęzi Planu 7. Dwie możliwe naprawy, nie wykluczają się: (1) w erazerze anonimizować też wiersze z podmiotem `0`, których `email_hash` równa się skrótowi adresu z żądania (reguła „co zostaje" już istnieje: `ContextFilter` usuwa `ip` i `email_hash`); (2) okno retencji dla `event_log`, jak dla kolejki maili.
+
+### Anonimizacja ściga się z wysyłką w locie
+
+Wiersz w stanie `sending` w chwili żądania usunięcia jest już zajęty przez dispatchera, który trzyma treść w pamięci, więc mail może wyjść, i to jest poprawne. Eraser przestawia taki wiersz na `failed` z `CANCELLED_BY_ERASURE`, a dispatcher kończy próbę przez `mark_sent()`, które zapisuje tylko wiersz w stanie `sending` z tym samym numerem próby (`MailQueueRepository::finish()`). Zapis więc nie trafia, a wiersz zostaje `failed` / `CANCELLED_BY_ERASURE`, choć mail wyszedł. Log wysyłek mówi, że mail anulowano, a adresat go dostał: wiersz jest nieprawdziwy co do faktu wysyłki, nie tylko sprzeczny wewnętrznie. Zapisane tutaj, żeby następny czytelnik logu nie szukał błędu w dispatcherze ani w erazerze: to cena tego, że anonimizacja nie czeka na wysyłki w locie. Naprawa, gdy będzie warta kosztu: eraser pomija wiersze `sending` i zgłasza je jako niezanonimizowane (pętla rdzenia wróci po nie w następnym przebiegu), a test wyścigu wymaga drugiego połączenia.
+
 ---
 
 ## Plan 8 — Import i backfill stanów
@@ -135,7 +145,7 @@ Ta sekcja jest nowa: import z poprzedniej wtyczki i backfill stanów przy aktywa
 
 ### Backfill stanów przy aktywacji
 
-Konta istniejące na portalu przed wdrożeniem nie mają stanu. Dziś nie powoduje to utraty dostępu, bo brama logowania nie jest podłączona (Plan 4), ale po jej podłączeniu backfill musi już działać.
+Konta istniejące na portalu przed wdrożeniem nie mają stanu. Nie powoduje to utraty dostępu: brama logowania jest podłączona (Plan 4) i celowo wpuszcza konta bez zapisanego stanu (`LoginGate::decide( null )`), żeby nie zamknąć poza portalem administratora dodanego ręcznie. Konto bez stanu nie podlega jednak żadnej regule bramy (ani odmowom dla `rejected` i `pending`), więc backfill jest warunkiem, żeby istniejące konta objęły stany.
 
 ### Eksport CSV i eksporter danych osobowych widzą tylko pola z grupy ACF
 
