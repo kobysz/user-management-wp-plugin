@@ -125,6 +125,18 @@ Istnieje od pierwszej migracji, mimo że nic jej jeszcze nie używa. Żądanie u
 
 Konta istniejące na portalu przed wdrożeniem nie mają stanu. Dziś nie powoduje to utraty dostępu, bo brama logowania nie jest podłączona (Plan 4), ale po jej podłączeniu backfill musi już działać.
 
+### Anonimizacja logu wysyłek musi nadpisać `recipient`, `subject` i `body`
+
+Tabela `mail_queue` ma kolumnę `anonymized` od pierwszej migracji, ale samo postawienie jej na `1` nie anonimizuje niczego: dane zostają w wierszu. Treść maila do redakcji niesie imię i nazwisko wnioskodawcy, adres, profesję, numer uprawnień, werdykt walidacji i **każde widoczne pole zgłoszenia**; treść odrzucenia niesie powód wpisany ręcznie przez redakcję. Żądanie usunięcia danych musi więc **nadpisać** `recipient`, `subject` i `body` wiersza, a nie tylko go oznaczyć. Wiersz zostaje, bo log wysyłek wykazuje, że mail wyszedł — to jest w nim wartością, a nie treść.
+
+Pytanie otwarte, na które eksporter musi odpowiedzieć **przed** napisaniem anonimizacji: czy treści wierszy kolejki są danymi osobowymi do **wydania** w eksporcie, czy własnym zapisem administratora danych o tym, co i kiedy wysłał? Od odpowiedzi zależy, czy eksport w ogóle te kolumny czyta.
+
+### Wiersz kolejki trzyma żywy sekret jednorazowy — decyzja o retencji należy do właściciela
+
+Snapshot rodzaju `confirmation` zawiera **token potwierdzenia adresu ważny 48 godzin**, a snapshot `password_reset` — **klucz resetu hasła wygenerowany przez rdzeń**. Oba leżą w tabeli z oknem retencji 90 dni i oba są czytelne w panelu na ekranie logu wysyłek. Jest to nieunikniona konsekwencja wzorca „render treści przy zapisie", którego żąda specyfikacja, i **nie jest** eskalacją uprawnień: każdy, kto widzi ten ekran, ma już `manage_options`. Nie została natomiast nigdzie zapisana decyzja o danych **w spoczynku**: kopia bazy zrobiona w okresie ważności tokenu daje działające linki do przejęcia konta.
+
+Do rozstrzygnięcia przez właściciela, nie przez wykonawcę: czy te dwa rodzaje maili mają mieć okno retencji liczone w **dniach** zamiast w 90 dniach — albo czy po wysyłce ma być czyszczona sama kolumna `body`? Pierwsze jest tańsze, drugie zostawia dłuższy ślad „czy ten mail wyszedł". Dopóki odpowiedzi nie ma, obowiązuje 90 dni dla wszystkich rodzajów.
+
 ---
 
 ## Plan 8 — Aktualizacje i release
