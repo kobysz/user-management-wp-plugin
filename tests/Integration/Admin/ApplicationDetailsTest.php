@@ -10,6 +10,7 @@ namespace PortalUsers\Tests\Integration\Admin;
 use PortalUsers\Admin\ApplicationDetails;
 use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\Menu;
+use PortalUsers\Admin\Request;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
@@ -212,10 +213,24 @@ final class ApplicationDetailsTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '5425740', $html );
 		// Jedyny formularz to rozstrzygnięcie i ma być dokładnie jeden; poza nim nie ma żadnych kontrolek.
 		$this->assertSame( 1, preg_match_all( '/<form [^>]*pusers-decision-form.*?<\/form>/s', $html, $forms ) );
-		// Wewnątrz formularza dozwolone są tylko kontrolki, których rozstrzygnięcie naprawdę potrzebuje.
-		preg_match_all( '/<input[^>]*>/i', $forms[0][0], $inputs );
-		foreach ( $inputs[0] as $input ) {
-			$this->assertStringContainsString( 'type="hidden"', $input, 'Pole danych w formularzu rozstrzygnięcia: ' . $input );
+		// Lista dozwolonych nazw istnieje po to, żeby nikt nie wstawił do formularza rozstrzygnięcia pola z danymi
+		// zgłoszenia (także ukrytego): panel ma być tylko do czytania, a jedyne, co wysyła, to decyzja.
+		$allowed = array(
+			'action',
+			Request::NONCE_FIELD,
+			'_wp_http_referer',
+			ApplicationsScreen::FIELD_USERS . '[]',
+			ApplicationsScreen::FIELD_DECISION,
+			ApplicationsScreen::FIELD_REASON,
+			ApplicationsScreen::FIELD_REASON_PRESET,
+			ApplicationsScreen::ARG_STATUS,
+			ApplicationsScreen::ARG_PROFESSION,
+		);
+		// Preset może się nie wyrenderować (pusta lista powodów), więc sprawdzamy przynależność, nie obecność.
+		preg_match_all( '/<(?:input|textarea|select|button)\b[^>]*\bname="([^"]*)"/i', $forms[0][0], $names );
+		$this->assertNotEmpty( $names[1], 'Formularz rozstrzygnięcia ma mieć kontrolki.' );
+		foreach ( $names[1] as $name ) {
+			$this->assertContains( $name, $allowed, 'Nieoczekiwane pole w formularzu rozstrzygnięcia: ' . $name );
 		}
 		$html = (string) preg_replace( '/<form [^>]*pusers-decision-form.*?<\/form>/s', '', $html );
 		$this->assertStringContainsString( '5425740', $html, 'Po wycięciu formularza coś musi zostać.' );
