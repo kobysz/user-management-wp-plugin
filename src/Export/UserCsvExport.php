@@ -105,6 +105,8 @@ final class UserCsvExport {
 			$row->login,
 			$row->email,
 			$row->displayName,
+			// Surowy kod stanu to decyzja, nie przeoczenie: plik trafia do arkuszy i dalszej obróbki, a kod jest
+			// stabilny, w odróżnieniu od przetłumaczonej etykiety, którą zmieni pierwsza korekta tłumaczenia.
 			$row->status->value,
 			// Profesja usunięta z ustawień zostaje w koncie; surowy klucz mówi administratorowi, o którą chodzi.
 			null === $profession ? $row->professionKey : $profession->label,

@@ -139,8 +139,13 @@ final class ApplicationRepository {
 		return new WP_User_Query(
 			array(
 				'meta_query' => $meta_query,
-				'orderby'    => 'registered',
-				'order'      => 'DESC',
+				// Drugi klucz po ID: bez niego konta z tą samą sekundą rejestracji mają nieokreśloną kolejność
+				// między osobnymi zapytaniami LIMIT/OFFSET, więc strony mogą powtórzyć albo pominąć konto,
+				// a eksport przechodzi wszystkie strony.
+				'orderby'    => array(
+					'registered' => 'DESC',
+					'ID'         => 'DESC',
+				),
 				'number'     => $number,
 				'offset'     => $offset,
 				'fields'     => $fields,
