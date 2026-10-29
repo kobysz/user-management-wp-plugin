@@ -171,8 +171,53 @@ final class ApplicationDetailsTest extends WP_UnitTestCase {
 
 		$html = $this->panel( $id );
 
-		$this->assertStringContainsString( get_date_from_gmt( '2026-10-01 10:30:00', 'Y-m-d H:i' ), $html );
+		$this->assertStringContainsString( '2026-10-01 10:30', $html );
 		$this->assertStringContainsString( 'hash-regulaminu-abc', $html );
+	}
+
+	public function test_znaczniki_czasu_w_panelu_sa_w_strefie_witryny_a_nie_surowym_utc(): void {
+		update_option( 'timezone_string', 'Europe/Warsaw' );
+		try {
+			$id = $this->account();
+			update_user_meta( $id, UserMeta::CONSENT_AT, '2026-10-01 10:30:00' );
+			wp_update_user(
+				array(
+					'ID'              => $id,
+					'user_registered' => '2026-10-01 08:15:00',
+				)
+			);
+
+			$html = $this->panel( $id );
+
+			// Literały, nie wynik tej samej funkcji co kod: 1 października w Warszawie obowiązuje UTC+2.
+			$this->assertStringContainsString( '2026-10-01 12:30', $html, 'Zgoda: 10:30 UTC to 12:30 w Warszawie.' );
+			$this->assertStringNotContainsString( '2026-10-01 10:30', $html );
+			$this->assertStringContainsString( '2026-10-01 10:15', $html, 'Rejestracja: 08:15 UTC to 10:15 w Warszawie.' );
+			$this->assertStringNotContainsString( '2026-10-01 08:15', $html );
+		} finally {
+			delete_option( 'timezone_string' );
+		}
+	}
+
+	public function test_pole_ukryte_z_zapisana_wartoscia_daje_wiersz_o_liczbie_pol_spoza_macierzy_bez_wartosci(): void {
+		$id = $this->account();
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', '5425740' );
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'tajne', 'WARTOSC-UKRYTEGO-POLA' );
+
+		$html = $this->panel( $id );
+
+		$this->assertStringContainsString( 'Pola spoza obecnej macierzy', $html );
+		$this->assertStringContainsString( '1 (wartości zapisane, nie pokazywane)', $html );
+		$this->assertStringNotContainsString( 'WARTOSC-UKRYTEGO-POLA', $html, 'Reguła widoczności nietknięta: wartość nie wychodzi.' );
+	}
+
+	public function test_konto_bez_pol_spoza_macierzy_nie_ma_wiersza_o_nich(): void {
+		$id = $this->account();
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', '5425740' );
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'tajne', '' );
+
+		$this->assertStringNotContainsString( 'Pola spoza obecnej macierzy', $this->panel( $id ), 'Pusta wartość nie liczy się jako ukryte dane.' );
+		$this->assertStringNotContainsString( 'Pola spoza obecnej macierzy', $this->panel( $this->account() ) );
 	}
 
 	public function test_pokazuje_adres_ip_rejestracji(): void {

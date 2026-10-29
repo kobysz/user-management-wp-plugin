@@ -27,6 +27,10 @@ final class ApplicationRepository {
 	 *
 	 * Jedno zapytanie zamiast czterech, bo ekran liczy wszystkie zakładki przy każdym renderze.
 	 *
+	 * Zlicza wiersze `wp_usermeta`, a `paginate()` i `total()` filtrują przez `WP_User_Query`, więc licznik zakładki
+	 * może przewyższać liczbę pokazanych wierszy: osierocone `usermeta` po usuniętych kontach, zdublowany wiersz stanu
+	 * i (w sieci wielowitrynowej) konta spoza bieżącego bloga.
+	 *
 	 * @return array<string, int>
 	 */
 	public static function counts(): array {

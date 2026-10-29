@@ -121,6 +121,10 @@ Zachowanie domeny jest przypięte testem `LoginGateTest::test_unrecognised_store
 
 Istnieje od pierwszej migracji, mimo że nic jej jeszcze nie używa. Żądanie usunięcia danych osobowych ma **anonimizować** log zdarzeń, nie kasować go — log wykazuje, kto i kiedy zatwierdził konto. Nie usuwać jako „nieużywanej".
 
+### `EventLog::write()` połyka porażkę zapisu
+
+`src/Persistence/EventLog.php`, metoda `write()`, zwraca `void` i ignoruje wynik `$wpdb->insert()`. Gdy zapis logu zawiedzie po udanej zmianie stanu (`Decision::approve()` / `reject()` piszą log po zapisie stanu, a mail idzie po logu), rozstrzygnięcie jest już wysłane mailem i zgłoszone redaktorowi jako sukces, a po audycie nie ma śladu. Specyfikacja opiera na tym logu całe „kto zatwierdził i kiedy" i wymaga jego anonimizacji zamiast kasowania, więc brakujący wiersz to dziura w jedynym dowodzie decyzji. `write()` powinno zwracać `bool`, a `Decision` traktować porażkę jak `RESULT_STORAGE_FAILED` albo osobny wynik, który ekran policzy i pokaże; ta sama zmiana dotyczy pozostałych miejsc zapisu do logu (rejestracja, most ACF).
+
 ### Backfill stanów przy aktywacji
 
 Konta istniejące na portalu przed wdrożeniem nie mają stanu. Dziś nie powoduje to utraty dostępu, bo brama logowania nie jest podłączona (Plan 4), ale po jej podłączeniu backfill musi już działać.

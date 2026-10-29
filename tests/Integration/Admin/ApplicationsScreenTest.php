@@ -38,8 +38,17 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 
 	private string $redirectedTo = '';
 
+	/**
+	 * Globalna `$submenu` sprzed testu: WP_UnitTestCase przywraca hooki, ale nie tę zmienną, a test menu ją zeruje.
+	 *
+	 * @var mixed
+	 */
+	private $originalSubmenu;
+
 	public function set_up(): void {
 		parent::set_up();
+		global $submenu;
+		$this->originalSubmenu = $submenu;
 		$this->originalMethod  = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
 		$this->redirectedTo    = '';
 		$this->captureRedirect = function ( $location ) {
@@ -69,6 +78,8 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 	}
 
 	public function tear_down(): void {
+		global $submenu;
+		$submenu = $this->originalSubmenu; // phpcs:ignore WordPress.WP.GlobalVariablesOverride.Prohibited
 		remove_filter( 'wp_redirect', $this->captureRedirect );
 		$_GET                      = array();
 		$_POST                     = array();
@@ -156,6 +167,28 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( 'Student Stefan', $html );
 		foreach ( array( 'pending', 'approved', 'rejected' ) as $status ) {
 			$this->assertMatchesRegularExpression( '/href="[^"]*status=' . $status . '[^"]*profession=lekarz[^"]*"/', $html, 'Zakładka ' . $status . ' zgubiła filtr profesji.' );
+		}
+	}
+
+	public function test_kolumna_daty_rejestracji_jest_w_strefie_witryny_a_nie_surowym_utc(): void {
+		update_option( 'timezone_string', 'Europe/Warsaw' );
+		try {
+			$id = $this->account( 'pending', 'lekarz', '', 'Data Danuta' );
+			wp_update_user(
+				array(
+					'ID'              => $id,
+					'user_registered' => '2026-10-01 08:15:00',
+				)
+			);
+
+			$rows = $this->rows( $this->render() );
+
+			$this->assertCount( 1, $rows );
+			// Literał: 1 października w Warszawie obowiązuje UTC+2, więc 08:15 UTC to 10:15.
+			$this->assertStringContainsString( '<td>2026-10-01 10:15</td>', $rows[0] );
+			$this->assertStringNotContainsString( '2026-10-01 08:15', $rows[0] );
+		} finally {
+			delete_option( 'timezone_string' );
 		}
 	}
 

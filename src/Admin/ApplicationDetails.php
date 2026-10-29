@@ -131,7 +131,51 @@ final class ApplicationDetails {
 		if ( ! $shown ) {
 			echo '<tr><td>' . esc_html__( 'Dla tej profesji nie ma pól do pokazania.', 'portal-users' ) . '</td></tr>';
 		}
+
+		// Widoczność bierze się ze stanu macierzy dziś, nie z chwili zgłoszenia: pole przestawione na „ukryte"
+		// znika ze wszystkich dawnych wniosków, choć metadana została. Wartości dalej nie wychodzą (fail-closed),
+		// ale redaktor musi wiedzieć, że rozstrzyga na podstawie mniejszej liczby danych, niż lekarz podał.
+		$outside = self::count_outside_matrix( $row->userId, $visible );
+		if ( $outside > 0 ) {
+			self::row(
+				__( 'Pola spoza obecnej macierzy', 'portal-users' ),
+				/* translators: %s: liczba pól. */
+				sprintf( __( '%s (wartości zapisane, nie pokazywane)', 'portal-users' ), number_format_i18n( $outside ) )
+			);
+		}
 		echo '</tbody></table>';
+	}
+
+	/**
+	 * Ile pól wniosku ma zapisaną niepustą wartość, choć nie należy do pól widocznych dla profesji.
+	 *
+	 * Wartości nie są czytane do wyświetlenia: zwraca się wyłącznie liczba.
+	 *
+	 * @param int          $userId  Identyfikator konta.
+	 * @param array<mixed> $visible Nazwy pól widocznych dla profesji konta.
+	 */
+	private static function count_outside_matrix( int $userId, array $visible ): int {
+		$all = get_user_meta( $userId );
+		if ( ! is_array( $all ) ) {
+			return 0;
+		}
+
+		$prefixLength = strlen( UserMeta::ACF_PREFIX );
+		$count        = 0;
+		foreach ( $all as $key => $values ) {
+			$key = (string) $key;
+			if ( ! is_array( $values ) || ! str_starts_with( $key, UserMeta::ACF_PREFIX ) || in_array( substr( $key, $prefixLength ), $visible, true ) ) {
+				continue;
+			}
+			foreach ( $values as $stored ) {
+				if ( is_string( $stored ) && '' !== self::flatten( maybe_unserialize( $stored ) ) ) {
+					++$count;
+					break;
+				}
+			}
+		}
+
+		return $count;
 	}
 
 	/**
