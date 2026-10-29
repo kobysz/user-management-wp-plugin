@@ -297,6 +297,89 @@ final class ImportScreenTest extends WP_UnitTestCase {
 		$this->assertSame( array( 'dobry' => 'rejected' ), $raw['statusValues'] );
 	}
 
+	public function test_zapis_zachowuje_wpis_pola_ktorego_nie_ma_teraz_w_grupie(): void {
+		OptionStore::write(
+			OptionStore::OPTION_IMPORT_MAPPING,
+			array(
+				'fields' => array(
+					'zniknelo' => 'stary_klucz',
+					'pwz'      => 'wpmem_pwz',
+				),
+			)
+		);
+		$this->asAdminPosting( ImportScreen::ACTION_SAVE, $this->validPost() );
+
+		ImportScreen::handle_save();
+
+		$raw = OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING );
+		$this->assertSame( 'stary_klucz', $raw['fields']['zniknelo'] ?? null, 'Wpis pola nieobecnego w grupie przeżywa zapis.' );
+		$this->assertSame( 'wpmem_pwz', $raw['fields']['pwz'] ?? null );
+	}
+
+	public function test_zapis_przy_blednym_kluczu_grupy_nie_kasuje_mapowania_pol(): void {
+		OptionStore::write( OptionStore::OPTION_IMPORT_MAPPING, array( 'fields' => array( 'pwz' => 'wpmem_pwz' ) ) );
+		SettingsRepository::save( Settings::fromArray( array( 'acf_group_key' => 'group_literowka' ) ) );
+		$this->asAdminPosting( ImportScreen::ACTION_SAVE, array( 'profession_key' => 'wpmem_zawod' ) );
+
+		ImportScreen::handle_save();
+
+		$raw = OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING );
+		$this->assertSame( array( 'pwz' => 'wpmem_pwz' ), $raw['fields'] );
+		$this->assertSame( 'wpmem_zawod', $raw['professionKey'] );
+	}
+
+	public function test_zapis_zachowuje_wartosc_profesji_wskazujaca_na_usunieta_profesje(): void {
+		OptionStore::write(
+			OptionStore::OPTION_IMPORT_MAPPING,
+			array(
+				'fields'           => array( 'pwz' => 'wpmem_pwz' ),
+				'professionValues' => array(
+					'duch'   => 'usunieta',
+					'lekarz' => 'lekarz',
+				),
+			)
+		);
+		$this->asAdminPosting( ImportScreen::ACTION_SAVE, $this->validPost() );
+
+		ImportScreen::handle_save();
+
+		$raw = OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING );
+		$this->assertSame( 'usunieta', $raw['professionValues']['duch'] ?? null );
+		$this->assertSame( 'lekarz', $raw['professionValues']['lekarz'] ?? null );
+	}
+
+	public function test_widoczne_mapowanie_pola_mozna_wyczyscic_pustym_wpisem(): void {
+		OptionStore::write(
+			OptionStore::OPTION_IMPORT_MAPPING,
+			array(
+				'fields'           => array(
+					'pwz'      => 'wpmem_pwz',
+					'zniknelo' => 'stary_klucz',
+				),
+				'professionValues' => array( 'lekarz' => 'lekarz' ),
+			)
+		);
+		$this->asAdminPosting(
+			ImportScreen::ACTION_SAVE,
+			array(
+				'fields'            => array( 'pwz' => '' ),
+				'profession_key'    => 'wpmem_zawod',
+				'profession_values' => array(
+					array(
+						'source' => 'lekarz',
+						'target' => '',
+					),
+				),
+			)
+		);
+
+		ImportScreen::handle_save();
+
+		$raw = OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING );
+		$this->assertSame( array( 'zniknelo' => 'stary_klucz' ), $raw['fields'], 'Widoczny wpis wyczyszczony, nieobecny zachowany.' );
+		$this->assertSame( array(), $raw['professionValues'] );
+	}
+
 	public function test_zapis_zachowuje_ukosnik_i_cudzyslow_w_wartosci_zrodlowej(): void {
 		$post                        = $this->validPost();
 		$post['profession_values'][] = array(

@@ -16,6 +16,7 @@ use PortalUsers\Domain\Import\ImportMapping;
 use PortalUsers\Domain\Import\MetaKeyStat;
 use PortalUsers\Persistence\ImportMappingRepository;
 use PortalUsers\Persistence\MetaKeyScanner;
+use PortalUsers\Persistence\OptionStore;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 
@@ -64,8 +65,9 @@ final class ImportScreen {
 	}
 
 	/**
-	 * Zapisuje mapowanie z formularza. Pole spoza grupy ACF i profesja spoza kolekcji są odrzucane,
-	 * a mapowanie, które nie czytałoby żadnego klucza, nie nadpisuje zapisanego: administrator dostaje
+	 * Zapisuje mapowanie z formularza, scalając je z zapisanym. Pole spoza grupy ACF i profesja spoza kolekcji
+	 * nie są przyjmowane z formularza, a ich zapisane wpisy zostają nietknięte. Mapowanie,
+	 * które nie czytałoby żadnego klucza, nie nadpisuje zapisanego: administrator dostaje
 	 * osobny komunikat zamiast cichego zerowania konfiguracji.
 	 */
 	public static function handle_save(): void {
@@ -75,7 +77,18 @@ final class ImportScreen {
 		$known       = self::source()->fields();
 		$professions = ProfessionRepository::get();
 
+		// Celowo omijamy ImportMappingRepository::get(): przycina ono wpisy do bieżących pól i profesji,
+		// a zapis przycięcia skasowałby na stałe mapowanie pola, którego grupa ACF chwilowo nie zwraca
+		// (literówka w kluczu grupy daje zero pól). Wpisy, których celu teraz nie ma, zostają bez zmian;
+		// wpisy z celem obecnym w całości rządzi formularz.
+		$stored = ImportMapping::fromArray( OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING ) )->toArray();
+
 		$fields = array();
+		foreach ( $stored['fields'] as $field => $metaKey ) {
+			if ( ! array_key_exists( $field, $known ) ) {
+				$fields[ $field ] = $metaKey;
+			}
+		}
 		foreach ( self::posted_fields() as $field => $metaKey ) {
 			if ( array_key_exists( $field, $known ) ) {
 				$fields[ $field ] = $metaKey;
@@ -83,6 +96,11 @@ final class ImportScreen {
 		}
 
 		$professionValues = array();
+		foreach ( $stored['professionValues'] as $source => $target ) {
+			if ( ! $professions->has( $target ) ) {
+				$professionValues[ $source ] = $target;
+			}
+		}
 		foreach ( self::posted_pairs( 'profession_values' ) as $pair ) {
 			if ( $professions->has( $pair['target'] ) ) {
 				$professionValues[ $pair['source'] ] = $pair['target'];
