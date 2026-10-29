@@ -83,7 +83,9 @@ Nie jest to mina — `Settings::fromArray()` dopełnia brakujące klucze domyśl
 
 ### Brama logowania NIE ISTNIEJE i do jej powstania wtyczka nie egzekwuje stanu konta
 
-**To najpoważniejsza otwarta pozycja po Planie 3.** `LoginGate::decide()` istnieje od Planu 1, ma testy i **nie ma ani jednego konsumenta** — w `src/` nie ma żadnego podpięcia pod `authenticate` ani `wp_authenticate`. Skutek: konto utworzone w stanie `email_unconfirmed` **loguje się normalnie**, czyli specyfikacja („logowanie wpuszcza wyłącznie `zatwierdzony`") nie jest po Planie 3 egzekwowana w ogóle.
+> **ZAMKNIĘTE w Planie 4** (scalonym do `main`). Bramę egzekwuje `src/Front/LoginGateway.php`, podpięta poza bramką zależności ACF; `src/Front/SessionGuard.php` gasi sesje przy przejściu w stan nie-zatwierdzony, a `src/Front/RestUsers.php` zamyka ujawnianie kont przez REST. Zapis niżej zostaje jako opis wymogów, z których Plan 4 był rozliczony — nie jako stan dzisiejszy.
+
+**To była najpoważniejsza otwarta pozycja po Planie 3.** `LoginGate::decide()` istnieje od Planu 1, ma testy i **nie ma ani jednego konsumenta** — w `src/` nie ma żadnego podpięcia pod `authenticate` ani `wp_authenticate`. Skutek: konto utworzone w stanie `email_unconfirmed` **loguje się normalnie**, czyli specyfikacja („logowanie wpuszcza wyłącznie `zatwierdzony`") nie jest po Planie 3 egzekwowana w ogóle.
 
 Drugi, poważniejszy skutek: **to przewraca całą pracę Planów 3 nad nieujawnianiem kont.** Plan 3 zamknął enumerację w formularzu rejestracji (zgłoszenie na istniejący adres zwraca dokładnie odpowiedź przyjętego), ale atakujący omija to dwoma żądaniami: wysyła zgłoszenie na adres kandydata z **własnym** hasłem, potem próbuje się zalogować. Wejście znaczy „adres był wolny", komunikat o błędnym haśle znaczy „adres jest zajęty". Dwa żądania, ustawienia domyślne, pewność całkowita.
 
