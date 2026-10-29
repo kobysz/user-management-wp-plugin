@@ -11,6 +11,7 @@ namespace PortalUsers\Tests\Integration;
 
 use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\ExportHandler;
+use PortalUsers\Privacy\PrivacyProvider;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
@@ -143,6 +144,14 @@ final class WiringTest extends WP_UnitTestCase {
 		Plugin::boot( Plugin::plugin_file() );
 		$this->assertFalse( has_action( 'pusers_register_features', array( ExportHandler::class, 'register' ) ) );
 		$this->assertNotFalse( has_action( 'admin_post_' . ExportHandler::ACTION, array( ExportHandler::class, 'handle' ) ) );
+	}
+
+	public function test_privacy_exporter_is_hooked_outside_the_features_hook(): void {
+		// Żądanie RODO ma termin ustawowy: eksporter nie może czekać na naprawę wtyczki pól.
+		remove_all_filters( 'wp_privacy_personal_data_exporters' );
+		Plugin::boot( Plugin::plugin_file() );
+		$this->assertFalse( has_action( 'pusers_register_features', array( PrivacyProvider::class, 'register' ) ) );
+		$this->assertNotFalse( has_filter( 'wp_privacy_personal_data_exporters', array( PrivacyProvider::class, 'register_exporter' ) ) );
 	}
 
 	public function test_matrix_register_hooks_page_and_both_handlers(): void {
