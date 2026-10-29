@@ -237,8 +237,9 @@ final class ImportScreen {
 			Menu::SLUG_IMPORT,
 			self::NOTICE_BACKFILL_DONE,
 			array(
-				self::FIELD_PREFIX . 'granted'    => $result['granted'],
-				self::FIELD_PREFIX . 'log_failed' => $result['log_failed'] ? 1 : 0,
+				self::FIELD_PREFIX . 'granted'     => $result['granted'],
+				self::FIELD_PREFIX . 'not_granted' => $result['not_granted'],
+				self::FIELD_PREFIX . 'log_failed'  => $result['log_failed'] ? 1 : 0,
 			)
 		);
 	}
@@ -336,6 +337,22 @@ final class ImportScreen {
 				$granted
 			)
 		) . '</p></div>';
+
+		$notGranted = self::query_count( 'not_granted' );
+		if ( $notGranted > 0 ) {
+			echo '<div class="notice notice-warning"><p>' . esc_html(
+				sprintf(
+					/* translators: %d: liczba kont, którym nie udało się nadać stanu */
+					_n(
+						'Nadanie stanu nie powiodło się dla %d konta: nadal nie ma stanu. Ponowne uruchomienie jest bezpieczne, bo takie konta zostają w zakresie i pomija ono te, które już mają stan.',
+						'Nadanie stanu nie powiodło się dla %d kont: nadal nie mają stanu. Ponowne uruchomienie jest bezpieczne, bo takie konta zostają w zakresie i pomija ono te, które już mają stan.',
+						$notGranted,
+						'portal-users'
+					),
+					$notGranted
+				)
+			) . '</p></div>';
+		}
 
 		if ( self::query_count( 'log_failed' ) > 0 ) {
 			echo '<div class="notice notice-warning"><p>' . esc_html__( 'Stany zostały nadane, ale nie udało się zapisać wpisu w dzienniku zdarzeń: nie ma śladu, kto uruchomił to nadanie. Zapisz tę informację osobno.', 'portal-users' ) . '</p></div>';

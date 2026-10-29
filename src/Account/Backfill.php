@@ -90,15 +90,17 @@ final class Backfill {
 	 * strony rośnie o liczbę takich kont i obchód zawsze się kończy.
 	 *
 	 * @param int $actorUserId Administrator, który uruchomił nadanie.
-	 * @return array{granted: int, log_failed: bool} Liczba kont, które dostały stan, i informacja, że wiersza
-	 *                                               w logu nie udało się zapisać (dane i tak zostały zapisane).
+	 * @return array{granted: int, not_granted: int, log_failed: bool} Liczba kont, które dostały stan; liczba kont,
+	 *         którym zapis stanu się nie udał (zostają w zakresie); informacja, że wiersza w logu nie udało się
+	 *         zapisać (dane i tak zostały zapisane).
 	 */
 	public static function grant_approved( int $actorUserId ): array {
 		$deployedAt = self::deployed_at();
 		if ( 0 === $deployedAt ) {
 			return array(
-				'granted'    => 0,
-				'log_failed' => false,
+				'granted'     => 0,
+				'not_granted' => 0,
+				'log_failed'  => false,
 			);
 		}
 
@@ -137,13 +139,17 @@ final class Backfill {
 		}
 
 		return array(
-			'granted'    => $granted,
-			'log_failed' => $logFailed,
+			'granted'     => $granted,
+			'not_granted' => $skipped,
+			'log_failed'  => $logFailed,
 		);
 	}
 
 	/**
-	 * Zapytanie o identyfikatory kont z zakresu: bez metadanej stanu i zarejestrowane przed wdrożeniem.
+	 * Zapytanie o identyfikatory kont z zakresu: bez stanu i zarejestrowane przed wdrożeniem. „Bez stanu” to metadana
+	 * nieobecna albo pusta, tak jak rozumie to `AccountStatusRepository` (pusta wartość nie jest „nierozpoznana”).
+	 * Wartość niepusta, której wtyczka nie rozpoznaje, to czyjeś dane i nie wchodzi w zakres: nadpisanie jej
+	 * mogłoby dać dostęp kontu, które ktoś oznaczył inaczej.
 	 * `WP_User_Query` buduje `date_query` na kolumnie `user_registered`; granica jest wyłączna.
 	 * `number` nigdy nie jest zerem, bo to oznacza „bez limitu” i hydrację wszystkich kont.
 	 *
@@ -162,9 +168,15 @@ final class Backfill {
 				'order'       => 'ASC',
 				'count_total' => $countTotal,
 				'meta_query'  => array(
+					'relation' => 'OR',
 					array(
 						'key'     => UserMeta::STATUS,
 						'compare' => 'NOT EXISTS',
+					),
+					array(
+						'key'     => UserMeta::STATUS,
+						'value'   => '',
+						'compare' => '=',
 					),
 				),
 				'date_query'  => array(

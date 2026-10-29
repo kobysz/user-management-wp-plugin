@@ -219,6 +219,33 @@ final class BackfillNoticeTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'notice-success', $html );
 	}
 
+	public function test_nieudane_nadanie_mowi_o_tym_na_ekranie_i_o_bezpiecznym_ponowieniu(): void {
+		$ids   = $this->statelessAccounts( 2 );
+		$block = static fn ( $check, int $id, string $key ) => ( 'pusers_status' === $key && $id === $ids[0] ) ? false : $check;
+		$this->asAdminPosting( ImportScreen::ACTION_BACKFILL, array() );
+		add_filter( 'update_user_metadata', $block, 10, 3 );
+		try {
+			ImportScreen::handle_backfill();
+		} finally {
+			remove_filter( 'update_user_metadata', $block, 10 );
+		}
+		$this->followRedirect();
+
+		$html = $this->renderImport();
+
+		$this->assertMatchesRegularExpression( '#notice-warning[^>]*>\s*<p>Nadanie stanu nie powiodło się dla 1 konta[^<]*Ponowne uruchomienie jest bezpieczne#u', $html );
+		$this->assertStringContainsString( 'notice-success', $html );
+	}
+
+	public function test_udane_nadanie_nie_ostrzega_o_niepowodzeniu(): void {
+		$this->statelessAccounts( 1 );
+		$this->asAdminPosting( ImportScreen::ACTION_BACKFILL, array() );
+		ImportScreen::handle_backfill();
+		$this->followRedirect();
+
+		$this->assertStringNotContainsString( 'Nadanie stanu nie powiodło', $this->renderImport() );
+	}
+
 	public function test_backfill_z_ekranu_ma_te_same_bramki(): void {
 		$ids = $this->statelessAccounts( 2 );
 

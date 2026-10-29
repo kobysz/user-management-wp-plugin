@@ -115,6 +115,44 @@ final class BackfillTest extends WP_UnitTestCase {
 		$this->assertSame( AccountStatus::Rejected, AccountStatusRepository::get( $rejected ) );
 	}
 
+	public function test_pusta_wartosc_stanu_liczy_sie_jak_brak_stanu_a_niepusta_nierozpoznana_nie(): void {
+		$this->deployedAt( $this->deployed );
+		$empty = $this->account( true );
+		update_user_meta( $empty, UserMeta::STATUS, '' );
+		$garbage = $this->account( true );
+		update_user_meta( $garbage, UserMeta::STATUS, 'cos_nieznanego' );
+		$laterEmpty = $this->account( false );
+		update_user_meta( $laterEmpty, UserMeta::STATUS, '' );
+
+		$this->assertSame( 1, Backfill::stateless_count() );
+		$result = Backfill::grant_approved( 1 );
+
+		$this->assertSame( 1, $result['granted'] );
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $empty ) );
+		$this->assertSame( 'cos_nieznanego', get_user_meta( $garbage, UserMeta::STATUS, true ), 'Cudzej wartości nie nadpisujemy.' );
+		$this->assertSame( '', get_user_meta( $laterEmpty, UserMeta::STATUS, true ), 'Po wdrożeniu nic nie ruszamy.' );
+	}
+
+	public function test_nieudany_zapis_stanu_jest_zgloszony_i_nie_zapetla_obchodu(): void {
+		$this->deployedAt( $this->deployed );
+		$bad  = $this->account( true );
+		$good = $this->account( true );
+		$block = static fn ( $check, int $id, string $key ) => ( UserMeta::STATUS === $key && $id === $bad ) ? false : $check;
+		add_filter( 'update_user_metadata', $block, 10, 3 );
+
+		try {
+			$result = Backfill::grant_approved( 1 );
+		} finally {
+			remove_filter( 'update_user_metadata', $block, 10 );
+		}
+
+		$this->assertSame( 1, $result['granted'] );
+		$this->assertSame( 1, $result['not_granted'] );
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $good ) );
+		$this->assertNull( AccountStatusRepository::get( $bad ) );
+		$this->assertSame( 1, Backfill::stateless_count(), 'Nieudane konto zostaje w zakresie.' );
+	}
+
 	public function test_nadanie_zostawia_jeden_wiersz_w_logu_z_aktorem_i_liczba(): void {
 		$this->deployedAt( $this->deployed );
 		$this->account( true );
