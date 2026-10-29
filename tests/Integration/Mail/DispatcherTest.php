@@ -357,4 +357,71 @@ final class DispatcherTest extends WP_UnitTestCase {
 
 		return (string) $query;
 	}
+
+	public function test_the_stale_threshold_clears_the_transport_timeout(): void {
+		// Próg odzysku MUSI być większy od własnych timeoutów PHPMailera. Przy równych liczbach wolna,
+		// ale UDANA wysyłka jest uznawana za porzuconą w jej trakcie: przebieg A siedzi w gniazdku SMTP,
+		// odzysk oddaje wiersz do kolejki, przebieg B wysyła go po raz drugi, a przekaźnik przyjmuje
+		// w końcu obie wiadomości — lekarz dostaje dwa linki. Czas w odczycie gniazdka nie liczy się
+		// na Uniksie do `max_execution_time`, więc PHP przebiegu A też nie ubije.
+		//
+		// Liczby czytamy z klas rdzenia, nie z literału: gdy PHPMailer podniesie swoje timeouty,
+		// ten test ma zrobić się czerwony, zamiast cicho przestać pilnować czegokolwiek.
+		if ( ! class_exists( \PHPMailer\PHPMailer\SMTP::class, false ) ) {
+			require_once ABSPATH . WPINC . '/PHPMailer/SMTP.php';
+		}
+		$smtp   = new \PHPMailer\PHPMailer\SMTP();
+		$mailer = new \PHPMailer\PHPMailer\PHPMailer();
+
+		$this->assertGreaterThan( (int) $smtp->Timeout, Dispatcher::STALE_AFTER, 'Próg odzysku nie przebija timeoutu gniazdka SMTP.' );
+		$this->assertGreaterThan( (int) $smtp->Timelimit, Dispatcher::STALE_AFTER, 'Próg odzysku nie przebija limitu na komendę SMTP.' );
+		$this->assertGreaterThan( (int) $mailer->Timeout, Dispatcher::STALE_AFTER, 'Próg odzysku nie przebija timeoutu PHPMailera.' );
+	}
+
+	public function test_the_mail_carries_a_plain_text_alternative(): void {
+		// Specyfikacja: maile trafiają w znacznej części na firmowe serwery z agresywnym filtrowaniem,
+		// a tekst rzadziej wpada w filtry. Sam `text/html` bez części alternatywnej podnosi ocenę
+		// spamową na dokładnie tych filtrach, a tekst dispatcher ma już w wierszu kolejki.
+		$this->assertFalse( has_action( 'phpmailer_init' ), 'Stan wyjściowy: nikt nie dokłada wersji tekstowej.' );
+		reset_phpmailer_instance();
+		$id = $this->queue( 'd-alt' );
+
+		Dispatcher::run();
+
+		$row = $this->row( $id );
+		$this->assertSame( QueueStatus::Sent->value, $row['status'], 'Mail nie wyszedł; powód z logu: ' . (string) $row['last_error'] );
+
+		$phpmailer = tests_retrieve_phpmailer_instance();
+		$this->assertNotFalse( $phpmailer );
+		$sent = $phpmailer->get_sent();
+		$this->assertIsObject( $sent );
+		$this->assertStringContainsString( 'multipart/alternative', (string) $sent->header, 'Wiadomość musi mieć obie części.' );
+		$this->assertStringContainsString( '<!DOCTYPE html>', (string) $sent->body, 'Część HTML zostaje bez zmian.' );
+		$this->assertStringContainsString( 'Content-Type: text/plain', (string) $sent->body, 'Bez części tekstowej mail jest samym HTML-em.' );
+		// Złamania linii obu części na spacje: część HTML ma między liniami `<br />`, więc tylko część
+		// tekstowa daje po normalizacji dwie linie wiersza obok siebie.
+		$this->assertStringContainsString(
+			'Linia 1 Linia 2',
+			str_replace( chr( 10 ), ' ', str_replace( chr( 13 ), '', (string) $sent->body ) ),
+			'Część tekstowa musi nieść treść wiersza, nie HTML.'
+		);
+		$this->assertFalse( has_action( 'phpmailer_init' ), 'Szew musi zejść po tej jednej wysyłce.' );
+	}
+
+	public function test_the_plain_text_seam_is_removed_even_when_the_send_throws(): void {
+		// Trzecia część tej samej pary ze `finally`. Szew zostawiony po wyjątku dopisywałby naszą
+		// treść tekstową do maila CUDZEJ wtyczki wysłanego w tym samym żądaniu.
+		add_filter(
+			'pre_wp_mail',
+			static function () {
+				throw new \RuntimeException( 'nie ma gniazda' );
+			}
+		);
+		$this->queue( 'd-alt-throw' );
+		$this->assertFalse( has_action( 'phpmailer_init' ), 'Stan wyjściowy: nikt nie dokłada wersji tekstowej.' );
+
+		Dispatcher::run();
+
+		$this->assertFalse( has_action( 'phpmailer_init' ) );
+	}
 }

@@ -16,6 +16,7 @@ use PortalUsers\Mail\MailQueue;
 use PortalUsers\Mail\PlaceholderFactory;
 use PortalUsers\Persistence\MailQueueRepository;
 use PortalUsers\Persistence\MailTemplateRepository;
+use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\SettingsRepository;
 use WP_UnitTestCase;
 
@@ -272,5 +273,94 @@ final class MailQueueTest extends WP_UnitTestCase {
 		$this->assertSame( 'Temat z linii', $row['subject'] );
 		$this->assertSame( 'Treść gotowa', $row['body'] );
 		$this->assertSame( MailKind::PasswordReset->value, $row['kind'] );
+	}
+
+	/**
+	 * Wiersze logu zdarzeń, najstarszy naprzód.
+	 *
+	 * @return list<object>
+	 */
+	private function logRows(): array {
+		global $wpdb;
+		$table = Migrations::table( 'event_log' );
+
+		return array_values( (array) $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC" ) );
+	}
+
+	/**
+	 * Zawartość kontekstu wiersza logu.
+	 *
+	 * @param object $row Wiersz logu.
+	 * @return array<string, mixed>
+	 */
+	private function contextOf( object $row ): array {
+		$context = json_decode( (string) ( $row->context ?? '' ), true );
+
+		return is_array( $context ) ? $context : array();
+	}
+
+	/**
+	 * Filtr zapytań: wstawienie wiersza kolejki pada na bazie.
+	 *
+	 * @param string $query Zapytanie SQL.
+	 */
+	public function break_the_insert( $query ): string {
+		return false !== strpos( (string) $query, 'INSERT IGNORE INTO' ) ? 'TO NIE JEST SQL' : (string) $query;
+	}
+
+	public function test_a_database_error_while_queueing_leaves_a_trace_in_the_event_log(): void {
+		// To jedyne miejsce w kolejce, w którym mail ginie BEZ ŚLADU: wiersza w kolejce nie ma, więc
+		// log wysyłek nie odpowiada na pytanie „czy ten mail wyszedł", a strona rejestracji każe
+		// lekarzowi szukać w skrzynce wiadomości, której nie ma nigdzie.
+		global $wpdb;
+		$userId = $this->account();
+		// Komunikat wpdb o zepsutym zapytaniu jest tu oczekiwany; na wyjściu testów byłby hałasem.
+		$wpdb->suppress_errors( true );
+		add_filter( 'query', array( $this, 'break_the_insert' ) );
+
+		$queued = MailQueue::enqueue( MailKind::Confirmation, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'k', true );
+
+		remove_filter( 'query', array( $this, 'break_the_insert' ) );
+		$wpdb->suppress_errors( false );
+		$this->assertFalse( $queued );
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows, 'Porzucony mail musi zostawić dokładnie jeden wiersz w logu.' );
+		$this->assertSame( MailQueue::LOG_ACTION_REFUSED, $rows[0]->action );
+		$this->assertSame( $userId, (int) $rows[0]->subject_user_id );
+		$this->assertSame( MailKind::Confirmation->value, $this->contextOf( $rows[0] )['kind'] ?? '' );
+		$this->assertSame( 'insert_failed', $this->contextOf( $rows[0] )['reason'] ?? '' );
+		// Adresu jawnego w logu nie ma nigdzie (ta sama higiena, co w logu żądań o link).
+		$this->assertStringNotContainsString( 'jan@szpital.pl', (string) $rows[0]->context );
+	}
+
+	public function test_a_duplicate_stays_silent_in_the_event_log(): void {
+		// Duplikat klucza znaczy „ten sam mail już czeka w kolejce": oczekiwany i niegroźny.
+		// Wiersz w tabeli audytu za każdą ponowną próbę byłby hałasem, a tabela jest śladem
+		// decyzji redakcji, nie dziennikiem żądań.
+		$userId = $this->account();
+		$values = PlaceholderFactory::for_user( $userId );
+		$this->assertTrue( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', $values, 'k' ) );
+
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', $values, 'k' ) );
+
+		$this->assertSame( array(), $this->logRows(), 'Odmowa na duplikacie nie dopisuje wiersza do logu.' );
+	}
+
+	public function test_an_address_longer_than_its_column_leaves_a_trace_in_the_event_log(): void {
+		// Odmowa osiągalna w praktyce: adres redakcji wpisany w ustawieniach przechodzi `is_email()`,
+		// ale nie mieści się w kolumnie. Bez wiersza w logu `Mailer::editorial()` oddaje false,
+		// `Confirmation::confirm()` to porzuca, a redakcja nigdy nie dowiaduje się o wniosku lekarza.
+		$userId = $this->account();
+		$long   = str_repeat( 'a', 190 ) . '@szpital.pl';
+		$this->assertNotFalse( is_email( $long ), 'Adres jest formalnie poprawny: to nie test walidacji.' );
+
+		$this->assertFalse( MailQueue::enqueue( MailKind::Editorial, $userId, $long, PlaceholderFactory::for_user( $userId ), 'k' ) );
+
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows );
+		$this->assertSame( MailQueue::LOG_ACTION_REFUSED, $rows[0]->action );
+		$this->assertSame( 'recipient_too_long', $this->contextOf( $rows[0] )['reason'] ?? '' );
+		$this->assertStringNotContainsString( $long, (string) $rows[0]->context );
 	}
 }

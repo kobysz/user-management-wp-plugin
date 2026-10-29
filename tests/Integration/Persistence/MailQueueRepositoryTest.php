@@ -211,4 +211,54 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 	public function test_find_returns_null_for_missing_row(): void {
 		$this->assertNull( MailQueueRepository::find( 999999 ) );
 	}
+
+	public function test_a_failed_insert_is_reported_apart_from_a_duplicate(): void {
+		// Duplikat klucza i awaria bazy dawały wołającemu tę samą wartość: `INSERT IGNORE` pominięty
+		// na duplikacie zostawia `rows_affected = 0`, a zapytanie, które padło, zostawia 0 również.
+		// Pierwszy przypadek jest niegroźny (ten sam mail już czeka), drugi znaczy mail porzucony
+		// bez wiersza w kolejce — czyli jedyne miejsce, w którym log wysyłek nie odpowiada na pytanie
+		// „czy ten mail wyszedł".
+		$this->assertTrue( MailQueueRepository::insert( $this->row( 'klucz-err-1' ) ), 'Nowy wiersz: true.' );
+		$this->assertFalse( MailQueueRepository::insert( $this->row( 'klucz-err-1' ) ), 'Duplikat: false.' );
+
+		global $wpdb;
+		// Komunikat wpdb o zepsutym zapytaniu jest tu oczekiwany; na wyjściu testów byłby hałasem.
+		$wpdb->suppress_errors( true );
+		add_filter( 'query', array( $this, 'break_the_insert' ) );
+		$result = MailQueueRepository::insert( $this->row( 'klucz-err-2' ) );
+		remove_filter( 'query', array( $this, 'break_the_insert' ) );
+		$wpdb->suppress_errors( false );
+
+		$this->assertNull( $result, 'Awaria bazy: null, nie false.' );
+		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	/**
+	 * Filtr zapytań: wstawienie wiersza kolejki pada na bazie.
+	 *
+	 * @param string $query Zapytanie SQL.
+	 */
+	public function break_the_insert( $query ): string {
+		return false !== strpos( (string) $query, 'INSERT IGNORE INTO' ) ? 'TO NIE JEST SQL' : (string) $query;
+	}
+
+	public function test_the_age_of_the_oldest_waiting_row_is_reported(): void {
+		// Podkładka pod komunikat o niedrenowanej kolejce: bez WP-Crona nic nigdy nie wyjdzie,
+		// a jedynym śladem jest licznik na ekranie, na który nikt nie zagląda.
+		$this->assertNull( MailQueueRepository::oldest_queued_at(), 'Pusta kolejka: nie ma o czym ostrzegać.' );
+
+		$old = gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS );
+		MailQueueRepository::insert( $this->row( 'klucz-oldest-1', null, $old ) );
+		MailQueueRepository::insert( $this->row( 'klucz-oldest-2' ) );
+
+		$this->assertSame( $old, MailQueueRepository::oldest_queued_at(), 'Liczy się NAJSTARSZY wiersz, nie dowolny.' );
+
+		foreach ( MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 ) as $row ) {
+			$id      = (int) $row['id'];
+			$attempt = MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) );
+			MailQueueRepository::mark_sent( $id, gmdate( 'Y-m-d H:i:s' ), (int) $attempt );
+		}
+
+		$this->assertNull( MailQueueRepository::oldest_queued_at(), 'Wiersz wysłany nie jest już mailem, który nie wyszedł.' );
+	}
 }

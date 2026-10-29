@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers;
 
 use PortalUsers\Admin\MailLogScreen;
+use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MailTemplatesScreen;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
@@ -113,6 +114,10 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( MatrixScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MailTemplatesScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MailLogScreen::class, 'register' ) );
+		// Komunikat o niedrenowanej kolejce stoi po stronie ekranów panelu, a nie przy dispatcherze:
+		// to powiadomienie dla człowieka w panelu, a nie część wysyłki. Kolejka opróżnia się dalej
+		// bez ACF Pro; komunikat o tym, że przestała, jest wtedy jedną z rzeczy, które milczą.
+		add_action( 'pusers_register_features', array( MailQueueNotice::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginHandler::class, 'register' ) );

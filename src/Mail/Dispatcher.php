@@ -28,8 +28,19 @@ final class Dispatcher {
 
 	/**
 	 * Po tylu sekundach wiersz w stanie `sending` uznajemy za porzucony (przebieg ubity timeoutem PHP).
+	 *
+	 * MUSI zostawać z zapasem NAD najdłuższą realną długością `wp_mail()`, a nie tylko nad typową.
+	 * Transportem produkcyjnym jest SMTP (wymóg specyfikacji), a PHPMailer ma trzy własne timeouty
+	 * po 300 sekund: `SMTP::$Timeout` (gniazdko), `SMTP::$Timelimit` (na jedną komendę SMTP) oraz
+	 * `PHPMailer::$Timeout`. Próg równy tym liczbom ogłasza porzuconym wiersz, który WŁAŚNIE jest
+	 * wysyłany: przebieg A czeka w gniazdku, odzysk oddaje wiersz do kolejki, przebieg B wysyła go
+	 * ponownie, a przekaźnik przyjmuje w końcu obie wiadomości i lekarz dostaje dwa linki. Czas
+	 * spędzony w odczycie gniazdka nie liczy się na Uniksie do `max_execution_time`, więc PHP
+	 * przebiegu A też nie ubije. Straż numeru próby chroni STAN wiersza; tu chodzi o to, żeby
+	 * drugiej wysyłki w ogóle nie zaczynać. Pilnuje tego test porównujący tę stałą z liczbami
+	 * wyczytanymi z klas PHPMailera.
 	 */
-	public const STALE_AFTER = 300;
+	public const STALE_AFTER = 900;
 
 	/**
 	 * Domyślna liczba wierszy na przebieg.
@@ -90,9 +101,23 @@ final class Dispatcher {
 			}
 		};
 
-		// Nasłuch powodu i opakowanie HTML zakładamy TUŻ PRZED jednym wywołaniem i zdejmujemy
-		// w `finally`. Filtr zostawiony na stałe zmieniłby typ treści mailom innych wtyczek w tym
-		// samym żądaniu, a `wp_mail()` potrafi rzucić wyjątkiem z PHPMailera.
+		// Wersja tekstowa jako część alternatywna wiadomości. Specyfikacja mówi, że te maile trafiają
+		// w znacznej części na firmowe serwery pocztowe z agresywnym filtrowaniem i że tekst rzadziej
+		// wpada w filtry; sam `text/html` BEZ części alternatywnej jest na tych filtrach rozpoznanym
+		// składnikiem oceny spamowej. Tekst mamy już w wierszu, więc część tekstowa nic nie kosztuje.
+		// Wartość ustawia `phpmailer_init` — jedyny szew, na którym widać obiekt PHPMailera przed
+		// wysyłką — i jak filtr typu treści żyje przez dokładnie jedno `wp_mail()`, zdejmowana
+		// w `finally`: akcja zostawiona na stałe dopisałaby tę treść mailowi innej wtyczki.
+		$plain       = self::text( $row, 'body' );
+		$alternative = static function ( $phpmailer ) use ( $plain ): void {
+			if ( $phpmailer instanceof \PHPMailer\PHPMailer\PHPMailer ) {
+				$phpmailer->AltBody = $plain;
+			}
+		};
+
+		// Nasłuch powodu, wersję tekstową i opakowanie HTML zakładamy TUŻ PRZED jednym wywołaniem
+		// i zdejmujemy wszystkie trzy w `finally`. Którykolwiek z nich zostawiony na stałe sięgnąłby
+		// do maila innej wtyczki w tym samym żądaniu, a `wp_mail()` potrafi rzucić wyjątkiem z PHPMailera.
 		//
 		// Priorytet PHP_INT_MAX, nie domyślny: `wp_mail()` czyta typ treści NAJPIERW z nagłówków,
 		// a filtr stosuje po nich, więc własny nagłówek `Content-Type` byłby tu SŁABSZY od filtra,
@@ -102,9 +127,10 @@ final class Dispatcher {
 		// jako tekst. Wtyczka SMTP, która podmienia całe `wp_mail()`, może filtr zignorować —
 		// to już poza naszym zasięgiem.
 		add_action( 'wp_mail_failed', $failed );
+		add_action( 'phpmailer_init', $alternative );
 		add_filter( 'wp_mail_content_type', array( self::class, 'html_content_type' ), PHP_INT_MAX );
 		try {
-			$sent = wp_mail( self::text( $row, 'recipient' ), self::text( $row, 'subject' ), HtmlBody::wrap( self::text( $row, 'body' ) ) );
+			$sent = wp_mail( self::text( $row, 'recipient' ), self::text( $row, 'subject' ), HtmlBody::wrap( $plain ) );
 		} catch ( \Throwable $e ) {
 			// Wiersz zostawiony w `sending` przez wyjątek wyszedłby drugi raz po odzysku, a paczka
 			// stanęłaby na pierwszym zepsutym mailu.
@@ -112,6 +138,7 @@ final class Dispatcher {
 			$reason = $e->getMessage();
 		} finally {
 			remove_filter( 'wp_mail_content_type', array( self::class, 'html_content_type' ), PHP_INT_MAX );
+			remove_action( 'phpmailer_init', $alternative );
 			remove_action( 'wp_mail_failed', $failed );
 		}
 

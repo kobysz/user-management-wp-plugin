@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration;
 
+use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
@@ -78,6 +79,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'settings'    => array( SettingsScreen::class ),
 			'professions' => array( ProfessionsScreen::class ),
 			'matrix'      => array( MatrixScreen::class ),
+			'mail queue notice' => array( MailQueueNotice::class ),
 			'registration' => array( RegistrationForm::class ),
 			'registration handler' => array( RegistrationHandler::class ),
 			'login form' => array( LoginForm::class ),

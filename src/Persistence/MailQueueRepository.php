@@ -50,13 +50,22 @@ final class MailQueueRepository {
 	 * insert() zwróciłby false, a wywołujący odczytałby to jako "już w kolejce" i mail by nie wyszedł.
 	 * To samo dotyczy `recipient` i RECIPIENT_MAX, tylko skutkiem jest mail na obcięty adres.
 	 *
+	 * Wynik jest TRÓJSTANOWY, bo trzeciego stanu nie da się wyczytać z `rows_affected`: pominięty
+	 * duplikat zostawia tam 0 i padnięte zapytanie zostawia tam 0 również, a to dwie różne rzeczy.
+	 * Duplikat znaczy „ten sam mail już czeka w kolejce" i jest niegroźny; awaria bazy znaczy mail
+	 * porzucony bez wiersza, więc log wysyłek nie odpowiada na pytanie „czy ten mail wyszedł".
+	 * Rozróżnienie jedzie wartością zwrotną, a nie osobnym pytaniem o `$wpdb->last_error`:
+	 * `wpdb::query()` zeruje tamto pole przy każdym następnym zapytaniu, więc drugi odczyt globalnego
+	 * stanu dałby odpowiedź o cudzym zapytaniu. Wołający, który pyta tylko „czy wiersz powstał",
+	 * czyta wynik jak dotąd (null jest fałszywy); o powód pyta porównaniem identycznościowym.
+	 *
 	 * @param array{created_at:string,scheduled_at:string,kind:string,dedupe_key:string,user_id:int,recipient:string,subject:string,body:string} $row Dane wiersza.
-	 * @return bool True tylko gdy wiersz POWSTAŁ.
+	 * @return bool|null True gdy wiersz POWSTAŁ, false gdy pominięto duplikat klucza, null gdy zapis padł na bazie.
 	 */
-	public static function insert( array $row ): bool {
+	public static function insert( array $row ): ?bool {
 		global $wpdb;
 
-		$wpdb->query(
+		$result = $wpdb->query(
 			$wpdb->prepare(
 				'INSERT IGNORE INTO %i (created_at, scheduled_at, kind, dedupe_key, user_id, recipient, subject, body, status, attempts, anonymized) VALUES (%s, %s, %s, %s, %d, %s, %s, %s, %s, 0, 0)',
 				Migrations::table( self::TABLE ),
@@ -72,8 +81,39 @@ final class MailQueueRepository {
 			)
 		);
 
+		if ( false === $result ) {
+			// `wpdb::query()` oddaje false WYŁĄCZNIE wtedy, gdy zapytanie padło; pominięty duplikat
+			// jest dla niej udanym zapytaniem o zerze wierszy (int 0). Porównanie identycznościowe,
+			// bo 0 jest tu czymś innym niż false.
+			return null;
+		}
+
 		// Nie insert_id: przy pominiętym duplikacie zostaje w nim wartość z poprzedniego zapisu na tym połączeniu.
 		return 1 === $wpdb->rows_affected;
+	}
+
+	/**
+	 * Moment utworzenia NAJSTARSZEGO wiersza czekającego na wysyłkę albo null, gdy żaden nie czeka.
+	 *
+	 * Podkładka pod komunikat o kolejce, która przestała się opróżniać (patrz MailQueueNotice).
+	 * Jedno zapytanie po indeksie `dispatch (status, scheduled_at)`, bez odczytu wierszy: biegnie
+	 * przy wejściach do panelu, więc nie wolno mu rosnąć z rozmiarem logu wysyłek.
+	 *
+	 * @return string|null Znacznik `Y-m-d H:i:s` w UTC.
+	 */
+	public static function oldest_queued_at(): ?string {
+		global $wpdb;
+
+		$oldest = $wpdb->get_var(
+			$wpdb->prepare(
+				'SELECT MIN(created_at) FROM %i WHERE status = %s',
+				Migrations::table( self::TABLE ),
+				QueueStatus::Queued->value
+			)
+		);
+
+		// MIN() na pustym zbiorze oddaje NULL, nie brak wiersza.
+		return is_string( $oldest ) && '' !== $oldest ? $oldest : null;
 	}
 
 	/**

@@ -15,6 +15,7 @@ use PortalUsers\Domain\Mail\MailKind;
 use PortalUsers\Domain\Mail\Placeholders;
 use PortalUsers\Domain\Mail\TemplateRenderer;
 use PortalUsers\Front\Mailer;
+use PortalUsers\Persistence\EventLog;
 use PortalUsers\Persistence\MailQueueRepository;
 use PortalUsers\Persistence\MailTemplateRepository;
 
@@ -36,6 +37,20 @@ final class MailQueue {
 	 * więc wstawienie wiersza nie zależy od tego, czy harmonogram jest w ogóle zarejestrowany.
 	 */
 	public const DISPATCH_HOOK = 'pusers_dispatch_mail_now';
+
+	/**
+	 * Zdarzenie w logu: kolejka odmówiła przyjęcia wiersza, więc mail nie wyjdzie nigdy.
+	 *
+	 * Rodzeństwo `CoreCapture::LOG_ACTION_NOT_QUEUED`, nie ta sama nazwa, bo to inny fakt: tamten
+	 * wiersz mówi „mail rdzeniowy został zabrany z `wp_mail()` i przepadł", ten — „kolejka odmówiła,
+	 * a oto powód". Na drodze odzyskiwania hasła oba wiersze powstają razem i tak ma być: pierwszy
+	 * wskazuje mail, którego rdzeń już nie wyśle, drugi tłumaczy dlaczego.
+	 *
+	 * Reguła jest ta sama, którą `CoreCapture` opisuje: wiersz zostawia tylko odmowa GROŹNA. Duplikat
+	 * klucza odporności (ten sam mail już czeka w kolejce) jest oczekiwany i zostaje cichy — inaczej
+	 * każde odświeżenie formularza dokładałoby wiersz do tabeli audytu.
+	 */
+	public const LOG_ACTION_REFUSED = 'mail_queue_refused';
 
 	/**
 	 * Renderuje szablon rodzaju, przepuszcza temat i treść przez filtry i kolejkuje wiersz.
@@ -111,19 +126,23 @@ final class MailQueue {
 	public static function enqueue_rendered( MailKind $kind, int $userId, string $recipient, string $subject, string $body, string $dedupeKey, bool $immediate = false ): bool {
 		$address = sanitize_email( trim( $recipient ) );
 		if ( '' === $address || ! is_email( $address ) ) {
-			return false;
+			return self::refuse( $kind, $userId, 'invalid_recipient' );
 		}
 		if ( strlen( $address ) > MailQueueRepository::RECIPIENT_MAX ) {
 			// `is_email()` przyjmuje adres do 254 znaków (limit RFC), a kolumna jest krótsza i wpdb
 			// pracuje bez trybów ścisłych. Obcięcie byłoby niewidoczne: klucz odporności powstaje z
 			// adresu pełnego, więc wiersz wyglądałby spójnie, a mail poszedłby na adres, którego nikt nie ma.
-			return false;
+			//
+			// Ta odmowa jest OSIĄGALNA z panelu: adres redakcji dłuższy od kolumny przechodzi
+			// `is_email()`, a dalej `Mailer::editorial()` oddaje false, `Confirmation::confirm()`
+			// ten false porzuca — i bez wiersza w logu redakcja nigdy nie dowiaduje się o wniosku.
+			return self::refuse( $kind, $userId, 'recipient_too_long' );
 		}
 
 		$subject = self::single_line( $subject );
 		if ( '' === $subject && '' === trim( $body ) ) {
 			// Nie ma czego wysłać: pusty mail byłby dla odbiorcy zagadką, a w logu wysyłek hałasem.
-			return false;
+			return self::refuse( $kind, $userId, 'empty_message' );
 		}
 
 		$key = $dedupeKey . ':' . substr( wp_hash( strtolower( $address ) ), 0, 16 );
@@ -131,7 +150,7 @@ final class MailQueue {
 			// Obcięty klucz zderzyłby się na indeksie z innym o tym samym przedrostku, `insert()`
 			// oddałby false, a wołający odczytałby to jako „już w kolejce" i mail nigdy by nie wyszedł.
 			// Odmowa tutaj jest widoczna w wyniku; cicha kolizja nie byłaby widoczna nigdzie.
-			return false;
+			return self::refuse( $kind, $userId, 'dedupe_key_too_long' );
 		}
 
 		$now    = gmdate( 'Y-m-d H:i:s' );
@@ -148,12 +167,49 @@ final class MailQueue {
 			)
 		);
 
+		if ( null === $queued ) {
+			// Awaria zapisu, nie duplikat: wiersza w kolejce NIE MA, więc log wysyłek o tym mailu
+			// nic nie wie, a strona rejestracji właśnie kazała lekarzowi szukać go w skrzynce.
+			// Jedynym śladem jest ten wiersz w logu zdarzeń.
+			return self::refuse( $kind, $userId, 'insert_failed' );
+		}
+
 		if ( $queued && $immediate ) {
 			// Tylko gdy wiersz powstał: zdarzenie bez wiersza budziłoby dispatchera po nic.
 			wp_schedule_single_event( time(), self::DISPATCH_HOOK );
 		}
 
 		return $queued;
+	}
+
+	/**
+	 * Zapisuje groźną odmowę w logu zdarzeń i oddaje false, czyli „wiersz nie powstał".
+	 *
+	 * Adresu jawnego w wierszu NIE MA (ta sama higiena, co w logu żądań o link): rodzaj, konto
+	 * i powód wystarczą, żeby administrator znalazł, czyj mail przepadł. Zapis jest OGRANICZONY
+	 * liczbą zdarzeń, które go wyzwalają: kolejkowanie z żądania anonimowego siedzi za progami
+	 * SpamGuarda (per adres IP i per adres e-mail) oraz za `Mailer::may_send_to()`, a odmowy są
+	 * stanami konfiguracji albo awarii, nie czymś, co odwiedzający umie wywołać na żądanie.
+	 * Nieograniczonego `INSERT`-u do tabeli audytu ta wtyczka już raz przepłaciła.
+	 *
+	 * Duplikat klucza tu NIE trafia (patrz LOG_ACTION_REFUSED).
+	 *
+	 * @param MailKind $kind   Rodzaj maila, który przepadł.
+	 * @param int      $userId Konto, którego mail dotyczył (0, gdy żadne).
+	 * @param string   $reason Powód odmowy w kontekście wiersza.
+	 */
+	private static function refuse( MailKind $kind, int $userId, string $reason ): bool {
+		EventLog::write(
+			self::LOG_ACTION_REFUSED,
+			$userId,
+			0,
+			array(
+				'kind'   => $kind->value,
+				'reason' => $reason,
+			)
+		);
+
+		return false;
 	}
 
 	/**
