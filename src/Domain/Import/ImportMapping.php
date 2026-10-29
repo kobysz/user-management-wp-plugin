@@ -39,13 +39,15 @@ final class ImportMapping {
 	 *
 	 * Celowo bez email_unconfirmed: zadanie czyszczące usuwa konta w tym stanie po skonfigurowanym
 	 * okresie, więc dopuszczenie go zamieniłoby import w narzędzie kasowania kont.
+	 * Literały zamiast AccountStatus::X->value: wyrażenie stałe nie czyta wartości przypadku enuma
+	 * przed PHP 8.2, a wtyczka wspiera 8.1; zgodność z enumem pilnuje test.
 	 *
 	 * @var list<string>
 	 */
 	public const ALLOWED_STATUSES = array(
-		AccountStatus::Pending->value,
-		AccountStatus::Approved->value,
-		AccountStatus::Rejected->value,
+		'pending',
+		'approved',
+		'rejected',
 	);
 
 	/**

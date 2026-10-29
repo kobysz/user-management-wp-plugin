@@ -35,6 +35,17 @@ final class ImportMappingTest extends TestCase {
 		$this->assertSame( array( 'pending', 'approved', 'rejected' ), ImportMapping::ALLOWED_STATUSES );
 	}
 
+	public function test_dozwolone_stany_sa_zgodne_z_enumem(): void {
+		$this->assertSame(
+			array(
+				AccountStatus::Pending->value,
+				AccountStatus::Approved->value,
+				AccountStatus::Rejected->value,
+			),
+			ImportMapping::ALLOWED_STATUSES
+		);
+	}
+
 	public function test_kazdy_dozwolony_stan_jest_przyjmowany(): void {
 		$mapping = ImportMapping::fromArray(
 			array(
