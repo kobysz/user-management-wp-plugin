@@ -29,6 +29,8 @@ final class MetaKeyScanner {
 	 *
 	 * @param int $limit Najwyżej tyle kluczy; najliczniejsze pierwsze.
 	 * @return list<MetaKeyStat> Malejąco po liczbie kont, przy równej liczbie alfabetycznie po kluczu.
+	 * @throws \RuntimeException Gdy zapytanie o liczniki kont się nie powiodło. Porażka zapytania o próbki jednego klucza
+	 *                           nie rzuca: klucz zostaje na liście z licznikiem i bez przykładów.
 	 */
 	public static function scan( int $limit = self::MAX_KEYS ): array {
 		global $wpdb;
@@ -45,8 +47,13 @@ final class MetaKeyScanner {
 			ARRAY_A
 		);
 
+		// get_results() zwraca null przy błędzie SQL; pusta lista oznaczałaby „portal bez metadanych" i administrator nic by nie zmapował.
+		if ( ! is_array( $rows ) || '' !== $wpdb->last_error ) {
+			throw new \RuntimeException( 'Nie udało się odczytać kluczy user_meta z bazy danych.' );
+		}
+
 		$stats = array();
-		foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+		foreach ( $rows as $row ) {
 			$key = (string) $row['meta_key'];
 
 			$samples = $wpdb->get_col(

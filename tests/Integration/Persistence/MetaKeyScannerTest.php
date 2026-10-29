@@ -77,8 +77,9 @@ final class MetaKeyScannerTest extends WP_UnitTestCase {
 		$a = $this->account();
 		$b = $this->account();
 		$c = $this->account();
-		// Kolejność wstawiania: zz (1 konto), mm (2), aa (1), bb (3) — oczekiwana: bb, mm, aa, zz.
+		// Kolejność wstawiania: zz (1 konto), cc (1), mm (2), aa (1), bb (3) — oczekiwana: bb, mm, aa, cc, zz.
 		update_user_meta( $a, 'zz_key', '1' );
+		update_user_meta( $b, 'cc_key', '1' );
 		update_user_meta( $a, 'mm_key', '1' );
 		update_user_meta( $b, 'mm_key', '1' );
 		update_user_meta( $c, 'aa_key', '1' );
@@ -88,8 +89,8 @@ final class MetaKeyScannerTest extends WP_UnitTestCase {
 
 		$stats = MetaKeyScanner::scan();
 
-		$this->assertSame( array( 'bb_key', 'mm_key', 'aa_key', 'zz_key' ), $this->keys( $stats ) );
-		$this->assertSame( array( 3, 2, 1, 1 ), array_map( static fn( MetaKeyStat $s ): int => $s->accounts, $stats ) );
+		$this->assertSame( array( 'bb_key', 'mm_key', 'aa_key', 'cc_key', 'zz_key' ), $this->keys( $stats ) );
+		$this->assertSame( array( 3, 2, 1, 1, 1 ), array_map( static fn( MetaKeyStat $s ): int => $s->accounts, $stats ) );
 	}
 
 	public function test_limit_obcina_liste(): void {
@@ -127,5 +128,44 @@ final class MetaKeyScannerTest extends WP_UnitTestCase {
 		$this->account();
 
 		$this->assertSame( array(), MetaKeyScanner::scan() );
+	}
+
+	/**
+	 * Wykonuje skan z zapytaniami przepisanymi na błędne (bez DDL: tabela zostaje nietknięta).
+	 *
+	 * @param callable(string): bool $matches Czy dane zapytanie ma zostać zepsute.
+	 * @return list<MetaKeyStat>
+	 */
+	private function scan_with_broken_queries( callable $matches ): array {
+		global $wpdb;
+		$filter   = static fn( string $query ): string => $matches( $query ) ? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje' : $query;
+		$previous = (bool) $wpdb->suppress_errors( true );
+		add_filter( 'query', $filter );
+		try {
+			return MetaKeyScanner::scan();
+		} finally {
+			remove_filter( 'query', $filter );
+			$wpdb->suppress_errors( $previous );
+		}
+	}
+
+	public function test_porazka_zapytania_o_liczniki_rzuca_zamiast_udawac_pusty_portal(): void {
+		update_user_meta( $this->account(), 'wpmem_pwz', '1' );
+
+		$this->expectException( \RuntimeException::class );
+		$this->scan_with_broken_queries( static fn( string $query ): bool => str_contains( $query, 'COUNT(DISTINCT' ) );
+	}
+
+	public function test_porazka_probek_jednego_klucza_zostawia_klucz_z_licznikiem_bez_przykladow(): void {
+		$id = $this->account();
+		update_user_meta( $id, 'aa_key', 'wartosc-a' );
+		update_user_meta( $id, 'bb_key', 'wartosc-b' );
+
+		$stats = $this->scan_with_broken_queries( static fn( string $query ): bool => str_contains( $query, 'SELECT DISTINCT meta_value' ) && str_contains( $query, "'aa_key'" ) );
+
+		$this->assertSame( array( 'aa_key', 'bb_key' ), $this->keys( $stats ) );
+		$this->assertSame( 1, $stats[0]->accounts );
+		$this->assertSame( array(), $stats[0]->samples );
+		$this->assertSame( array( 'wartosc-b' ), $stats[1]->samples );
 	}
 }
