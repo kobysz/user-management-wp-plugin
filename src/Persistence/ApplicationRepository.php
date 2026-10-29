@@ -62,8 +62,10 @@ final class ApplicationRepository {
 	 * @return int
 	 */
 	public static function total( AccountStatus $status, string $professionKey = '' ): int {
-		// Zerowe `number` nie pobiera wierszy, a `get_total()` i tak zna liczbę dopasowań.
-		return (int) self::query( $status, $professionKey, 0, 0 )->get_total();
+		// `number` wynosi 1, nie 0: zero oznacza w rdzeniu brak limitu, więc wczytałby i zhydratował
+		// każde dopasowane konto. Pełną liczbę daje `get_total()` z osobnego zapytania liczącego,
+		// którego LIMIT nie dotyczy; identyfikatory wystarczą, bo obiektów nikt nie czyta.
+		return (int) self::query( $status, $professionKey, 1, 0, 'ID' )->get_total();
 	}
 
 	/**
@@ -112,9 +114,10 @@ final class ApplicationRepository {
 	 * @param string        $professionKey Klucz profesji; pusty = bez filtra.
 	 * @param int           $number        Ile kont pobrać.
 	 * @param int           $offset        Przesunięcie.
+	 * @param string        $fields        Pobierane pola: 'all' (obiekty) albo 'ID'.
 	 * @return WP_User_Query
 	 */
-	private static function query( AccountStatus $status, string $professionKey, int $number, int $offset ): WP_User_Query {
+	private static function query( AccountStatus $status, string $professionKey, int $number, int $offset, string $fields = 'all' ): WP_User_Query {
 		$meta_query = array(
 			'relation' => 'AND',
 			array(
@@ -136,6 +139,7 @@ final class ApplicationRepository {
 				'order'      => 'DESC',
 				'number'     => $number,
 				'offset'     => $offset,
+				'fields'     => $fields,
 			)
 		);
 	}

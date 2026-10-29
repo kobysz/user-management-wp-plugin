@@ -125,6 +125,17 @@ final class ApplicationRepositoryTest extends WP_UnitTestCase {
 		$this->assertSame( 3, ApplicationRepository::total( AccountStatus::Pending ) );
 	}
 
+	public function test_total_zwraca_pelna_liczbe_wnioskow_a_nie_rozmiar_strony(): void {
+		for ( $i = 0; $i < 5; $i++ ) {
+			$this->account( 'pending' );
+		}
+		$this->account( 'approved' );
+
+		$this->assertCount( 2, ApplicationRepository::paginate( AccountStatus::Pending, '', 2, 0 ) );
+		$this->assertSame( 5, ApplicationRepository::total( AccountStatus::Pending ) );
+		$this->assertSame( 1, ApplicationRepository::total( AccountStatus::Approved ) );
+	}
+
 	public function test_wiersz_niesie_numer_uprawnien_z_metadanej_z_przedrostkiem(): void {
 		$this->seed_professions();
 		$id = $this->account( 'pending', 'lekarz', '2026-03-01 10:00:00' );
