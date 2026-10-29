@@ -49,6 +49,7 @@ final class ApplicationsScreen {
 	private const ARG_DECISION       = 'pusers_decision_done';
 	private const ARG_DONE           = 'pusers_done';
 	private const ARG_MAIL_FAILED    = 'pusers_mail_failed';
+	private const ARG_LOG_FAILED     = 'pusers_log_failed';
 	private const ARG_UNCHANGED      = 'pusers_unchanged';
 	private const ARG_REASON_UPDATED = 'pusers_reason_updated';
 	private const ARG_SKIPPED        = 'pusers_skipped';
@@ -98,6 +99,7 @@ final class ApplicationsScreen {
 		$counts = array(
 			self::ARG_DONE           => 0,
 			self::ARG_MAIL_FAILED    => 0,
+			self::ARG_LOG_FAILED     => 0,
 			self::ARG_UNCHANGED      => 0,
 			self::ARG_REASON_UPDATED => 0,
 			self::ARG_SKIPPED        => 0,
@@ -112,6 +114,11 @@ final class ApplicationsScreen {
 					// Konto jest rozstrzygnięte, ale lekarz nie dostał maila: liczy się do obu, bo redakcja musi to wiedzieć.
 					++$counts[ self::ARG_DONE ];
 					++$counts[ self::ARG_MAIL_FAILED ];
+					break;
+				case Decision::RESULT_LOG_FAILED:
+					// Stan konta zmieniony i mail poszedł, ale w logu nie ma śladu: liczy się do obu, bo audyt ma lukę.
+					++$counts[ self::ARG_DONE ];
+					++$counts[ self::ARG_LOG_FAILED ];
 					break;
 				case Decision::RESULT_UNCHANGED:
 					++$counts[ self::ARG_UNCHANGED ];
@@ -289,6 +296,7 @@ final class ApplicationsScreen {
 		} elseif ( self::NOTICE_DECIDED === $notice ) {
 			$done        = absint( self::query_arg( self::ARG_DONE ) );
 			$mail_failed = absint( self::query_arg( self::ARG_MAIL_FAILED ) );
+			$log_failed  = absint( self::query_arg( self::ARG_LOG_FAILED ) );
 			$unchanged   = absint( self::query_arg( self::ARG_UNCHANGED ) );
 			$updated     = absint( self::query_arg( self::ARG_REASON_UPDATED ) );
 			$skipped     = absint( self::query_arg( self::ARG_SKIPPED ) );
@@ -309,6 +317,10 @@ final class ApplicationsScreen {
 				/* translators: %s: liczba wniosków. */
 				$lines[] = sprintf( __( 'Mail do wnioskodawcy nie wyszedł (wnioski: %s). Konta są rozstrzygnięte, ale trzeba powiadomić ich inaczej.', 'portal-users' ), number_format_i18n( $mail_failed ) );
 			}
+			if ( $log_failed > 0 ) {
+				/* translators: %s: liczba wniosków. */
+				$lines[] = sprintf( __( 'Rozstrzygnięcia weszły, ale nie zostały odnotowane w logu (wnioski: %s). Konta są rozstrzygnięte, lecz w audycie brakuje po nich śladu.', 'portal-users' ), number_format_i18n( $log_failed ) );
+			}
 			if ( $unchanged > 0 ) {
 				$lines[] = self::DECIDE_REJECT === self::query_arg( self::ARG_DECISION )
 					/* translators: %s: liczba wniosków. */
@@ -324,7 +336,7 @@ final class ApplicationsScreen {
 				$lines[] = __( 'Nic nie zmieniono.', 'portal-users' );
 			}
 
-			$class = $mail_failed > 0 || $unchanged > 0 || $skipped > 0 || ( 0 === $done && 0 === $updated ) ? 'notice-warning' : 'notice-success';
+			$class = $mail_failed > 0 || $log_failed > 0 || $unchanged > 0 || $skipped > 0 || ( 0 === $done && 0 === $updated ) ? 'notice-warning' : 'notice-success';
 			echo '<div class="notice ' . esc_attr( $class ) . ' is-dismissible">';
 			foreach ( $lines as $line ) {
 				echo '<p>' . esc_html( $line ) . '</p>';

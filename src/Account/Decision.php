@@ -37,6 +37,7 @@ final class Decision {
 	public const RESULT_EMPTY_REASON   = 'empty_reason';
 	public const RESULT_STORAGE_FAILED = 'storage_failed';
 	public const RESULT_MAIL_FAILED    = 'mail_failed';
+	public const RESULT_LOG_FAILED     = 'log_failed';
 
 	public const LOG_APPROVED       = 'application_approved';
 	public const LOG_REJECTED       = 'application_rejected';
@@ -61,9 +62,9 @@ final class Decision {
 			return self::RESULT_STORAGE_FAILED;
 		}
 
-		EventLog::write( self::LOG_APPROVED, $userId, $actorId, array( 'previous_status' => $guard->value ) );
+		$logged = EventLog::write( self::LOG_APPROVED, $userId, $actorId, array( 'previous_status' => $guard->value ) );
 
-		return Mailer::approved( $userId ) ? self::RESULT_OK : self::RESULT_MAIL_FAILED;
+		return self::finish( $logged, Mailer::approved( $userId ), self::RESULT_OK );
 	}
 
 	/**
@@ -99,7 +100,7 @@ final class Decision {
 		// dziś, log mówi, kto i z jakim powodem to zrobił. Metadana idzie dopiero po potwierdzeniu stanu,
 		// żeby nieudana decyzja nie zostawiła powodu.
 		update_user_meta( $userId, UserMeta::REJECTION_REASON, $clean );
-		EventLog::write(
+		$logged = EventLog::write(
 			self::LOG_REJECTED,
 			$userId,
 			$actorId,
@@ -109,7 +110,7 @@ final class Decision {
 			)
 		);
 
-		return Mailer::rejected( $userId, $clean ) ? self::RESULT_OK : self::RESULT_MAIL_FAILED;
+		return self::finish( $logged, Mailer::rejected( $userId, $clean ), self::RESULT_OK );
 	}
 
 	/**
@@ -149,7 +150,7 @@ final class Decision {
 			return self::RESULT_STORAGE_FAILED;
 		}
 
-		EventLog::write(
+		$logged = EventLog::write(
 			self::LOG_REJECTED,
 			$userId,
 			$actorId,
@@ -159,7 +160,26 @@ final class Decision {
 			)
 		);
 
-		return Mailer::rejected( $userId, $clean ) ? self::RESULT_REASON_UPDATED : self::RESULT_MAIL_FAILED;
+		return self::finish( $logged, Mailer::rejected( $userId, $clean ), self::RESULT_REASON_UPDATED );
+	}
+
+	/**
+	 * Składa kod wyniku z porażek, które przyszły po udanym zapisie stanu.
+	 *
+	 * Porażka logu wygrywa z porażką maila: jeden kod nie niesie dwóch porażek, a brak śladu w audycie
+	 * jest poważniejszy niż brak maila, o którym da się dowiedzieć od lekarza. Mail wychodzi tak czy tak
+	 * (wołający wysyła go przed wywołaniem tej metody), bo stan jest prawdą i lekarz ma prawo ją znać.
+	 *
+	 * @param bool   $logged  Czy wiersz logu powstał.
+	 * @param bool   $mailed  Czy mail trafił do kolejki.
+	 * @param string $success Kod sukcesu tej ścieżki.
+	 */
+	private static function finish( bool $logged, bool $mailed, string $success ): string {
+		if ( ! $logged ) {
+			return self::RESULT_LOG_FAILED;
+		}
+
+		return $mailed ? $success : self::RESULT_MAIL_FAILED;
 	}
 
 	/**

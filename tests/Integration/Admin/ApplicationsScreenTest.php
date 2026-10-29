@@ -612,6 +612,30 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'notice-warning', $html );
 	}
 
+	public function test_komunikat_mowi_gdy_rozstrzygniecie_nie_trafilo_do_logu(): void {
+		global $wpdb;
+		$id     = $this->account( 'pending' );
+		$table  = Migrations::table( 'event_log' );
+		$filter = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+		$wpdb->suppress_errors( true );
+		add_filter( 'query', $filter );
+		try {
+			$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $id ) );
+		} finally {
+			remove_filter( 'query', $filter );
+			$wpdb->suppress_errors( false );
+		}
+
+		$this->assertSame( AccountStatus::Approved, $this->status_of( $id ), 'Konto jest rozstrzygnięte mimo porażki logu.' );
+		$this->assertSame( '1', $args['pusers_log_failed'] );
+		$html = $this->render_notice( $args );
+		$this->assertStringContainsString( 'nie zostały odnotowane w logu', $html );
+		$this->assertStringContainsString( 'notice-warning', $html );
+		$this->assertStringNotContainsString( 'notice-success', $html );
+	}
+
 	public function test_powtorne_odrzucenie_z_tym_samym_powodem_mowi_ze_powod_jest_identyczny(): void {
 		$id = $this->account( 'pending' );
 		$this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason' => 'Pierwszy' ) );

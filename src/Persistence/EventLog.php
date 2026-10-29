@@ -13,7 +13,8 @@ defined( 'ABSPATH' ) || exit;
 
 /**
  * Zapis do tabeli `event_log`. Nieudany zapis logu nie może zatrzymać obsługiwanego żądania,
- * więc metoda nic nie zwraca i nie rzuca.
+ * więc metoda nie rzuca; porażkę zgłasza wartością zwracaną, żeby wywołujący, któremu log jest
+ * dowodem (rozstrzygnięcie wniosku), mógł ją zobaczyć. Pozostali mogą wynik zignorować.
  */
 final class EventLog {
 
@@ -26,13 +27,14 @@ final class EventLog {
 	 * @param int                  $subjectUserId Użytkownik, którego zdarzenie dotyczy (0 = brak).
 	 * @param int                  $actorUserId   Użytkownik wykonujący (0 = brak, np. anonimowy odwiedzający).
 	 * @param array<string, mixed> $context       Dane dodatkowe, zapisywane jako JSON.
+	 * @return bool True, gdy wiersz powstał.
 	 */
-	public static function write( string $action, int $subjectUserId, int $actorUserId, array $context ): void {
+	public static function write( string $action, int $subjectUserId, int $actorUserId, array $context ): bool {
 		global $wpdb;
 
 		$encoded = wp_json_encode( $context );
 
-		$wpdb->insert(
+		$result = $wpdb->insert(
 			Migrations::table( 'event_log' ),
 			array(
 				'created_at'      => gmdate( 'Y-m-d H:i:s' ),
@@ -44,5 +46,7 @@ final class EventLog {
 			),
 			array( '%s', '%d', '%d', '%s', '%s', '%d' )
 		);
+
+		return false !== $result;
 	}
 }
