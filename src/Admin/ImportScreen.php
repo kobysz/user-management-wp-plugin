@@ -11,6 +11,7 @@ namespace PortalUsers\Admin;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Account\Backfill;
 use PortalUsers\Acf\AcfFieldSource;
 use PortalUsers\Domain\Import\AccountChange;
 use PortalUsers\Domain\Import\ImportMapping;
@@ -41,6 +42,8 @@ final class ImportScreen {
 	public const ACTION_PREVIEW = 'pusers_preview_import';
 	public const ACTION_APPLY   = 'pusers_apply_import';
 
+	public const ACTION_BACKFILL = 'pusers_backfill_approved';
+
 	public const NOTICE_SAVED_MAPPING  = 'import_mapping_saved';
 	public const NOTICE_NOTHING_MAPPED = 'import_nothing_mapped';
 	public const NOTICE_CLEARED        = 'import_mapping_cleared';
@@ -48,6 +51,7 @@ final class ImportScreen {
 	public const NOTICE_STALE_PREVIEW  = 'import_stale_preview';
 	public const NOTICE_APPLIED        = 'import_applied';
 	public const NOTICE_NOTHING_TO_RUN = 'import_nothing_to_run';
+	public const NOTICE_BACKFILL_DONE  = 'backfill_done';
 
 	/**
 	 * Jak długo (w sekundach) raport z trybu próbnego może autoryzować zapis.
@@ -69,6 +73,7 @@ final class ImportScreen {
 		add_action( 'admin_post_' . self::ACTION_SAVE, array( self::class, 'handle_save' ) );
 		add_action( 'admin_post_' . self::ACTION_PREVIEW, array( self::class, 'handle_preview' ) );
 		add_action( 'admin_post_' . self::ACTION_APPLY, array( self::class, 'handle_apply' ) );
+		add_action( 'admin_post_' . self::ACTION_BACKFILL, array( self::class, 'handle_backfill' ) );
 	}
 
 	/**
@@ -218,6 +223,27 @@ final class ImportScreen {
 	}
 
 	/**
+	 * Nadaje stan `approved` kontom sprzed wdrożenia wtyczki, które nie mają żadnego stanu. To droga dla portalu,
+	 * którego stara wtyczka nie trzymała stanu w metadanych (inaczej służy mapowanie importu). Wynik wraca
+	 * do ekranu w adresie przekierowania (liczby, nie treść).
+	 */
+	public static function handle_backfill(): void {
+		Request::guard( self::ACTION_BACKFILL );
+		self::require_post();
+
+		$result = Backfill::grant_approved( get_current_user_id() );
+
+		Request::redirect(
+			Menu::SLUG_IMPORT,
+			self::NOTICE_BACKFILL_DONE,
+			array(
+				self::FIELD_PREFIX . 'granted'    => $result['granted'],
+				self::FIELD_PREFIX . 'log_failed' => $result['log_failed'] ? 1 : 0,
+			)
+		);
+	}
+
+	/**
 	 * Podgląd, który może teraz autoryzować zapis, albo null. Trzy warunki bramki w jednym miejscu: ekran
 	 * używa tej samej decyzji do pokazania przycisku i obsługa zapisu do wykonania.
 	 *
@@ -249,6 +275,7 @@ final class ImportScreen {
 
 		echo '<div class="wrap"><h1>' . esc_html__( 'Import danych', 'portal-users' ) . '</h1>';
 		self::render_notices();
+		self::render_backfill();
 
 		// Porażka skanu nie może wyglądać jak pusty portal: administrator nic by nie zmapował i nie wiedział czemu.
 		$stats = array();
@@ -290,6 +317,60 @@ final class ImportScreen {
 		if ( self::NOTICE_APPLIED === $notice ) {
 			self::render_applied_notices();
 		}
+		if ( self::NOTICE_BACKFILL_DONE === $notice ) {
+			self::render_backfill_notices();
+		}
+	}
+
+	/**
+	 * Wynik nadania stanu z adresu przekierowania: liczba kont i, gdy wiersza nie udało się zapisać w dzienniku,
+	 * ostrzeżenie w tym samym kształcie co przy imporcie. Liczby pochodzą z adresu, więc wychodzą przez esc_html().
+	 */
+	private static function render_backfill_notices(): void {
+		$granted = self::query_count( 'granted' );
+
+		echo '<div class="notice notice-success"><p>' . esc_html(
+			sprintf(
+				/* translators: %d: liczba kont, którym nadano stan */
+				_n( 'Nadano stan „zatwierdzone” kontom: %d.', 'Nadano stan „zatwierdzone” kontom: %d.', $granted, 'portal-users' ),
+				$granted
+			)
+		) . '</p></div>';
+
+		if ( self::query_count( 'log_failed' ) > 0 ) {
+			echo '<div class="notice notice-warning"><p>' . esc_html__( 'Stany zostały nadane, ale nie udało się zapisać wpisu w dzienniku zdarzeń: nie ma śladu, kto uruchomił to nadanie. Zapisz tę informację osobno.', 'portal-users' ) . '</p></div>';
+		}
+	}
+
+	/**
+	 * Sekcja z przyciskiem nadania stanu kontom sprzed wdrożenia. Bez kont w zakresie nie ma czego nadawać,
+	 * więc nie ma przycisku. Przycisk wymaga potwierdzenia, bo nadaje dostęp wszystkim kontom naraz.
+	 */
+	private static function render_backfill(): void {
+		$count = Backfill::stateless_count();
+		if ( 0 === $count ) {
+			return;
+		}
+
+		echo '<div class="pusers-backfill"><h2>' . esc_html__( 'Konta sprzed wdrożenia bez stanu', 'portal-users' ) . '</h2>';
+		echo '<p>' . esc_html(
+			sprintf(
+				/* translators: %d: liczba kont bez stanu */
+				_n(
+					'%d konto sprzed wdrożenia wtyczki nie ma stanu.',
+					'%d kont sprzed wdrożenia wtyczki nie ma stanu.',
+					$count,
+					'portal-users'
+				),
+				$count
+			)
+		) . ' ' . esc_html__( 'Jeśli stara wtyczka trzymała stan w metadanych, nadaj go mapowaniem poniżej: odróżni konta zatwierdzone od niezatwierdzonych. Przycisk poniżej nadaje „zatwierdzone” WSZYSTKIM tym kontom, także tym, których stara wtyczka nie zatwierdziła; jest dla portalu, który stanu nie trzymał.', 'portal-users' ) . '</p>';
+
+		$confirm = esc_js( __( 'Nadać stan „zatwierdzone” wszystkim kontom bez stanu sprzed wdrożenia? Tego nie da się cofnąć jednym kliknięciem.', 'portal-users' ) );
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" onsubmit="return confirm(\'' . $confirm . '\');">'; // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- $confirm przeszło przez esc_js().
+		self::form_header( self::ACTION_BACKFILL );
+		submit_button( __( 'Zatwierdź wszystkie konta bez stanu', 'portal-users' ), 'secondary' );
+		echo '</form></div>';
 	}
 
 	/**

@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration;
 
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\BackfillNotice;
 use PortalUsers\Admin\ExportHandler;
 use PortalUsers\Admin\ImportScreen;
 use PortalUsers\Privacy\PrivacyProvider;
@@ -69,6 +70,7 @@ final class WiringTest extends WP_UnitTestCase {
 			ImportScreen::ACTION_SAVE,
 			ImportScreen::ACTION_PREVIEW,
 			ImportScreen::ACTION_APPLY,
+			ImportScreen::ACTION_BACKFILL,
 			RegistrationHandler::ACTION,
 			LoginHandler::ACTION,
 			Confirmation::ACTION_RESEND,
@@ -89,6 +91,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'matrix'      => array( MatrixScreen::class ),
 			'import'      => array( ImportScreen::class ),
 			'mail queue notice' => array( MailQueueNotice::class ),
+			'backfill notice' => array( BackfillNotice::class ),
 			'registration' => array( RegistrationForm::class ),
 			'registration handler' => array( RegistrationHandler::class ),
 			'login form' => array( LoginForm::class ),

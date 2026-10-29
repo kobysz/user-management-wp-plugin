@@ -29,8 +29,8 @@ final class OptionStore {
 	public const OPTION_IMPORT_PREVIEW = 'pusers_import_preview';
 
 	/**
-	 * Znacznik czasu wdrożenia. Nie jest tablicą, więc jego właściciel czyta i zapisuje go sam;
-	 * spis `all()` musi go jednak znać.
+	 * Moment wdrożenia wtyczki. Właścicielem jest `Backfill`, który trzyma go w tablicy pod kluczem
+	 * `Backfill::KEY_AT` (znacznik czasu UNIX), bo `read()` i `write()` znają tylko tablice.
 	 */
 	public const OPTION_DEPLOYED_AT = 'pusers_deployed_at';
 

@@ -147,13 +147,25 @@ Anonimizacja wiersza kolejki nadpisuje adresata, temat, treść i `last_error`, 
 
 Ta sekcja jest nowa: import z poprzedniej wtyczki i backfill stanów przy aktywacji wydzielono z Planu 7 (decyzja właściciela z 2026-10-29), a dawny Plan 8 (Aktualizacje i release) stał się Planem 9.
 
-### Backfill stanów przy aktywacji
+### ~~Backfill stanów przy aktywacji~~
+
+Zrobione: aktywacja zapisuje tylko znacznik wdrożenia (`Backfill::record_activation()`), a stan nadaje import (mapowanie stanów starej wtyczki) albo przycisk na ekranie importu, zgodnie z rozstrzygnięciem z nagłówka tego planu.
 
 Konta istniejące na portalu przed wdrożeniem nie mają stanu. Nie powoduje to utraty dostępu: brama logowania jest podłączona (Plan 4) i celowo wpuszcza konta bez zapisanego stanu (`LoginGate::decide( null )`), żeby nie zamknąć poza portalem administratora dodanego ręcznie. Konto bez stanu nie podlega jednak żadnej regule bramy (ani odmowom dla `rejected` i `pending`), więc backfill jest warunkiem, żeby istniejące konta objęły stany.
 
-### Eksport CSV i eksporter danych osobowych widzą tylko pola z grupy ACF
+### ~~Eksport CSV i eksporter danych osobowych widzą tylko pola z grupy ACF~~
+
+Zrobione: import zapisuje pod `UserMeta::ACF_PREFIX . <klucz pola z grupy>`, więc eksport, eksporter i eraser je widzą.
 
 Oba czytają pola przez grupę ACF wskazaną w ustawieniach (`AcfFieldSource`) i metadane z przedrostkiem `UserMeta::ACF_PREFIX`. Import, który wpisze wartości pod metadane spoza grupy albo bez przedrostka, będzie dla obu **niewidoczny**: eksport CSV nie da ich w kolumnach, a eksporter i eraser danych osobowych ich nie wydadzą ani nie skasują. Import musi zapisywać wartości pod `UserMeta::ACF_PREFIX . <nazwa pola z grupy>` albo rozszerzyć oba narzędzia razem z importem.
+
+### Przycisk backfillu nie ma terminu ważności
+
+Przycisk „Zatwierdź wszystkie konta bez stanu” stoi na ekranie importu bezterminowo, dopóki są konta sprzed wdrożenia bez stanu, i jest jedną decyzją dla wszystkich naraz. Do rozstrzygnięcia przez właściciela: czy zostaje na stałe, czy znika po zamknięciu okna wdrożenia (np. po ustalonym czasie od `Backfill::deployed_at()` albo po pierwszym użyciu importu), żeby nikt nie zatwierdził go przez pomyłkę miesiące po starcie.
+
+### Klucz źródłowy da się wybrać tylko ze skanu
+
+Skan pokazuje pięćdziesiąt najczęstszych kluczy `user_meta`, a formularz mapowania oferuje wyłącznie klucze ze skanu (i już zapisane). Na portalu z większą liczbą kluczy rzadszego klucza nie da się zmapować z panelu. Dwa prawdopodobne domknięcia: pole tekstowe na dowolny klucz albo wyższy limit skanu. Decyzja należy do właściciela.
 
 ---
 

@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers;
 
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\BackfillNotice;
 use PortalUsers\Admin\ExportHandler;
 use PortalUsers\Admin\ImportScreen;
 use PortalUsers\Admin\MailLogScreen;
@@ -141,6 +142,9 @@ final class Plugin {
 		// to powiadomienie dla człowieka w panelu, a nie część wysyłki. Kolejka opróżnia się dalej
 		// bez ACF Pro; komunikat o tym, że przestała, jest wtedy jedną z rzeczy, które milczą.
 		add_action( 'pusers_register_features', array( MailQueueNotice::class, 'register' ) );
+		// Ostrzeżenie o kontach bez stanu mówi o regułach bramy, ale stoi po stronie ekranów panelu: dopóki
+		// jest czerwone, administrator ma pod ręką link do importu, który jest za bramką zależności.
+		add_action( 'pusers_register_features', array( BackfillNotice::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginHandler::class, 'register' ) );
