@@ -179,6 +179,12 @@ Ostrzeżenie `BackfillNotice` jest ograniczone do podstron wtyczki, bo tak ustal
 
 Specyfikacja opisuje import tak, że konta, których poprzednia wtyczka nie zatwierdziła, „trafiają na listę wniosków albo zostają usunięte, zależnie od decyzji administratora przy imporcie”. Plan świadomie zbudował tylko pierwszą połowę: import nigdy nie usuwa konta, a stany, które mapowanie może nadać, to `pending`, `approved` i `rejected`. Droga przypadkowa (stan `email_unconfirmed`, który zadanie czyszczące kasuje po okresie karencji) jest zamknięta celowo. Jeśli kasowanie ma istnieć, to osobne zadanie z własnym potwierdzeniem, własnym wierszem w logu i liczbą kont w oknie potwierdzenia, a nie kolejna wartość mapowania.
 
+### Zmapowanie klucza rdzenia WordPressa poszerza „członkostwo" na cały portal
+
+Import rusza stan tylko kontom, które noszą co najmniej jeden zmapowany klucz źródłowy z użyteczną wartością skalarną — konto bez żadnego z nich nigdy nie było w starej wtyczce, więc import nie ma o jego stanie nic do powiedzenia. Skan jednak **celowo** pokazuje też klucze rdzenia (`first_name`, `last_name`, `description`), żeby administrator widział, co na portalu faktycznie jest. Administrator, który zmapuje pole ACF na `first_name`, czyni więc „członkiem" każde konto z imieniem, a przy zapasie innym niż „zostaw bez stanu" nadaje stan całemu portalowi — w tym kontom zatwierdzonym przez samą wtyczkę.
+
+Nie jest to już ciche: `status_missing` trafił na listę poważnych zastrzeżeń, więc tryb próbny pokazuje w takim układzie licznik w tysiącach i ostrzeżenie **przed** zapisem, a bramka odcisku nie wpuści zapisu bez raportu. Trzeba zatem świadomie zmapować klucz rdzenia, wybrać zapas i przejść obok głośnego ostrzeżenia. Trzy prawdopodobne domknięcia, nie wykluczają się: skan przestaje pokazywać klucze rdzenia (kosztem widoczności tego, co na portalu jest), formularz nie przyjmuje ich jako źródła, albo ekran ostrzega wprost, że zapas obowiązuje każde konto noszące dowolny zmapowany klucz. Czwarta droga — uzależnienie członkostwa wyłącznie od klucza statusu i profesji — psuje zamierzoną populację, bo konto z numerem uprawnień starej wtyczki i bez wartości statusu ma dostać zapas. Decyzja należy do właściciela.
+
 ---
 
 ## Plan 9 — Aktualizacje i release
@@ -188,6 +194,14 @@ Numer zmieniony: dawniej Plan 8; import i backfill stanów zajęły Plan 8 (zob.
 ### CI woła `composer analyse`, nie gołe `phpstan analyse`
 
 PHPStan na domyślnym limicie 128 MB pada na równoległym workerze. Limit nie istnieje jako parametr neona w PHPStanie 1.x — sprawdzone, `parameters.memoryLimit` daje `Invalid configuration`. Działa wyłącznie jako flaga CLI; `composer.json` ma skrypt `analyse` z `--memory-limit=2G`.
+
+### Żadna bramka nie pilnuje wersji minimalnej PHP, a `testVersion` w `phpcs.xml.dist` jest martwe
+
+`phpcs.xml.dist` ma `<config name="testVersion" value="8.1-"/>`, co ma znaczenie **wyłącznie** wtedy, gdy zainstalowany jest standard PHPCompatibility. Nie jest: nie ma go w `vendor/`, nie wymienia go `vendor/bin/phpcs -i`, nie ma go w `require-dev`. Ta linia czyta się więc jak straż wersji minimalnej i nie strzeże niczego.
+
+Koszt nie jest hipotetyczny. W Planie 8 `ImportMapping::ALLOWED_STATUSES` budowało wyrażenie stałe z `AccountStatus::Pending->value`, co wymaga PHP 8.2, i przeszło przez **cztery zadania** zielonych bramek: suita jednostkowa i PHPStan chodzą na hoście z PHP 8.2, a jedynym środowiskiem 8.1 jest kontener integracyjny, który tej klasy nie wczytywał, dopóki nie powstał pierwszy test integracyjny jej dotyczący. Na portalu z PHP 8.1 wtyczka byłaby martwa w chwili wczytania pliku.
+
+Dwa domknięcia, nie wykluczają się: dodać `phpcompatibility/phpcompatibility-wp` do `require-dev` i wskazać go w zestawie reguł, albo dołożyć do bramek przebieg `php -l` po `src/` **w kontenerze 8.1** (jedno polecenie, kilka sekund na 111 plików). Drugie łapie wyłącznie błędy parsowania, pierwsze także wywołania funkcji nieistniejących w 8.1.
 
 ### Zgodność formatu wersji w trzech miejscach
 
