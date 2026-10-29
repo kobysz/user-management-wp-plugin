@@ -160,7 +160,12 @@ final class PlaceholderFactory {
 	/**
 	 * Pola zgłoszenia widoczne dla profesji, każde zwinięte do jednej linii, posortowane po kluczu.
 	 *
-	 * Jeden odczyt wszystkich metadanych zamiast zapytania na pole.
+	 * Jeden odczyt wszystkich metadanych zamiast zapytania na pole; sama WARTOŚĆ idzie potem przez
+	 * `get_user_meta()` z nazwą pola. To nie jest zapytanie na pole: odczyt zbiorczy zapełnił już
+	 * pamięć podręczną metadanych, więc wywołanie z nazwą czyta z niej. Powód, dla którego nie bierzemy
+	 * wartości wprost z tablicy zbiorczej: tam leżą napisy PROSTO Z BAZY, bez odserializowania (robi je
+	 * dopiero odczyt z nazwą), więc pole wielowartościowe ACF — checkbox, multi-select — dawało
+	 * w mailu do redakcji `a:2:{i:0;s:7:"Szpital";…}` zamiast wartości.
 	 *
 	 * @param int                $userId        Identyfikator użytkownika.
 	 * @param array<int, string> $visibleFields Pola widoczne dla profesji.
@@ -180,12 +185,41 @@ final class PlaceholderFactory {
 			if ( ! isset( $visible[ $name ] ) ) {
 				continue;
 			}
-			$value        = $values[0] ?? '';
-			$out[ $name ] = is_string( $value ) ? trim( (string) preg_replace( '/\s+/', ' ', $value ) ) : '';
+			$out[ $name ] = self::one_line( get_user_meta( $userId, $metaKey, true ) );
 		}
 		ksort( $out );
 
 		return $out;
+	}
+
+	/**
+	 * Wartość pola zgłoszenia w jednej linii.
+	 *
+	 * Pole wielowartościowe (checkbox, multi-select) jest tablicą i idzie do maila jako wyliczenie
+	 * po przecinku: redakcja czyta ten mail jako treść wniosku, a pusta wartość przy polu, które
+	 * wnioskodawca wypełnił, jest gorsza niż brak zmiennej. Plan 5 jest pierwszym, który reklamuje
+	 * `{pole_<klucz>}` administratorowi na ekranie szablonów, więc dopiero teraz ma to wyzwalacz.
+	 *
+	 * Element nieskalarny (tablica w tablicy, obiekt) wypada: w mailu do człowieka nie ma dla niego
+	 * sensownej postaci, a `(string)` na tablicy to ostrzeżenie PHP.
+	 *
+	 * @param mixed $value Wartość metadanej.
+	 */
+	private static function one_line( mixed $value ): string {
+		if ( is_array( $value ) ) {
+			$parts = array();
+			foreach ( $value as $item ) {
+				if ( is_scalar( $item ) ) {
+					$parts[] = (string) $item;
+				}
+			}
+			$value = implode( ', ', $parts );
+		}
+		if ( ! is_scalar( $value ) ) {
+			return '';
+		}
+
+		return trim( (string) preg_replace( '/\s+/', ' ', (string) $value ) );
 	}
 
 	/**

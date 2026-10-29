@@ -159,6 +159,10 @@ final class MailLogScreen {
 
 		echo '<p class="description">' . esc_html__( 'Powód zostaje przy wpisie po wznowieniu i po udanej ponownej próbie jako ślad: przy wpisie, który nie jest nieudany, opisuje wcześniejszą próbę, nie obecny stan.', 'portal-users' ) . '</p>';
 
+		// Pusty log bez wyjaśnienia jest tym, co myli: oba te zachowania są poprawne, ale administrator
+		// szukający maila resetu widzi brak wpisu i podejrzewa awarię wysyłki.
+		echo '<p class="description">' . esc_html__( 'Maile odzyskiwania hasła nie trafiają do tego logu w dwóch przypadkach, oba poprawne: gdy w ustawieniach nie wskazano strony ustawiania nowego hasła (wtedy wysyła je sam WordPress, celowo) oraz gdy inna wtyczka przerabia treść tej wiadomości (wtedy zostaje ona przy WordPressie razem z tym, co ta wtyczka do niej dopisała). W obu wiadomość wychodzi, tylko nie przez kolejkę.', 'portal-users' ) . '</p>';
+
 		if ( $pages > 1 ) {
 			// paginate_links() zwraca już oczyszczony znacznik.
 			echo '<div class="tablenav"><div class="tablenav-pages">' . wp_kses_post(

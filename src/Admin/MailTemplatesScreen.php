@@ -80,12 +80,34 @@ final class MailTemplatesScreen {
 				$kind,
 				new MailTemplate(
 					null === $subject ? $current->subject : sanitize_text_field( $subject ),
-					null === $body ? $current->body : sanitize_textarea_field( str_replace( array( "\r\n", "\r" ), "\n", $body ) )
+					null === $body ? $current->body : self::clean_body( $body )
 				)
 			);
 		}
 
 		Request::redirect( Menu::SLUG_MAIL_TEMPLATES, Request::NOTICE_SAVED );
+	}
+
+	/**
+	 * Treść szablonu po oczyszczeniu: końce linii jako LF, znaczniki HTML zdjęte, samotny `<` cały.
+	 *
+	 * `sanitize_textarea_field()` puszcza tekst najpierw przez `wp_pre_kses_less_than()`, a ta zamienia
+	 * na `&lt;` każdy `<`, za którym nie ma `>` (sprawdzone w tym środowisku: „Wiek < 30 lat" wraca jako
+	 * „Wiek &lt; 30 lat"). Dalej `HtmlBody::wrap()` eskejpuje jeszcze ampersand, więc lekarz widzi
+	 * w mailu dosłowne `&lt;`. Ekran ostrzega, że znaczniki HTML są usuwane; nie ostrzega — i nie ma
+	 * powodu ostrzegać — że operator porównania zmienia się w encję.
+	 *
+	 * Encję odwracamy po sanityzacji, bo treść jest ZWYKŁYM TEKSTEM: `<` zapisany dosłownie nie może
+	 * nic zepsuć, skoro opakowanie HTML eskejpuje całą treść na wyjściu. Cena, świadoma: redaktor,
+	 * który wpisze `&lt;` celowo, dostanie w mailu `<`. W polu reklamowanym jako zwykły tekst, gdzie
+	 * encje i tak nic nie znaczą, to mniejsze zaskoczenie niż zepsuty operator porównania.
+	 *
+	 * @param string $body Treść z formularza (po wp_unslash).
+	 */
+	private static function clean_body( string $body ): string {
+		$clean = sanitize_textarea_field( str_replace( array( "\r\n", "\r" ), "\n", $body ) );
+
+		return str_replace( '&lt;', '<', $clean );
 	}
 
 	/**

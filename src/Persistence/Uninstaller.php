@@ -44,7 +44,7 @@ final class Uninstaller {
 	}
 
 	/**
-	 * Kasuje opcje i obie tabele wtyczki, o ile bramka jest otwarta.
+	 * Kasuje opcje i wszystkie tabele wtyczki (lista w Migrations::TABLES), o ile bramka jest otwarta.
 	 */
 	public static function run(): void {
 		if ( ! self::should_delete_data() ) {

@@ -12,6 +12,9 @@ use PortalUsers\Admin\Menu;
 use PortalUsers\Domain\Mail\MailKind;
 use PortalUsers\Domain\Mail\MailTemplate;
 use PortalUsers\Mail\DefaultTemplates;
+use PortalUsers\Mail\MailQueue;
+use PortalUsers\Mail\PlaceholderFactory;
+use PortalUsers\Persistence\MailQueueRepository;
 use PortalUsers\Persistence\MailTemplateRepository;
 use WP_UnitTestCase;
 use WPDieException;
@@ -214,5 +217,43 @@ final class MailTemplatesScreenTest extends WP_UnitTestCase {
 				$GLOBALS['submenu'] = $saved_sub;
 			}
 		}
+	}
+
+	public function test_a_bare_less_than_typed_into_the_body_reaches_the_mail(): void {
+		// `sanitize_textarea_field()` przepuszcza treść najpierw przez `wp_pre_kses_less_than()`,
+		// więc samotny `<` wraca jako `&lt;` (sprawdzone w tym środowisku). Ekran ostrzega, że
+		// znaczniki HTML są usuwane; nie ostrzega — i nie powinien musieć — że operator porównania
+		// zamienia się w encję, którą `HtmlBody::wrap()` eskejpuje jeszcze raz i lekarz widzi
+		// dosłowne `&lt;` w mailu.
+		$this->asAdminPosting(
+			MailTemplatesScreen::ACTION,
+			array(
+				'tpl_approved_subject' => 'Temat',
+				'tpl_approved_body'    => 'Wiek < 30 lat',
+			)
+		);
+
+		MailTemplatesScreen::handle_save();
+
+		$this->assertSame( 'Wiek < 30 lat', MailTemplateRepository::override( MailKind::Approved )->body );
+
+		$userId = (int) self::factory()->user->create( array( 'user_email' => 'jan@szpital.pl' ) );
+		$this->assertTrue(
+			MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'approved:' . $userId )
+		);
+
+		$body = (string) MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 1 )[0]['body'];
+		$this->assertSame( 'Wiek < 30 lat', $body );
+		$this->assertStringNotContainsString( '&lt;', $body );
+	}
+
+	public function test_an_html_tag_in_the_body_is_still_stripped(): void {
+		// Druga strona tej samej poprawki: przywracanie `<` nie może przywrócić HTML-a, bo ekran
+		// obiecuje administratorowi zwykły tekst, a `HtmlBody::wrap()` i tak eskejpuje wszystko.
+		$this->asAdminPosting( MailTemplatesScreen::ACTION, array( 'tpl_approved_body' => 'To jest <b>ważne</b> zdanie.' ) );
+
+		MailTemplatesScreen::handle_save();
+
+		$this->assertSame( 'To jest ważne zdanie.', MailTemplateRepository::override( MailKind::Approved )->body );
 	}
 }

@@ -8,9 +8,11 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration\Cron;
 
 use PortalUsers\Cron\PurgeMailLog;
+use PortalUsers\Dependencies;
 use PortalUsers\Domain\Mail\QueueStatus;
 use PortalUsers\Persistence\MailQueueRepository;
 use PortalUsers\Persistence\Migrations;
+use PortalUsers\Plugin;
 use WP_UnitTestCase;
 
 final class PurgeMailLogTest extends WP_UnitTestCase {
@@ -145,5 +147,24 @@ final class PurgeMailLogTest extends WP_UnitTestCase {
 
 		PurgeMailLog::unschedule();
 		$this->assertFalse( wp_next_scheduled( PurgeMailLog::HOOK ) );
+	}
+
+	public function test_the_retention_cron_is_registered_without_acf(): void {
+		// Dispatcher wysyła maile także przy wyłączonym ACF Pro, więc log wysyłek rośnie dalej.
+		// Obowiązek retencji pochodzi z części specyfikacji o danych osobowych i nie może gasnąć
+		// razem z niezwiązaną z nim zależnością. Wzorzec: WiringTest::test_the_dispatcher_is_registered_without_acf.
+		add_filter( 'pusers_acf_pro_loaded', '__return_false' );
+		remove_action( PurgeMailLog::HOOK, array( PurgeMailLog::class, 'run' ) );
+		$this->assertFalse( Dependencies::satisfied(), 'Test ma działać przy NIEspełnionych zależnościach.' );
+		$this->assertFalse( has_action( PurgeMailLog::HOOK, array( PurgeMailLog::class, 'run' ) ), 'Przebieg miał być zdjęty przed próbą.' );
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		$this->assertFalse(
+			has_action( 'pusers_register_features', array( PurgeMailLog::class, 'register' ) ),
+			'Retencja nie może jechać przez hook zależny od ACF Pro.'
+		);
+		$this->assertNotFalse( has_action( PurgeMailLog::HOOK, array( PurgeMailLog::class, 'run' ) ) );
 	}
 }

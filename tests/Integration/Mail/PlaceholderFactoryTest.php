@@ -203,4 +203,18 @@ final class PlaceholderFactoryTest extends WP_UnitTestCase {
 			}
 		}
 	}
+
+	public function test_a_multi_value_field_reaches_the_mail_as_a_list(): void {
+		// Pole ACF typu checkbox albo multi-select zapisuje TABLICĘ, a odczyt pól zgłoszenia
+		// przepuszczał tylko napisy: redakcja dostawała w mailu pustą wartość przy polu, które
+		// wnioskodawca wypełnił. Ten plan jest pierwszym, który reklamuje `{pole_<klucz>}`
+		// administratorowi na ekranie szablonów, więc dopiero teraz ma to wyzwalacz.
+		$id = $this->account();
+		update_user_meta( $id, RegistrationHandler::ACF_META_PREFIX . 'miejsce_pracy', array( 'Szpital Wojewódzki', 'Przychodnia  Miejska' ) );
+
+		$values = PlaceholderFactory::for_user( $id );
+
+		$this->assertSame( 'Szpital Wojewódzki, Przychodnia Miejska', $values->get( 'pole_miejsce_pracy' ) );
+		$this->assertStringContainsString( '- miejsce_pracy: Szpital Wojewódzki, Przychodnia Miejska', $values->get( 'pola_zgloszenia' ) );
+	}
 }

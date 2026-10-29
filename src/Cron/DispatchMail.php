@@ -102,7 +102,10 @@ final class DispatchMail {
 
 	/**
 	 * Zdejmuje OBA zdarzenia; po wyłączeniu wtyczki zostawiony cron wołałby nieistniejącą klasę.
-	 * Zdarzeń natychmiastowych może leżeć kilka, bo każde kolejkowanie zakłada własne.
+	 * Zdarzenie natychmiastowe jest zawsze najwyżej jedno: `wp_schedule_single_event()` odmawia
+	 * założenia identycznego zdarzenia, które czeka już w ciągu dziesięciu minut, więc kolejne
+	 * kolejkowania nie odkładają się na stos. `wp_clear_scheduled_hook()` i tak jest tu właściwe —
+	 * zdejmuje zdarzenie bez zgadywania jego argumentów i terminu.
 	 */
 	public static function unschedule(): void {
 		wp_clear_scheduled_hook( self::HOOK );
