@@ -9,6 +9,7 @@ namespace PortalUsers\Tests\Integration\Import;
 
 use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Fields\FieldMatrix;
+use PortalUsers\Domain\Import\AccountChange;
 use PortalUsers\Domain\Import\ImportMapping;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Import\ImportRunner;
@@ -459,7 +460,16 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 	}
 
 	public function test_fallback_pending_dotyka_tylko_kont_starej_wtyczki_a_nie_calego_portalu(): void {
-		$mapping = $this->fallback_mapping( ImportMapping::FALLBACK_PENDING, true );
+		// Z kluczem profesji: konta spoza starej wtyczki nie mogą zarabiać też na zastrzeżeniu o jej braku.
+		$mapping = ImportMapping::fromArray(
+			array_merge(
+				$this->fallback_mapping( ImportMapping::FALLBACK_PENDING, true )->toArray(),
+				array(
+					'professionKey'    => 'wpmem_role',
+					'professionValues' => array( 'doctor' => 'lekarz' ),
+				)
+			)
+		);
 		$old     = $this->old_plugin_account_without_status();
 		$managed = $this->plugin_managed_account( AccountStatus::Approved );
 		$actor   = $this->actor();
@@ -474,7 +484,13 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 		$this->assertSame( 1, $report->changed() );
 		$this->assertSame( 1, $dry->changed() );
 		$this->assertSame( $this->all_accounts(), $report->scanned(), 'Wszystkie konta są policzone jako przeskanowane.' );
-		$this->assertSame( 1, $report->issueCount( 'status_missing' ), 'Zastrzeżenie dotyczy tylko konta starej wtyczki.' );
+		$expected = array(
+			AccountChange::ISSUE_PROFESSION_MISSING => 1,
+			AccountChange::ISSUE_STATUS_MISSING     => 1,
+		);
+		foreach ( array( AccountChange::ISSUE_PROFESSION_MISSING, AccountChange::ISSUE_PROFESSION_UNMAPPED, AccountChange::ISSUE_CREDENTIAL_INVALID, AccountChange::ISSUE_STATUS_MISSING, AccountChange::ISSUE_STATUS_UNMAPPED, AccountChange::ISSUE_VALUE_UNUSABLE ) as $code ) {
+			$this->assertSame( $expected[ $code ] ?? 0, $report->issueCount( $code ), $code . ': zastrzeżenia dotyczą tylko konta starej wtyczki, nie administratora ani konta zarządzanego przez wtyczkę.' );
+		}
 	}
 
 	public function test_fallback_zatwierdz_bez_klucza_stanu_nie_zmienia_stanu_kont_zarzadzanych_przez_wtyczke(): void {

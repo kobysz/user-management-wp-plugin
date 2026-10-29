@@ -43,6 +43,9 @@ final class MetaKeyScanner {
 	/**
 	 * Skanuje `usermeta`, pomijając klucze wtyczki (`pusers_`), prywatne (`_`) i wymienione z nazwy klucze rdzenia (`CORE_KEYS`).
 	 *
+	 * Próbki to do trzech różnych wartości klucza w kolejności, w jakiej zwróci je baza, posortowane już w PHP: pokazują
+	 * kształt danych, nie są reprezentatywnym wyborem, a w zamian nie sortujemy LONGTEXT bez indeksu przy każdym kluczu.
+	 *
 	 * @param int $limit Najwyżej tyle kluczy; najliczniejsze pierwsze.
 	 * @return list<MetaKeyStat> Malejąco po liczbie kont, przy równej liczbie alfabetycznie po kluczu.
 	 * @throws \RuntimeException Gdy zapytanie o liczniki kont się nie powiodło. Porażka zapytania o próbki jednego klucza

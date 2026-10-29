@@ -50,8 +50,9 @@ final class ImportPlanner {
 	 */
 	public function plan( int $userId, array $sourceMeta ): AccountChange {
 		$issues = array();
+		$member = $this->carriesSourceKey( $sourceMeta );
 
-		$profession = $this->planProfession( $sourceMeta, $issues );
+		$profession = $this->planProfession( $sourceMeta, $member, $issues );
 		$fields     = $this->planFields( $sourceMeta, $profession, $issues );
 
 		if ( null !== $profession ) {
@@ -62,7 +63,7 @@ final class ImportPlanner {
 			$userId,
 			$fields,
 			$profession?->key,
-			$this->planStatus( $sourceMeta, $issues ),
+			$this->planStatus( $sourceMeta, $member, $issues ),
 			$issues
 		);
 	}
@@ -72,10 +73,11 @@ final class ImportPlanner {
 	 * profesji mapowanie o nią nie pyta, więc nie ma czego rozstrzygać ani zgłaszać.
 	 *
 	 * @param array<string, mixed> $sourceMeta Metadane źródłowe.
+	 * @param bool                 $member     Czy konto nosi użyteczny klucz źródłowy; konto spoza starej wtyczki nie dostaje zastrzeżeń.
 	 * @param string[]             $issues     Zbierane kody zastrzeżeń.
 	 * @return Profession|null
 	 */
-	private function planProfession( array $sourceMeta, array &$issues ): ?Profession {
+	private function planProfession( array $sourceMeta, bool $member, array &$issues ): ?Profession {
 		if ( '' === $this->mapping->professionKey() ) {
 			return null;
 		}
@@ -83,7 +85,10 @@ final class ImportPlanner {
 		$value = $this->usableText( $sourceMeta, $this->mapping->professionKey(), $issues );
 
 		if ( null === $value ) {
-			$issues[] = AccountChange::ISSUE_PROFESSION_MISSING;
+			if ( $member ) {
+				$issues[] = AccountChange::ISSUE_PROFESSION_MISSING;
+			}
+
 			return null;
 		}
 
@@ -165,10 +170,11 @@ final class ImportPlanner {
 	 * Ustala stan konta: zmapowany, brak (null) albo wynikający z fallbacku.
 	 *
 	 * @param array<string, mixed> $sourceMeta Metadane źródłowe.
+	 * @param bool                 $member     Czy konto nosi użyteczny klucz źródłowy.
 	 * @param string[]             $issues     Zbierane kody zastrzeżeń.
 	 * @return AccountStatus|null
 	 */
-	private function planStatus( array $sourceMeta, array &$issues ): ?AccountStatus {
+	private function planStatus( array $sourceMeta, bool $member, array &$issues ): ?AccountStatus {
 		$configured = '' !== $this->mapping->statusKey();
 		$value      = $configured ? $this->usableText( $sourceMeta, $this->mapping->statusKey(), $issues ) : null;
 
@@ -176,7 +182,7 @@ final class ImportPlanner {
 			// Fallback rozstrzyga stan wyłącznie konta, które było w starej wtyczce, czyli nosi choć jeden jej klucz.
 			// Konto bez żadnego z nich (założone przez tę wtyczkę, ręcznie, przez edytora) nie jest tematem importu:
 			// jego stanu nie wolno zmieniać ani zgłaszać, bo raport zalałyby wszystkie niepowiązane konta portalu.
-			if ( ! $this->carriesSourceKey( $sourceMeta ) ) {
+			if ( ! $member ) {
 				return null;
 			}
 
@@ -204,7 +210,10 @@ final class ImportPlanner {
 	/**
 	 * Czy konto nosi choć jeden klucz źródłowy mapowania z użyteczną wartością skalarną.
 	 *
-	 * Nie zgłasza zastrzeżeń: to tylko pytanie o przynależność konta do populacji starej wtyczki.
+	 * Nie zgłasza zastrzeżeń: to tylko pytanie o przynależność konta do populacji starej wtyczki. Konto spoza niej jest
+	 * poza zakresem importu: nie dostaje stanu, pól ani zastrzeżeń o braku profesji i stanu. Konto, którego jedyne klucze
+	 * źródłowe są puste lub tablicowe, też jest spoza niej (zostaje bez stanu, a nie z błędnym), ale tablica nadal dostaje
+	 * zastrzeżenie o wartości nieużytecznej, bo to fakt o danych, nie o stanie konta.
 	 *
 	 * @param array<string, mixed> $sourceMeta Metadane źródłowe.
 	 * @return bool

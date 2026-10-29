@@ -336,7 +336,13 @@ final class ImportPlannerTest extends TestCase {
 	}
 
 	public function test_brak_profesji_albo_wartosc_pusta_daje_zastrzezenie_o_braku(): void {
-		foreach ( array( array(), array( 'wpmem_role' => '  ' ) ) as $meta ) {
+		foreach ( array(
+			array( 'wpmem_name' => 'Ola' ),
+			array(
+				'wpmem_name' => 'Ola',
+				'wpmem_role' => '  ',
+			),
+		) as $meta ) {
 			$change = $this->planner()->plan( 7, $meta );
 
 			$this->assertNull( $change->professionKey );
@@ -486,6 +492,19 @@ final class ImportPlannerTest extends TestCase {
 
 		$this->assertSame( ImportMapping::FALLBACK_PENDING === $fallback ? AccountStatus::Pending : AccountStatus::Approved, $change->status );
 		$this->assertTrue( $change->hasIssue( AccountChange::ISSUE_STATUS_MISSING ) );
+	}
+
+	/**
+	 * @dataProvider fallbacks
+	 */
+	public function test_konto_spoza_starej_wtyczki_nie_zarabia_na_zastrzezeniu_o_braku_profesji(string $fallback): void {
+		$change = $this->planner( $fallback )->plan( 7, array() );
+
+		$this->assertSame( array(), $change->issues );
+
+		// Konto, które nosi choć jeden klucz źródłowy, zachowuje zastrzeżenie.
+		$member = $this->planner( $fallback )->plan( 7, array( 'wpmem_name' => 'Ola' ) );
+		$this->assertTrue( $member->hasIssue( AccountChange::ISSUE_PROFESSION_MISSING ) );
 	}
 
 	public function test_konto_bez_zadnych_danych_nie_ma_zapisow(): void {
