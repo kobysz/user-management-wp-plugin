@@ -133,15 +133,32 @@ final class ImportMappingRepositoryTest extends WP_UnitTestCase {
 		$this->assertLessThanOrEqual( time(), $preview['at'] );
 	}
 
-	public function test_inne_mapowanie_ma_inny_odcisk_w_podgladzie(): void {
+	public function test_kazdy_zapis_podgladu_niesie_odcisk_swojego_mapowania(): void {
 		$first  = ImportMapping::fromArray( array( 'fields' => array( 'pwz' => 'a' ) ) );
 		$second = ImportMapping::fromArray( array( 'fields' => array( 'pwz' => 'b' ) ) );
+		$this->assertNotSame( $first->hash(), $second->hash(), 'Stan wyjściowy: mapowania mają różne odciski.' );
 
 		ImportMappingRepository::save_preview( $first, ImportReport::empty() );
-		$preview = ImportMappingRepository::preview();
+		$this->assertSame( $first->hash(), ImportMappingRepository::preview()['hash'] ?? null );
 
-		$this->assertNotNull( $preview );
-		$this->assertNotSame( $second->hash(), $preview['hash'] );
+		ImportMappingRepository::save_preview( $second, ImportReport::empty() );
+		$this->assertSame( $second->hash(), ImportMappingRepository::preview()['hash'] ?? null );
+	}
+
+	public function test_odczyt_zachowuje_klucz_profesji_gdy_wszystkie_wartosci_przyciete(): void {
+		ImportMappingRepository::save(
+			ImportMapping::fromArray(
+				array(
+					'professionKey'    => 'stara_profesja',
+					'professionValues' => array( 'inny' => 'usunieta' ),
+				)
+			)
+		);
+
+		$mapping = ImportMappingRepository::get();
+
+		$this->assertNull( $mapping->professionFor( 'inny' ), 'Stan wyjściowy: wartość przycięta.' );
+		$this->assertSame( 'stara_profesja', $mapping->professionKey() );
 	}
 
 	public function test_czyszczenie_podgladu_usuwa_opcje(): void {
