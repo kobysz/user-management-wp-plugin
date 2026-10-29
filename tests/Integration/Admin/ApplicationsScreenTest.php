@@ -7,10 +7,17 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration\Admin;
 
+use PortalUsers\Account\Decision;
 use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\Menu;
+use PortalUsers\Domain\Account\AccountStatus;
+use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Profession\ProfessionCollection;
+use PortalUsers\Front\Mailer;
+use PortalUsers\Persistence\AccountStatusRepository;
+use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\ProfessionRepository;
+use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
 use PortalUsers\Plugin;
 use WP_UnitTestCase;
@@ -18,8 +25,28 @@ use WPDieException;
 
 final class ApplicationsScreenTest extends WP_UnitTestCase {
 
+	use AdminPostingTrait;
+
+	private string $originalMethod = 'GET';
+
+	/**
+	 * Anulujący filtr przekierowania, który zapamiętuje adres.
+	 *
+	 * @var callable
+	 */
+	private $captureRedirect;
+
+	private string $redirectedTo = '';
+
 	public function set_up(): void {
 		parent::set_up();
+		$this->originalMethod  = isset( $_SERVER['REQUEST_METHOD'] ) ? (string) $_SERVER['REQUEST_METHOD'] : 'GET';
+		$this->redirectedTo    = '';
+		$this->captureRedirect = function ( $location ) {
+			$this->redirectedTo = (string) $location;
+			return false;
+		};
+		add_filter( 'wp_redirect', $this->captureRedirect );
 		ProfessionRepository::save(
 			ProfessionCollection::fromArray(
 				array(
@@ -42,7 +69,11 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 	}
 
 	public function tear_down(): void {
-		$_GET = array();
+		remove_filter( 'wp_redirect', $this->captureRedirect );
+		$_GET                      = array();
+		$_POST                     = array();
+		$_REQUEST                  = array();
+		$_SERVER['REQUEST_METHOD'] = $this->originalMethod;
 		parent::tear_down();
 	}
 
@@ -228,5 +259,341 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 		$html = $this->render( array( 'paged' => '999' ) );
 
 		$this->assertStringContainsString( 'Jedyny Jan', $html );
+	}
+
+	/**
+	 * Składa żądanie rozstrzygnięcia od administratora i woła uchwyt. Zwraca argumenty zapytania z adresu przekierowania.
+	 *
+	 * @param string               $decision Decyzja.
+	 * @param mixed                $users    Wartość pola z identyfikatorami.
+	 * @param array<string, mixed> $extra    Dodatkowe pola (trait dokłada im przedrostek `pusers_`).
+	 * @return array<string, string>
+	 */
+	private function decide( string $decision, mixed $users, array $extra = array() ): array {
+		$this->asAdminPosting(
+			ApplicationsScreen::ACTION_DECIDE,
+			array_merge(
+				array(
+					'decision' => $decision,
+					'users'    => $users,
+				),
+				$extra
+			)
+		);
+		return $this->run_decide();
+	}
+
+	/**
+	 * Woła uchwyt na już ustawionym $_POST i rozbiera adres przekierowania.
+	 *
+	 * @return array<string, string>
+	 */
+	private function run_decide(): array {
+		$this->redirectedTo = '';
+		ApplicationsScreen::handle_decide();
+		$query = (string) wp_parse_url( $this->redirectedTo, PHP_URL_QUERY );
+		parse_str( $query, $args );
+		return array_map( 'strval', $args );
+	}
+
+	private function status_of( int $id ): ?AccountStatus {
+		return AccountStatusRepository::get( $id );
+	}
+
+	/**
+	 * Wiersze logu o danej akcji.
+	 *
+	 * @return array<int, object>
+	 */
+	private function log_rows( string $action ): array {
+		global $wpdb;
+		$table = Migrations::table( 'event_log' );
+		return array_values( (array) $wpdb->get_results( $wpdb->prepare( "SELECT * FROM {$table} WHERE action = %s ORDER BY id ASC", $action ) ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tabela wtyczki, nazwa z Migrations::table().
+	}
+
+	/**
+	 * Zapisuje listę gotowych powodów odrzucenia.
+	 *
+	 * @param array<int, string> $reasons Powody.
+	 */
+	private function set_presets( array $reasons ): void {
+		SettingsRepository::save( Settings::fromArray( array_merge( SettingsRepository::get()->toArray(), array( 'rejection_reasons' => $reasons ) ) ) );
+	}
+
+	/**
+	 * Ekran z argumentami przekierowania po akcji, czyli to, co zobaczy redaktor.
+	 *
+	 * @param array<string, string> $args Argumenty zapytania.
+	 */
+	private function render_notice( array $args ): string {
+		return $this->render( array( 'status' => 'pending' ) + $args );
+	}
+
+	public function test_zatwierdzenie_pojedynczego_wniosku_z_listy(): void {
+		$id = $this->account( 'pending' );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $id ) );
+
+		$this->assertSame( AccountStatus::Approved, $this->status_of( $id ) );
+		$this->assertSame( ApplicationsScreen::NOTICE_DECIDED, $args['pusers_notice'] );
+		$this->assertSame( '1', $args['pusers_done'] );
+	}
+
+	public function test_akcja_masowa_zatwierdza_wszystkie_zaznaczone(): void {
+		$ids   = array( $this->account( 'pending' ), $this->account( 'pending' ), $this->account( 'pending' ) );
+		$other = $this->account( 'pending' );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array_map( 'strval', $ids ) );
+
+		foreach ( $ids as $id ) {
+			$this->assertSame( AccountStatus::Approved, $this->status_of( $id ) );
+		}
+		$this->assertSame( AccountStatus::Pending, $this->status_of( $other ), 'Niezaznaczone konto nie może się ruszyć.' );
+		$this->assertSame( '3', $args['pusers_done'] );
+	}
+
+	public function test_akcja_masowa_odrzuca_z_jednym_powodem_dla_calej_partii(): void {
+		$ids = array( $this->account( 'pending' ), $this->account( 'pending' ) );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_REJECT, array_map( 'strval', $ids ), array( 'reason' => 'Brak numeru PWZ' ) );
+
+		foreach ( $ids as $id ) {
+			$this->assertSame( AccountStatus::Rejected, $this->status_of( $id ) );
+			$this->assertSame( 'Brak numeru PWZ', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		}
+		$this->assertSame( '2', $args['pusers_done'] );
+		$this->assertSame( ApplicationsScreen::DECIDE_REJECT, $args['pusers_decision_done'] );
+	}
+
+	public function test_odrzucenie_bez_powodu_nie_dotyka_zadnego_konta(): void {
+		$ids = array( $this->account( 'pending' ), $this->account( 'pending' ), $this->account( 'pending' ) );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_REJECT, array_map( 'strval', $ids ), array( 'reason' => "  \n " ) );
+
+		$this->assertSame( ApplicationsScreen::NOTICE_NEEDS_REASON, $args['pusers_notice'] );
+		foreach ( $ids as $id ) {
+			$this->assertSame( AccountStatus::Pending, $this->status_of( $id ) );
+			$this->assertSame( '', (string) get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		}
+		$this->assertCount( 0, $this->log_rows( Decision::LOG_REJECTED ) );
+	}
+
+	public function test_powod_z_listy_gotowych_jest_akceptowany(): void {
+		$this->set_presets( array( 'Brak numeru PWZ', 'Dane niezgodne z rejestrem' ) );
+		$id = $this->account( 'pending' );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason_preset' => 'Dane niezgodne z rejestrem' ) );
+
+		$this->assertSame( ApplicationsScreen::NOTICE_DECIDED, $args['pusers_notice'] );
+		$this->assertSame( AccountStatus::Rejected, $this->status_of( $id ) );
+		$this->assertSame( 'Dane niezgodne z rejestrem', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+	}
+
+	public function test_gotowy_powod_spoza_ustawien_nie_wystarcza(): void {
+		$this->set_presets( array( 'Brak numeru PWZ' ) );
+		$id = $this->account( 'pending' );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason_preset' => 'Wymyślony powód' ) );
+
+		$this->assertSame( ApplicationsScreen::NOTICE_NEEDS_REASON, $args['pusers_notice'] );
+		$this->assertSame( AccountStatus::Pending, $this->status_of( $id ) );
+	}
+
+	public function test_konto_usuniete_miedzy_renderem_a_akcja_jest_pomijane(): void {
+		$gone = $this->account( 'pending' );
+		$kept = $this->account( 'pending' );
+		wp_delete_user( $gone );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $gone, (string) $kept ) );
+
+		$this->assertSame( AccountStatus::Approved, $this->status_of( $kept ) );
+		$this->assertSame( '1', $args['pusers_done'] );
+		$this->assertSame( '1', $args['pusers_skipped'] );
+		$this->assertStringContainsString( 'Pominięto wniosków: 1', $this->render_notice( $args ) );
+	}
+
+	public function test_konto_w_zlym_stanie_w_partii_nie_blokuje_pozostalych(): void {
+		$a   = $this->account( 'pending' );
+		$bad = $this->account( 'email_unconfirmed' );
+		$c   = $this->account( 'pending' );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $a, (string) $bad, (string) $c ) );
+
+		$this->assertSame( AccountStatus::Approved, $this->status_of( $a ) );
+		$this->assertSame( AccountStatus::Approved, $this->status_of( $c ) );
+		$this->assertSame( AccountStatus::EmailUnconfirmed, $this->status_of( $bad ) );
+		$this->assertSame( '2', $args['pusers_done'] );
+		$this->assertSame( '1', $args['pusers_skipped'] );
+	}
+
+	public function test_akcja_bez_nonce_jest_odrzucana(): void {
+		$id = $this->account( 'pending' );
+		$this->asAdminPosting(
+			ApplicationsScreen::ACTION_DECIDE,
+			array(
+				'decision' => 'approve',
+				'users'    => array( (string) $id ),
+			)
+		);
+		unset( $_POST['pusers_nonce'] );
+
+		try {
+			ApplicationsScreen::handle_decide();
+			$this->fail( 'Akcja bez nonce powinna zostać odrzucona.' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( AccountStatus::Pending, $this->status_of( $id ) );
+			$this->assertCount( 0, $this->log_rows( Decision::LOG_APPROVED ) );
+		}
+	}
+
+	public function test_akcja_bez_uprawnienia_jest_odrzucana(): void {
+		$id = $this->account( 'pending' );
+		$this->asRolePosting(
+			'editor',
+			ApplicationsScreen::ACTION_DECIDE,
+			array(
+				'decision' => 'approve',
+				'users'    => array( (string) $id ),
+			)
+		);
+
+		try {
+			ApplicationsScreen::handle_decide();
+			$this->fail( 'Akcja bez uprawnienia powinna zostać odrzucona.' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( AccountStatus::Pending, $this->status_of( $id ) );
+			$this->assertCount( 0, $this->log_rows( Decision::LOG_APPROVED ) );
+		}
+	}
+
+	public function test_akcja_przez_get_jest_odrzucana(): void {
+		$id = $this->account( 'pending' );
+		$this->asAdminPosting(
+			ApplicationsScreen::ACTION_DECIDE,
+			array(
+				'decision' => 'approve',
+				'users'    => array( (string) $id ),
+			)
+		);
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+
+		try {
+			ApplicationsScreen::handle_decide();
+			$this->fail( 'Zmiana stanu przez GET powinna zostać odrzucona.' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( AccountStatus::Pending, $this->status_of( $id ) );
+		}
+	}
+
+	public function test_pusty_wybor_daje_komunikat_nie_bialy_ekran(): void {
+		$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array() );
+
+		$this->assertSame( ApplicationsScreen::NOTICE_NOTHING_SELECTED, $args['pusers_notice'] );
+		$this->assertStringContainsString( 'Nie zaznaczono', $this->render_notice( $args ) );
+	}
+
+	public function test_identyfikatory_z_zadania_sa_oczyszczane(): void {
+		$id = $this->account( 'pending' );
+
+		foreach ( array( array( 'abc', '0', '-5' ), 'abc', '0', '-5', array( array( '1' ) ), null ) as $junk ) {
+			$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, $junk );
+			$this->assertSame( ApplicationsScreen::NOTICE_NOTHING_SELECTED, $args['pusers_notice'] );
+		}
+		$this->assertSame( AccountStatus::Pending, $this->status_of( $id ) );
+		$this->assertCount( 0, $this->log_rows( Decision::LOG_APPROVED ) );
+	}
+
+	public function test_komunikat_mowi_gdy_mail_nie_wyszedl(): void {
+		$id = $this->account( 'pending' );
+		// Kolejka odmawia przyjęcia: ten sam klucz odporności w tej samej minucie co mail już zakolejkowany.
+		$freeze = static fn() => '200001010000';
+		add_filter( 'pusers_internal_test_seam_minute_bucket', $freeze );
+		$this->assertTrue( Mailer::approved( $id ), 'Fixtura: pierwszy mail musi wejść do kolejki.' );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $id ) );
+
+		remove_filter( 'pusers_internal_test_seam_minute_bucket', $freeze );
+		$this->assertSame( AccountStatus::Approved, $this->status_of( $id ), 'Konto jest jednak zatwierdzone.' );
+		$this->assertSame( '1', $args['pusers_mail_failed'] );
+		$html = $this->render_notice( $args );
+		$this->assertStringContainsString( 'Mail do wnioskodawcy nie wyszedł', $html );
+		$this->assertStringContainsString( 'notice-warning', $html );
+	}
+
+	public function test_powtorne_odrzucenie_ma_wlasny_komunikat_a_nie_sukces(): void {
+		$id = $this->account( 'pending' );
+		$this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason' => 'Pierwszy' ) );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason' => 'Poprawiony' ) );
+
+		$this->assertSame( 'Pierwszy', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		$this->assertSame( '0', $args['pusers_done'] );
+		$this->assertSame( '1', $args['pusers_unchanged'] );
+		$html = $this->render_notice( $args );
+		$this->assertStringContainsString( 'powód nie został zmieniony', $html );
+		$this->assertStringNotContainsString( 'Odrzucono wniosków', $html );
+	}
+
+	public function test_po_akcji_nastepuje_przekierowanie_z_zachowaniem_zakladki_i_filtra(): void {
+		$id = $this->account( 'rejected' );
+		$this->asAdminPosting(
+			ApplicationsScreen::ACTION_DECIDE,
+			array(
+				'decision' => 'approve',
+				'users'    => array( (string) $id ),
+			)
+		);
+		// Zakładka i filtr jadą w ukrytych polach formularza listy pod nazwami argumentów adresu.
+		$_POST['status']     = 'rejected';
+		$_POST['profession'] = 'lekarz';
+
+		$args = $this->run_decide();
+
+		$this->assertSame( 'rejected', $args['status'] );
+		$this->assertSame( 'lekarz', $args['profession'] );
+		$this->assertSame( Menu::SLUG_APPLICATIONS, $args['page'] );
+	}
+
+	public function test_wiersz_logu_niesie_identyfikator_zalogowanego_administratora(): void {
+		$id = $this->account( 'pending' );
+
+		$this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $id ) );
+
+		$rows = $this->log_rows( Decision::LOG_APPROVED );
+		$this->assertCount( 1, $rows );
+		$this->assertGreaterThan( 0, get_current_user_id() );
+		$this->assertSame( get_current_user_id(), (int) $rows[0]->actor_user_id );
+		$this->assertSame( $id, (int) $rows[0]->subject_user_id );
+	}
+
+	public function test_uchwyt_jest_podpiety_pod_admin_post(): void {
+		remove_all_actions( 'admin_post_' . ApplicationsScreen::ACTION_DECIDE );
+		ApplicationsScreen::register();
+
+		$this->assertSame( 10, has_action( 'admin_post_' . ApplicationsScreen::ACTION_DECIDE, array( ApplicationsScreen::class, 'handle_decide' ) ) );
+	}
+
+	public function test_lista_ma_formularz_z_nonce_polami_wyboru_i_gotowymi_powodami(): void {
+		$this->set_presets( array( 'Brak numeru PWZ' ) );
+		$id = $this->account( 'pending' );
+
+		$html = $this->render( array( 'status' => 'pending' ) );
+
+		$this->assertStringContainsString( 'name="pusers_nonce"', $html );
+		$this->assertStringContainsString( 'value="' . ApplicationsScreen::ACTION_DECIDE . '"', $html );
+		$this->assertStringContainsString( 'name="' . ApplicationsScreen::FIELD_USERS . '[]" value="' . $id . '"', $html );
+		$this->assertStringContainsString( 'name="' . ApplicationsScreen::FIELD_REASON_PRESET . '"', $html );
+		$this->assertStringContainsString( 'Brak numeru PWZ', $html );
+	}
+
+	public function test_szczegoly_maja_przyciski_z_tym_samym_punktem_wejscia(): void {
+		$id = $this->account( 'pending' );
+
+		$html = $this->render( array( 'user' => (string) $id ) );
+
+		$this->assertStringContainsString( 'name="pusers_nonce"', $html );
+		$this->assertStringContainsString( 'value="' . ApplicationsScreen::ACTION_DECIDE . '"', $html );
+		$this->assertStringContainsString( 'name="pusers_decision" value="approve"', $html );
+		$this->assertStringContainsString( 'name="pusers_decision" value="reject"', $html );
 	}
 }

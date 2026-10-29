@@ -210,6 +210,8 @@ final class ApplicationDetailsTest extends WP_UnitTestCase {
 		$html = $this->panel( $id );
 
 		$this->assertStringContainsString( '5425740', $html );
+		// Jedyny formularz to rozstrzygnięcie; pól danych wniosku tu nie ma.
+		$html = (string) preg_replace( '/<form [^>]*pusers-decision-form.*?<\/form>/s', '', $html );
 		$this->assertDoesNotMatchRegularExpression( '/<(input|textarea|select|form)\b/i', $html );
 	}
 

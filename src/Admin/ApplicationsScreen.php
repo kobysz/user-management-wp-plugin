@@ -11,12 +11,14 @@ namespace PortalUsers\Admin;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Account\Decision;
 use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Application\ApplicationRow;
 use PortalUsers\Domain\Application\CredentialVerdict;
 use PortalUsers\Domain\Application\RegistryLink;
 use PortalUsers\Persistence\ApplicationRepository;
 use PortalUsers\Persistence\ProfessionRepository;
+use PortalUsers\Persistence\SettingsRepository;
 
 /**
  * Widok nad kontami z wtyczkowym stanem. Zakładek jest trzy, choć repozytorium liczy cztery stany:
@@ -31,11 +33,97 @@ final class ApplicationsScreen {
 	public const ARG_PAGE       = 'paged';
 	public const ARG_USER       = 'user';
 
+	public const ACTION_DECIDE       = 'pusers_decide_applications';
+	public const FIELD_USERS         = 'pusers_users';
+	public const FIELD_DECISION      = 'pusers_decision';
+	public const FIELD_REASON        = 'pusers_reason';
+	public const FIELD_REASON_PRESET = 'pusers_reason_preset';
+	public const DECIDE_APPROVE      = 'approve';
+	public const DECIDE_REJECT       = 'reject';
+
+	public const NOTICE_DECIDED          = 'decided';
+	public const NOTICE_NEEDS_REASON     = 'needs_reason';
+	public const NOTICE_NOTHING_SELECTED = 'nothing_selected';
+
+	// Liczniki wyniku partii jadą w adresie przekierowania, bo po PRG to jedyne, co ekran ma o wyniku.
+	private const ARG_DECISION    = 'pusers_decision_done';
+	private const ARG_DONE        = 'pusers_done';
+	private const ARG_MAIL_FAILED = 'pusers_mail_failed';
+	private const ARG_UNCHANGED   = 'pusers_unchanged';
+	private const ARG_SKIPPED     = 'pusers_skipped';
+
 	/**
-	 * Podpina podstronę. Rejestracja jest wołana z `Plugin::boot()` poza bramką zależności.
+	 * Podpina podstronę i obsługę rozstrzygnięcia. Rejestracja jest wołana z `Plugin::boot()` poza bramką zależności.
 	 */
 	public static function register(): void {
 		add_action( 'admin_menu', array( self::class, 'add_page' ) );
+		add_action( 'admin_post_' . self::ACTION_DECIDE, array( self::class, 'handle_decide' ) );
+	}
+
+	/**
+	 * Rozstrzyga zaznaczone wnioski: uprawnienia i nonce, metoda, dane z żądania, wywołanie serwisu, przekierowanie.
+	 *
+	 * Odrzucenie bez powodu odbijane jest tu, zanim jakiekolwiek konto zostanie ruszone: partia nie może się
+	 * rozstrzygnąć do połowy. Reszty (stan, mail, log) pilnuje `Decision`; ekran tylko zlicza kody wyniku.
+	 */
+	public static function handle_decide(): void {
+		Request::guard( self::ACTION_DECIDE );
+
+		// Zmiana stanu, więc GET (admin_post_* odpala się dla każdej metody) odpada.
+		$method = isset( $_SERVER['REQUEST_METHOD'] ) && is_string( $_SERVER['REQUEST_METHOD'] ) ? sanitize_text_field( wp_unslash( $_SERVER['REQUEST_METHOD'] ) ) : '';
+		if ( 'POST' !== $method ) {
+			wp_die( esc_html__( 'Ta operacja wymaga żądania POST.', 'portal-users' ), '', array( 'response' => 405 ) );
+		}
+
+		$back     = self::return_args();
+		$decision = self::post_text( self::FIELD_DECISION );
+		$ids      = self::post_ids();
+
+		if ( array() === $ids || ! in_array( $decision, array( self::DECIDE_APPROVE, self::DECIDE_REJECT ), true ) ) {
+			Request::redirect( Menu::SLUG_APPLICATIONS, self::NOTICE_NOTHING_SELECTED, $back );
+			return;
+		}
+
+		$reason = '';
+		if ( self::DECIDE_REJECT === $decision ) {
+			$reason = self::posted_reason();
+			if ( '' === $reason ) {
+				Request::redirect( Menu::SLUG_APPLICATIONS, self::NOTICE_NEEDS_REASON, $back );
+				return;
+			}
+		}
+
+		$actor  = get_current_user_id();
+		$counts = array(
+			self::ARG_DONE        => 0,
+			self::ARG_MAIL_FAILED => 0,
+			self::ARG_UNCHANGED   => 0,
+			self::ARG_SKIPPED     => 0,
+		);
+		foreach ( $ids as $id ) {
+			$result = self::DECIDE_APPROVE === $decision ? Decision::approve( $id, $actor ) : Decision::reject( $id, $actor, $reason );
+			switch ( $result ) {
+				case Decision::RESULT_OK:
+					++$counts[ self::ARG_DONE ];
+					break;
+				case Decision::RESULT_MAIL_FAILED:
+					// Konto jest rozstrzygnięte, ale lekarz nie dostał maila: liczy się do obu, bo redakcja musi to wiedzieć.
+					++$counts[ self::ARG_DONE ];
+					++$counts[ self::ARG_MAIL_FAILED ];
+					break;
+				case Decision::RESULT_UNCHANGED:
+					++$counts[ self::ARG_UNCHANGED ];
+					break;
+				default:
+					++$counts[ self::ARG_SKIPPED ];
+			}
+		}
+
+		Request::redirect(
+			Menu::SLUG_APPLICATIONS,
+			self::NOTICE_DECIDED,
+			array_merge( $back, $counts, array( self::ARG_DECISION => $decision ) )
+		);
 	}
 
 	/**
@@ -93,9 +181,10 @@ final class ApplicationsScreen {
 
 		echo '<div class="wrap"><h1>' . esc_html__( 'Portal: wnioski', 'portal-users' ) . '</h1>';
 
+		self::render_notice();
 		self::render_tabs( $status, $profession );
 		self::render_filter( $status, $profession );
-		self::render_table( $rows );
+		self::render_decision_form( $rows, $status, $profession );
 
 		if ( $pages > 1 ) {
 			// paginate_links() zwraca już oczyszczony znacznik.
@@ -112,6 +201,107 @@ final class ApplicationsScreen {
 		}
 
 		echo '</div>';
+	}
+
+	/**
+	 * Formularz rozstrzygnięcia: pole powodu nad tabelą, w tabeli pola wyboru. POST do admin-post, nigdy do tego ekranu.
+	 *
+	 * @param array<int, ApplicationRow> $rows       Wiersze strony.
+	 * @param AccountStatus              $status     Wybrany stan.
+	 * @param string                     $profession Wybrana profesja albo ''.
+	 */
+	private static function render_decision_form( array $rows, AccountStatus $status, string $profession ): void {
+		if ( array() === $rows ) {
+			self::render_table( $rows, false );
+			return;
+		}
+
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" class="pusers-decision-form">';
+		echo '<input type="hidden" name="action" value="' . esc_attr( self::ACTION_DECIDE ) . '" />';
+		// Zakładka i filtr wracają w POST-cie, żeby redaktor po akcji wylądował tam, skąd kliknął.
+		echo '<input type="hidden" name="' . esc_attr( self::ARG_STATUS ) . '" value="' . esc_attr( $status->value ) . '" />';
+		echo '<input type="hidden" name="' . esc_attr( self::ARG_PROFESSION ) . '" value="' . esc_attr( $profession ) . '" />';
+		wp_nonce_field( self::ACTION_DECIDE, Request::NONCE_FIELD );
+
+		self::render_reason_field();
+		echo '<p><label for="pusers-decision">' . esc_html__( 'Zaznaczone wnioski:', 'portal-users' ) . '</label> ';
+		echo '<select id="pusers-decision" name="' . esc_attr( self::FIELD_DECISION ) . '">';
+		echo '<option value="' . esc_attr( self::DECIDE_APPROVE ) . '">' . esc_html__( 'Zatwierdź', 'portal-users' ) . '</option>';
+		echo '<option value="' . esc_attr( self::DECIDE_REJECT ) . '">' . esc_html__( 'Odrzuć (wymaga powodu)', 'portal-users' ) . '</option>';
+		echo '</select> <button type="submit" class="button button-primary">' . esc_html__( 'Zastosuj', 'portal-users' ) . '</button></p>';
+
+		self::render_table( $rows, true );
+		echo '</form>';
+	}
+
+	/**
+	 * Pole powodu odrzucenia: lista gotowych powodów z ustawień wypełnia pole tekstowe, które można nadpisać.
+	 * Używane przez listę i przez panel szczegółów, żeby oba miejsca zachowywały się tak samo.
+	 */
+	public static function render_reason_field(): void {
+		$presets = SettingsRepository::get()->rejectionReasons;
+
+		echo '<p class="pusers-reason"><label for="pusers-reason">' . esc_html__( 'Powód odrzucenia (używany tylko przy odrzuceniu)', 'portal-users' ) . '</label><br />';
+		if ( array() !== $presets ) {
+			echo '<select id="pusers-reason-preset" name="' . esc_attr( self::FIELD_REASON_PRESET ) . '">';
+			echo '<option value="">' . esc_html__( '— gotowy powód —', 'portal-users' ) . '</option>';
+			foreach ( $presets as $preset ) {
+				echo '<option value="' . esc_attr( $preset ) . '">' . esc_html( $preset ) . '</option>';
+			}
+			echo '</select><br />';
+		}
+		echo '<textarea id="pusers-reason" name="' . esc_attr( self::FIELD_REASON ) . '" rows="3" cols="60" maxlength="' . esc_attr( (string) Decision::REASON_MAX ) . '"></textarea></p>';
+		// Wybór z listy tylko wypełnia pole; serwer czyta pole tekstowe, a gotowy powód jest jego zapasem.
+		echo '<script>( function () { var p = document.getElementById( "pusers-reason-preset" ), t = document.getElementById( "pusers-reason" ); if ( p && t ) { p.addEventListener( "change", function () { if ( p.value ) { t.value = p.value; } } ); } }() );</script>';
+	}
+
+	/**
+	 * Komunikat po rozstrzygnięciu; niesie liczby, bo "gotowe" przy pominiętych kontach byłoby nieprawdą.
+	 */
+	private static function render_notice(): void {
+		$notice = Request::notice();
+
+		if ( self::NOTICE_NOTHING_SELECTED === $notice ) {
+			echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'Nie zaznaczono żadnego wniosku albo decyzji. Nic nie zmieniono.', 'portal-users' ) . '</p></div>';
+		} elseif ( self::NOTICE_NEEDS_REASON === $notice ) {
+			echo '<div class="notice notice-error is-dismissible"><p>' . esc_html__( 'Odrzucenie wymaga powodu. Żaden wniosek nie został zmieniony.', 'portal-users' ) . '</p></div>';
+		} elseif ( self::NOTICE_DECIDED === $notice ) {
+			$done        = absint( self::query_arg( self::ARG_DONE ) );
+			$mail_failed = absint( self::query_arg( self::ARG_MAIL_FAILED ) );
+			$unchanged   = absint( self::query_arg( self::ARG_UNCHANGED ) );
+			$skipped     = absint( self::query_arg( self::ARG_SKIPPED ) );
+
+			$lines = array();
+			if ( $done > 0 ) {
+				$lines[] = self::DECIDE_REJECT === self::query_arg( self::ARG_DECISION )
+					/* translators: %s: liczba wniosków. */
+					? sprintf( __( 'Odrzucono wniosków: %s.', 'portal-users' ), number_format_i18n( $done ) )
+					/* translators: %s: liczba wniosków. */
+					: sprintf( __( 'Zatwierdzono wniosków: %s.', 'portal-users' ), number_format_i18n( $done ) );
+			}
+			if ( $mail_failed > 0 ) {
+				/* translators: %s: liczba wniosków. */
+				$lines[] = sprintf( __( 'Mail do wnioskodawcy nie wyszedł (wnioski: %s). Konta są rozstrzygnięte, ale trzeba powiadomić ich inaczej.', 'portal-users' ), number_format_i18n( $mail_failed ) );
+			}
+			if ( $unchanged > 0 ) {
+				/* translators: %s: liczba wniosków. */
+				$lines[] = sprintf( __( 'Konta już były w tym stanie (wnioski: %s), nic nie zmieniono; powód nie został zmieniony.', 'portal-users' ), number_format_i18n( $unchanged ) );
+			}
+			if ( $skipped > 0 ) {
+				/* translators: %s: liczba wniosków. */
+				$lines[] = sprintf( __( 'Pominięto wniosków: %s (konto usunięte, w niedozwolonym stanie albo błąd zapisu).', 'portal-users' ), number_format_i18n( $skipped ) );
+			}
+			if ( array() === $lines ) {
+				$lines[] = __( 'Nic nie zmieniono.', 'portal-users' );
+			}
+
+			$class = $mail_failed > 0 || $unchanged > 0 || $skipped > 0 || 0 === $done ? 'notice-warning' : 'notice-success';
+			echo '<div class="notice ' . esc_attr( $class ) . ' is-dismissible">';
+			foreach ( $lines as $line ) {
+				echo '<p>' . esc_html( $line ) . '</p>';
+			}
+			echo '</div>';
+		}
 	}
 
 	/**
@@ -168,10 +358,16 @@ final class ApplicationsScreen {
 	/**
 	 * Tabela wniosków.
 	 *
-	 * @param array<int, ApplicationRow> $rows Wiersze strony.
+	 * @param array<int, ApplicationRow> $rows       Wiersze strony.
+	 * @param bool                       $selectable Czy tabela stoi w formularzu rozstrzygnięcia i ma pola wyboru.
 	 */
-	private static function render_table( array $rows ): void {
+	private static function render_table( array $rows, bool $selectable ): void {
+		$span = $selectable ? 6 : 5;
 		echo '<table class="wp-list-table widefat striped"><thead><tr>';
+		if ( $selectable ) {
+			echo '<td class="check-column"><input type="checkbox" id="pusers-select-all" onclick="document.querySelectorAll( \'.pusers-select\' ).forEach( function ( c ) { c.checked = this.checked; }, this );" />'
+				. '<label class="screen-reader-text" for="pusers-select-all">' . esc_html__( 'Zaznacz wszystkie', 'portal-users' ) . '</label></td>';
+		}
 		foreach ( array(
 			__( 'Użytkownik', 'portal-users' ),
 			__( 'Profesja', 'portal-users' ),
@@ -186,10 +382,10 @@ final class ApplicationsScreen {
 		echo '</tr></thead><tbody>';
 
 		if ( array() === $rows ) {
-			echo '<tr><td colspan="5">' . esc_html__( 'Brak wniosków.', 'portal-users' ) . '</td></tr>';
+			echo '<tr><td colspan="' . esc_attr( (string) $span ) . '">' . esc_html__( 'Brak wniosków.', 'portal-users' ) . '</td></tr>';
 		}
 		foreach ( $rows as $row ) {
-			self::render_row( $row );
+			self::render_row( $row, $selectable );
 		}
 		echo '</tbody></table>';
 	}
@@ -197,13 +393,22 @@ final class ApplicationsScreen {
 	/**
 	 * Wiersz tabeli.
 	 *
-	 * @param ApplicationRow $row Wniosek.
+	 * @param ApplicationRow $row        Wniosek.
+	 * @param bool           $selectable Czy wiersz ma pole wyboru.
 	 */
-	private static function render_row( ApplicationRow $row ): void {
+	private static function render_row( ApplicationRow $row, bool $selectable ): void {
 		// Profesja wycofana z ustawień zostaje w koncie: wiersz się renderuje, a jedyną etykietą jest klucz.
 		$profession = '' === $row->professionKey ? null : ProfessionRepository::get()->get( $row->professionKey );
 
 		echo '<tr class="pusers-application-row">';
+		if ( $selectable ) {
+			printf(
+				'<th scope="row" class="check-column"><input type="checkbox" class="pusers-select" name="%1$s[]" value="%2$d" aria-label="%3$s" /></th>',
+				esc_attr( self::FIELD_USERS ),
+				absint( $row->userId ),
+				esc_attr( $row->displayName )
+			);
+		}
 		echo '<td><strong>' . esc_html( $row->displayName ) . '</strong><br />' . esc_html( $row->email ) . '</td>';
 		echo '<td>' . esc_html( null === $profession ? $row->professionKey : $profession->label ) . '</td>';
 
@@ -279,6 +484,63 @@ final class ApplicationsScreen {
 			$args[ self::ARG_PROFESSION ] = $profession;
 		}
 		return Menu::url( Menu::SLUG_APPLICATIONS, $args );
+	}
+
+	/**
+	 * Identyfikatory z żądania: tylko napisy, przez absint, bez zer i powtórek. Wejście spoza tablicy daje pustą listę.
+	 *
+	 * @return array<int, int>
+	 */
+	private static function post_ids(): array {
+		if ( ! isset( $_POST[ self::FIELD_USERS ] ) || ! is_array( $_POST[ self::FIELD_USERS ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- guard() na początku handle_decide().
+			return array();
+		}
+		// Tylko napisy z samych cyfr: element-tablica dałby absint() == 1, a '-5' dałoby 5, czyli cudze konto.
+		$raw = array_filter( wp_unslash( $_POST[ self::FIELD_USERS ] ), static fn ( $v ): bool => is_string( $v ) && ctype_digit( $v ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- j.w.; absint niżej.
+		return array_values( array_unique( array_filter( array_map( 'absint', $raw ) ) ) );
+	}
+
+	/**
+	 * Pole POST jako tekst; pusty, gdy go nie ma albo nie jest napisem.
+	 *
+	 * @param string $name Nazwa pola.
+	 */
+	private static function post_text( string $name ): string {
+		if ( ! isset( $_POST[ $name ] ) || ! is_string( $_POST[ $name ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Missing -- guard() na początku handle_decide().
+			return '';
+		}
+		return sanitize_textarea_field( wp_unslash( $_POST[ $name ] ) ); // phpcs:ignore WordPress.Security.NonceVerification.Missing -- j.w.
+	}
+
+	/**
+	 * Powód z żądania: pole tekstowe, a gdy puste, gotowy powód z ustawień. Wartość spoza listy ustawień jest ignorowana,
+	 * żeby preset nie był drugą, niesprawdzaną drogą na dowolny tekst.
+	 */
+	private static function posted_reason(): string {
+		$text = trim( self::post_text( self::FIELD_REASON ) );
+		if ( '' !== $text ) {
+			return $text;
+		}
+		$preset = trim( self::post_text( self::FIELD_REASON_PRESET ) );
+		return in_array( $preset, SettingsRepository::get()->rejectionReasons, true ) ? $preset : '';
+	}
+
+	/**
+	 * Zakładka i filtr z żądania zapisu, w kształcie argumentów przekierowania.
+	 *
+	 * @return array<string, string>
+	 */
+	private static function return_args(): array {
+		$args   = array();
+		$status = AccountStatus::tryFrom( sanitize_key( self::post_text( self::ARG_STATUS ) ) );
+		if ( null !== $status && in_array( $status, self::tabs(), true ) ) {
+			$args[ self::ARG_STATUS ] = $status->value;
+		}
+		$profession = sanitize_key( self::post_text( self::ARG_PROFESSION ) );
+		if ( '' !== $profession ) {
+			$args[ self::ARG_PROFESSION ] = $profession;
+		}
+		return $args;
 	}
 
 	/**

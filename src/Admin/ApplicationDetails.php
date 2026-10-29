@@ -22,7 +22,7 @@ use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
 
 /**
- * Widok jednego wniosku. Celowo bez żadnego pola formularza: dane poprawia administrator na standardowym
+ * Widok jednego wniosku. Jedyny formularz to rozstrzygnięcie; danych tu się nie edytuje: poprawia administrator na standardowym
  * ekranie edycji użytkownika, gdzie ACF renderuje te same pola, więc panel nie jest drugim miejscem edycji.
  */
 final class ApplicationDetails {
@@ -63,8 +63,38 @@ final class ApplicationDetails {
 		}
 		echo '</tbody></table>';
 
+		self::render_decision( $row );
 		self::render_fields( $row );
 		echo '</div>';
+	}
+
+	/**
+	 * Przyciski rozstrzygnięcia: ten sam punkt wejścia i nonce co lista. Przycisk stanu, w którym konto już jest,
+	 * się nie pojawia, a konto niepotwierdzone nie ma żadnego (nie jest wnioskiem).
+	 *
+	 * @param ApplicationRow $row Wniosek.
+	 */
+	private static function render_decision( ApplicationRow $row ): void {
+		if ( AccountStatus::EmailUnconfirmed === $row->status ) {
+			return;
+		}
+
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" class="pusers-decision-form">';
+		echo '<input type="hidden" name="action" value="' . esc_attr( ApplicationsScreen::ACTION_DECIDE ) . '" />';
+		echo '<input type="hidden" name="' . esc_attr( ApplicationsScreen::FIELD_USERS ) . '[]" value="' . esc_attr( (string) $row->userId ) . '" />';
+		wp_nonce_field( ApplicationsScreen::ACTION_DECIDE, Request::NONCE_FIELD );
+
+		if ( AccountStatus::Rejected !== $row->status ) {
+			ApplicationsScreen::render_reason_field();
+		}
+		echo '<p>';
+		if ( AccountStatus::Approved !== $row->status ) {
+			echo '<button type="submit" class="button button-primary" name="' . esc_attr( ApplicationsScreen::FIELD_DECISION ) . '" value="' . esc_attr( ApplicationsScreen::DECIDE_APPROVE ) . '">' . esc_html__( 'Zatwierdź', 'portal-users' ) . '</button> ';
+		}
+		if ( AccountStatus::Rejected !== $row->status ) {
+			echo '<button type="submit" class="button" name="' . esc_attr( ApplicationsScreen::FIELD_DECISION ) . '" value="' . esc_attr( ApplicationsScreen::DECIDE_REJECT ) . '">' . esc_html__( 'Odrzuć', 'portal-users' ) . '</button>';
+		}
+		echo '</p></form>';
 	}
 
 	/**
