@@ -861,6 +861,29 @@ final class ImportScreenTest extends WP_UnitTestCase {
 		$this->assertSame( '|', $this->importedMeta( $ids[0] ), 'Drugi przebieg nie ma prawa niczego zapisać.' );
 	}
 
+	public function test_podglad_jest_zuzyty_zanim_zacznie_sie_przebieg(): void {
+		$this->seedImportable();
+		$this->preview();
+		$this->assertNotNull( ImportMappingRepository::preview(), 'Warunek testu: podgląd istnieje przed zapisem.' );
+		$seen = array();
+		$spy  = static function ( $meta_id, $user_id, $meta_key ) use ( &$seen ): void {
+			if ( UserMeta::PROFESSION === $meta_key ) {
+				$seen[] = null === ImportMappingRepository::preview();
+			}
+		};
+		add_action( 'added_user_meta', $spy, 10, 4 );
+		add_action( 'updated_user_meta', $spy, 10, 4 );
+		try {
+			$this->apply();
+		} finally {
+			remove_action( 'added_user_meta', $spy );
+			remove_action( 'updated_user_meta', $spy );
+		}
+
+		$this->assertNotSame( array(), $seen, 'Przebieg musiał coś zapisać.' );
+		$this->assertNotContains( false, $seen, 'Podgląd istniał jeszcze w trakcie przebiegu.' );
+	}
+
 	/**
 	 * @return array<string, array{0: string}>
 	 */

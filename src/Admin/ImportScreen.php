@@ -33,7 +33,7 @@ use PortalUsers\Persistence\SettingsRepository;
  *
  * Zapis danych przechodzi przez bramkę: `handle_apply()` działa tylko wtedy, gdy istnieje podgląd, jego odcisk
  * równa się odciskowi zapisanego mapowania (czytanego tą samą drogą, `ImportMappingRepository::get()`, po obu stronach)
- * i jest młodszy niż `PREVIEW_MAX_AGE`. Udany zapis czyści podgląd, więc ten sam raport nie autoryzuje drugiego przebiegu.
+ * i jest młodszy niż `PREVIEW_MAX_AGE`. Zapis zużywa podgląd (przed przebiegiem), więc ten sam raport nie autoryzuje drugiego przebiegu.
  */
 final class ImportScreen {
 
@@ -181,7 +181,7 @@ final class ImportScreen {
 	/**
 	 * Zapisuje import, ale tylko przez bramkę: podgląd istnieje, jego odcisk równa się odciskowi zapisanego
 	 * mapowania i jest młodszy niż `PREVIEW_MAX_AGE`. Niespełniony warunek to komunikat o nieaktualnym raporcie
-	 * i żadnego zapisu. Po przebiegu podgląd jest czyszczony, więc ten sam raport nie zadziała drugi raz;
+	 * i żadnego zapisu. Podgląd jest czyszczony po bramce, a przed przebiegiem, więc ten sam raport nie zadziała drugi raz;
 	 * wynik wraca do ekranu w adresie przekierowania (liczby, nie treść).
 	 */
 	public static function handle_apply(): void {
@@ -194,8 +194,11 @@ final class ImportScreen {
 			return;
 		}
 
-		$report = ( new ImportRunner() )->apply( $mapping, get_current_user_id() );
+		// Raport zużywamy przed przebiegiem: drugie równoległe kliknięcie nie przejdzie bramki, więc dziennik
+		// nie dostanie dwóch wierszy o jednej decyzji. Przebieg przerwany w środku wymaga nowego trybu próbnego,
+		// bo stan portalu się zmienił; ponowienie jest bezpieczne, bo runner porównuje przed zapisem.
 		ImportMappingRepository::clear_preview();
+		$report = ( new ImportRunner() )->apply( $mapping, get_current_user_id() );
 
 		Request::redirect(
 			Menu::SLUG_IMPORT,
