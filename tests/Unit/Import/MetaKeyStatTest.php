@@ -39,6 +39,25 @@ final class MetaKeyStatTest extends TestCase {
 		$this->assertSame( array( 'b', 'a', 'c' ), $stat->samples );
 	}
 
+	public function test_wartosc_dokladnie_60_znakow_wraca_cala_bez_wielokropka(): void {
+		$stat = MetaKeyStat::fromRow( 'wpmem_reg', 1, array( str_repeat( 'ż', 60 ) ) );
+
+		$this->assertSame( array( str_repeat( 'ż', 60 ) ), $stat->samples );
+	}
+
+	public function test_wartosc_61_znakow_jest_obcinana_do_60_i_dostaje_wielokropek(): void {
+		$stat = MetaKeyStat::fromRow( 'wpmem_reg', 1, array( str_repeat( 'a', 61 ) ) );
+
+		$this->assertSame( array( str_repeat( 'a', 60 ) . '…' ), $stat->samples );
+	}
+
+	public function test_niepoprawny_utf8_nie_kasuje_probki_tylko_usuwa_zepsuty_bajt(): void {
+		// Bajt \xC3 bez kontynuacji i \x28 to nieprawidłowe UTF-8: wartość ma zostać widoczna, a nie zniknąć.
+		$stat = MetaKeyStat::fromRow( 'wpmem_reg', 1, array( "abc\xC3\x28def" ) );
+
+		$this->assertSame( array( 'abc?(def' ), $stat->samples );
+	}
+
 	public function test_konstruktor_niesie_klucz_i_liczbe_kont(): void {
 		$stat = MetaKeyStat::fromRow( 'wpmem_reg', 12, array() );
 

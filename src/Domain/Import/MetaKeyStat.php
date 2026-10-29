@@ -53,7 +53,18 @@ final class MetaKeyStat {
 		$clean = array();
 
 		foreach ( $samples as $sample ) {
-			$line = trim( (string) preg_replace( '/\s+/u', ' ', $sample ) );
+			$normalized = preg_replace( '/\s+/u', ' ', $sample );
+
+			// Niepoprawny UTF-8 daje null: zamiast kasować wartość, zamieniamy zepsute bajty i liczymy jeszcze raz.
+			if ( null === $normalized ) {
+				$normalized = preg_replace( '/\s+/u', ' ', mb_convert_encoding( $sample, 'UTF-8', 'UTF-8' ) );
+			}
+
+			if ( null === $normalized ) {
+				continue;
+			}
+
+			$line = trim( $normalized );
 
 			if ( '' === $line ) {
 				continue;
