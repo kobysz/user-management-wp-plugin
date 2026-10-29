@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers;
 
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\ExportHandler;
 use PortalUsers\Admin\MailLogScreen;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MailTemplatesScreen;
@@ -34,6 +35,7 @@ use PortalUsers\Front\RestUsers;
 use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
 use PortalUsers\Mail\CoreCapture;
+use PortalUsers\Privacy\PrivacyProvider;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -112,6 +114,15 @@ final class Plugin {
 		// się bramkuje, a rozstrzyganie wniosków należy do egzekwowania. Jedynie panel szczegółów potrzebuje
 		// ACF i sam mówi, gdy go nie ma.
 		ApplicationsScreen::register();
+
+		// Eksport wniosków z tego samego powodu: jego przycisk stoi na ekranie, który działa bez ACF Pro.
+		// Przy leżącym ACF plik po prostu nie ma kolumn pól.
+		ExportHandler::register();
+
+		// Eksport danych osobowych też stoi poza hookiem zależnym od ACF Pro: żądanie RODO ma termin
+		// ustawowy i nie może czekać na naprawę wtyczki pól. Przy leżącym ACF grupa pól zgłoszenia
+		// renderuje się z nazwami metadanych zamiast etykiet, a to lepsze niż niewydanie danych.
+		PrivacyProvider::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.

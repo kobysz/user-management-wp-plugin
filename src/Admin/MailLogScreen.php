@@ -20,6 +20,10 @@ use PortalUsers\Persistence\MailQueueRepository;
  * Szczegóły są celowo bez formularza: log jest materiałem dowodowym, nie edytowalnym rekordem. Jedyna
  * zmiana to „Wznów" dla wiersza `failed`; ekran tylko resetuje wiersz, a wysyła go cron w następnym
  * przebiegu (nie wołamy dispatchera z żądania panelu).
+ *
+ * Licznik „Nieudane" obejmuje też wiersze anulowane żądaniem usunięcia danych osobowych (dostają `failed`, bo
+ * mail już nie wyjdzie), więc jego wzrost nie musi znaczyć problemu z dostarczaniem. Takie wiersze są
+ * zanonimizowane i nie mają przycisku „Wznów".
  */
 final class MailLogScreen {
 
@@ -230,7 +234,10 @@ final class MailLogScreen {
 		echo '<td>' . esc_html( self::text( $row, 'attempts' ) ) . '</td>';
 		echo '<td>' . esc_html( self::error_text( $row, true ) ) . '</td>';
 		echo '<td>';
-		if ( QueueStatus::Failed === $status ) {
+		// Wiersz anulowany żądaniem usunięcia danych ma status `failed`, ale wznowić go się nie da (adresata i treści
+		// już nie ma), więc nie rysujemy przycisku, który może tylko skończyć się komunikatem przeczącym
+		// temu, co ekran pokazuje. Przyczynę niesie `last_error` (CANCELLED_BY_ERASURE), widoczny w tym samym wierszu.
+		if ( QueueStatus::Failed === $status && '1' !== self::text( $row, 'anonymized' ) ) {
 			self::render_requeue_form( $id );
 		}
 		echo '</td></tr>';

@@ -9,6 +9,7 @@ namespace PortalUsers\Tests\Integration\Admin;
 
 use PortalUsers\Account\Decision;
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\ExportHandler;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Config\Settings;
@@ -131,6 +132,19 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 	private function rows( string $html ): array {
 		preg_match_all( '/<tr class="pusers-application-row">.*?<\/tr>/s', $html, $m );
 		return $m[0];
+	}
+
+	public function test_przycisk_eksportu_niesie_zakladke_profesje_i_nonce(): void {
+		$this->account( 'approved', 'lekarz' );
+
+		$html = $this->render( array( ApplicationsScreen::ARG_STATUS => 'approved', ApplicationsScreen::ARG_PROFESSION => 'lekarz' ) );
+
+		$this->assertSame( 1, preg_match( '/<form method="post"[^>]*class="pusers-export-form">(.*?)<\/form>/s', $html, $m ), 'Formularz eksportu jest osobny od formularza rozstrzygania.' );
+		$this->assertStringContainsString( 'name="action" value="' . ExportHandler::ACTION . '"', $m[1] );
+		$this->assertStringContainsString( 'name="status" value="approved"', $m[1] );
+		$this->assertStringContainsString( 'name="profession" value="lekarz"', $m[1] );
+		$this->assertStringContainsString( 'name="pusers_nonce"', $m[1] );
+		$this->assertStringContainsString( 'Pobierz CSV', $m[1] );
 	}
 
 	public function test_zakladki_pokazuja_liczniki_wszystkich_stanow(): void {
@@ -610,6 +624,30 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 		$html = $this->render_notice( $args );
 		$this->assertStringContainsString( 'Mail do wnioskodawcy nie wyszedł', $html );
 		$this->assertStringContainsString( 'notice-warning', $html );
+	}
+
+	public function test_komunikat_mowi_gdy_rozstrzygniecie_nie_trafilo_do_logu(): void {
+		global $wpdb;
+		$id     = $this->account( 'pending' );
+		$table  = Migrations::table( 'event_log' );
+		$filter = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+		$previous_suppress = (bool) $wpdb->suppress_errors( true );
+		add_filter( 'query', $filter );
+		try {
+			$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $id ) );
+		} finally {
+			remove_filter( 'query', $filter );
+			$wpdb->suppress_errors( $previous_suppress );
+		}
+
+		$this->assertSame( AccountStatus::Approved, $this->status_of( $id ), 'Konto jest rozstrzygnięte mimo porażki logu.' );
+		$this->assertSame( '1', $args['pusers_log_failed'] );
+		$html = $this->render_notice( $args );
+		$this->assertStringContainsString( 'nie zostały odnotowane w logu', $html );
+		$this->assertStringContainsString( 'notice-warning', $html );
+		$this->assertStringNotContainsString( 'notice-success', $html );
 	}
 
 	public function test_powtorne_odrzucenie_z_tym_samym_powodem_mowi_ze_powod_jest_identyczny(): void {

@@ -43,6 +43,18 @@ final class MailQueueRepository {
 	public const RECIPIENT_MAX = 191;
 
 	/**
+	 * Wartość, którą anonimizacja wpisuje w `recipient`, `subject` i `body`. Kolumny są NOT NULL, więc
+	 * znacznik zastępuje treść, zamiast ją zerować; ten sam napis w trzech kolumnach mówi czytającemu log, że dane usunięto, a nie że ich nie było.
+	 */
+	public const ANONYMIZED_PLACEHOLDER = '(dane usunięte na żądanie)';
+
+	/**
+	 * Wpis w `last_error` wiersza, który nie wyszedł i już nie wyjdzie, bo anonimizacja odebrała mu adresata i treść.
+	 * Stały i bezosobowy, żeby log wysyłek mówił, dlaczego wiersz stoi w `failed`, nie niosąc żadnych danych.
+	 */
+	public const CANCELLED_BY_ERASURE = 'Wysyłkę anulowało żądanie usunięcia danych.';
+
+	/**
 	 * Wstawia wiersz w stanie queued. Duplikat `dedupe_key` jest po cichu pomijany.
 	 *
 	 * Klucz `dedupe_key` ma co najwyżej DEDUPE_KEY_MAX znaków. wpdb zdejmuje tryby ścisłe SQL, więc dłuższy
@@ -387,7 +399,7 @@ final class MailQueueRepository {
 	}
 
 	/**
-	 * Wznawia nieudany wiersz: zeruje próby i wraca do kolejki; `last_error` zostaje jako ślad poprzedniej próby. Wiersz w innym stanie zostaje nietknięty.
+	 * Wznawia nieudany wiersz: zeruje próby i wraca do kolejki; `last_error` zostaje jako ślad poprzedniej próby. Wiersz w innym stanie zostaje nietknięty, a zanonimizowany też: żądanie usunięcia danych jest nieodwracalne, a taki wiersz nie ma już adresata ani treści, więc wysyłka nie miałaby komu i czego dostarczyć.
 	 *
 	 * @param int $id Identyfikator wiersza.
 	 * @return bool True, gdy wiersz był failed i wrócił do kolejki.
@@ -397,7 +409,7 @@ final class MailQueueRepository {
 
 		$wpdb->query(
 			$wpdb->prepare(
-				'UPDATE %i SET status = %s, attempts = 0, scheduled_at = %s WHERE id = %d AND status = %s',
+				'UPDATE %i SET status = %s, attempts = 0, scheduled_at = %s WHERE id = %d AND status = %s AND anonymized = 0',
 				Migrations::table( self::TABLE ),
 				QueueStatus::Queued->value,
 				gmdate( 'Y-m-d H:i:s' ),
@@ -407,5 +419,102 @@ final class MailQueueRepository {
 		);
 
 		return 1 === $wpdb->rows_affected;
+	}
+
+	/**
+	 * Wiersze kolejki jednego konta, od najnowszego, BEZ kolumny `body`.
+	 *
+	 * Metoda zasila eksport danych osobowych, a treść maila w eksporcie nie wychodzi: snapshot rodzaju
+	 * `confirmation` niesie żywy token potwierdzenia, a `password_reset` klucz resetu hasła. Kolumny,
+	 * której nikt nie czyta, nie ma w zapytaniu, więc nieuważny wywołujący nie ma jak wydać tokenu przejęcia konta.
+	 *
+	 * @param int $userId Konto.
+	 * @param int $limit  Rozmiar strony.
+	 * @param int $offset Przesunięcie.
+	 * @return array<int, array{id: int, kind: string, recipient: string, subject: string, status: string, created_at: string, sent_at: ?string, anonymized: bool}>
+	 */
+	public static function for_user( int $userId, int $limit, int $offset ): array {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id, kind, recipient, subject, status, created_at, sent_at, anonymized FROM %i WHERE user_id = %d ORDER BY id DESC LIMIT %d OFFSET %d',
+				Migrations::table( self::TABLE ),
+				$userId,
+				max( 0, $limit ),
+				max( 0, $offset )
+			),
+			ARRAY_A
+		);
+
+		$result = array();
+		foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+			$result[] = array(
+				'id'         => (int) $row['id'],
+				'kind'       => (string) $row['kind'],
+				'recipient'  => (string) $row['recipient'],
+				'subject'    => (string) $row['subject'],
+				'status'     => (string) $row['status'],
+				'created_at' => (string) $row['created_at'],
+				'sent_at'    => null === $row['sent_at'] ? null : (string) $row['sent_at'],
+				'anonymized' => '1' === (string) $row['anonymized'],
+			);
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Anonimizuje wiersze konta: nadpisuje adresata, temat i treść znacznikiem, ustawia `anonymized`.
+	 *
+	 * Sama flaga nie anonimizowałaby niczego, bo dane zostają w wierszu. Wiersz musi przeżyć, bo tabela
+	 * jest logiem wysyłek: wartością jest to, że mail wyszedł (`kind`, `created_at`, `sent_at`, `status`,
+	 * `attempts` zostają). `last_error` jest zerowany (wysłany) albo ustawiany na `CANCELLED_BY_ERASURE`. Wiersz, który NIE wyszedł (status inny niż `sent`), dostaje też `failed`. Wiersz, który nie wyszedł i już nie wyjdzie, ma to mówić, zamiast udawać,
+	 * że czeka: `queued` trafiałby do `due()` i dispatcher słałby na nie-adres, a ostrzeżenie o zaległej
+	 * kolejce paliłoby się w panelu na zawsze. `dedupe_key` też zostaje: jego nadpisanie pozwoliłoby wysłać ten sam mail
+	 * drugi raz, a unikalny indeks jest jedyną odpornością kolejki na duplikaty.
+	 * Operacja jest idempotentna: rusza tylko wiersze z `anonymized = 0`, bo rdzeń woła eraser w pętli.
+	 *
+	 * Dla maila rodzaju `editorial` nadpisywany `recipient` jest adresem redakcji, nie lekarza, więc log wysyłek traci
+	 * informację, do kogo poszło powiadomienie. Jest to przyjęte świadomie, a nie przeoczone: wiersz nie niesie
+	 * rodzaju adresata i rozróżnianie go kosztowałoby osobną ścieżkę zapisu w operacji, która ma być prosta i wyczerpująca.
+	 * Zanonimizowane wiersze mają status `failed`, więc zasilają też licznik „Nieudane" na ekranie logu wysyłek.
+	 *
+	 * @param int $userId Konto.
+	 * @return int Liczba wierszy faktycznie zmienionych.
+	 */
+	public static function anonymize_user( int $userId ): int {
+		global $wpdb;
+
+		$table = Migrations::table( self::TABLE );
+		$ids   = $wpdb->get_col(
+			$wpdb->prepare( 'SELECT id FROM %i WHERE user_id = %d AND anonymized = 0', $table, $userId )
+		);
+
+		$changed = 0;
+		foreach ( is_array( $ids ) ? $ids : array() as $id ) {
+			// Warunek anonymized = 0 powtórzony przy zapisie: równoległe wywołanie nie policzy wiersza drugi raz.
+			$updated = $wpdb->query(
+				$wpdb->prepare(
+					// Kolejność przypisań ma znaczenie: MySQL liczy je od lewej i `status` czytany po zmianie dałby już `failed`.
+					// `last_error` czyścimy też wysłanym wierszom: komunikat serwera pocztowego z wcześniejszej próby potrafi nieść adres odbiorcy.
+					'UPDATE %i SET recipient = %s, subject = %s, body = %s, last_error = IF(status = %s, NULL, %s), status = IF(status = %s, status, %s), anonymized = 1 WHERE id = %d AND anonymized = 0',
+					$table,
+					self::ANONYMIZED_PLACEHOLDER,
+					self::ANONYMIZED_PLACEHOLDER,
+					self::ANONYMIZED_PLACEHOLDER,
+					QueueStatus::Sent->value,
+					self::CANCELLED_BY_ERASURE,
+					QueueStatus::Sent->value,
+					QueueStatus::Failed->value,
+					(int) $id
+				)
+			);
+			if ( is_int( $updated ) ) {
+				$changed += $updated;
+			}
+		}
+
+		return $changed;
 	}
 }

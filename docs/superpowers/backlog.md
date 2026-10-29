@@ -117,25 +117,9 @@ Zachowanie domeny jest przypięte testem `LoginGateTest::test_unrecognised_store
 
 ---
 
-## Plan 7 — Eksport, RODO, import, aktywacja
+## Plan 7 — Eksport i RODO: co zostało po realizacji
 
-### Kolumna `anonymized` w tabeli logu zdarzeń
-
-Istnieje od pierwszej migracji, mimo że nic jej jeszcze nie używa. Żądanie usunięcia danych osobowych ma **anonimizować** log zdarzeń, nie kasować go — log wykazuje, kto i kiedy zatwierdził konto. Nie usuwać jako „nieużywanej".
-
-### `EventLog::write()` połyka porażkę zapisu
-
-`src/Persistence/EventLog.php`, metoda `write()`, zwraca `void` i ignoruje wynik `$wpdb->insert()`. Gdy zapis logu zawiedzie po udanej zmianie stanu (`Decision::approve()` / `reject()` piszą log po zapisie stanu, a mail idzie po logu), rozstrzygnięcie jest już wysłane mailem i zgłoszone redaktorowi jako sukces, a po audycie nie ma śladu. Specyfikacja opiera na tym logu całe „kto zatwierdził i kiedy" i wymaga jego anonimizacji zamiast kasowania, więc brakujący wiersz to dziura w jedynym dowodzie decyzji. `write()` powinno zwracać `bool`, a `Decision` traktować porażkę jak `RESULT_STORAGE_FAILED` albo osobny wynik, który ekran policzy i pokaże; ta sama zmiana dotyczy pozostałych miejsc zapisu do logu (rejestracja, most ACF).
-
-### Backfill stanów przy aktywacji
-
-Konta istniejące na portalu przed wdrożeniem nie mają stanu. Dziś nie powoduje to utraty dostępu, bo brama logowania nie jest podłączona (Plan 4), ale po jej podłączeniu backfill musi już działać.
-
-### Anonimizacja logu wysyłek musi nadpisać `recipient`, `subject` i `body`
-
-Tabela `mail_queue` ma kolumnę `anonymized` od pierwszej migracji, ale samo postawienie jej na `1` nie anonimizuje niczego: dane zostają w wierszu. Treść maila do redakcji niesie imię i nazwisko wnioskodawcy, adres, profesję, numer uprawnień, werdykt walidacji i **każde widoczne pole zgłoszenia**; treść odrzucenia niesie powód wpisany ręcznie przez redakcję. Żądanie usunięcia danych musi więc **nadpisać** `recipient`, `subject` i `body` wiersza, a nie tylko go oznaczyć. Wiersz zostaje, bo log wysyłek wykazuje, że mail wyszedł — to jest w nim wartością, a nie treść.
-
-Pytanie otwarte, na które eksporter musi odpowiedzieć **przed** napisaniem anonimizacji: czy treści wierszy kolejki są danymi osobowymi do **wydania** w eksporcie, czy własnym zapisem administratora danych o tym, co i kiedy wysłał? Od odpowiedzi zależy, czy eksport w ogóle te kolumny czyta.
+Plan 7 zrobił eksport CSV, eksporter i eraser danych osobowych oraz anonimizację logu zdarzeń i kolejki maili. Import i backfill stanów przeszły do Planu 8 (osobna sekcja niżej), bo dzielą mapowanie metadanych starej wtyczki. Zostaje tu jedna pozycja, która czeka na decyzję właściciela.
 
 ### Wiersz kolejki trzyma żywy sekret jednorazowy — decyzja o retencji należy do właściciela
 
@@ -143,13 +127,39 @@ Snapshot rodzaju `confirmation` zawiera **token potwierdzenia adresu ważny 48 g
 
 Do rozstrzygnięcia przez właściciela, nie przez wykonawcę: czy te dwa rodzaje maili mają mieć okno retencji liczone w **dniach** zamiast w 90 dniach — albo czy po wysyłce ma być czyszczona sama kolumna `body`? Pierwsze jest tańsze, drugie zostawia dłuższy ślad „czy ten mail wyszedł". Dopóki odpowiedzi nie ma, obowiązuje 90 dni dla wszystkich rodzajów.
 
-### Eraser musi czyścić dane osobowe powstałe w Planie 6
+### Adres IP w wierszach logu z podmiotem 0 przeżywa żądanie usunięcia danych
 
-Kasowanie danych osobowych (eraser WordPressa) musi usuwać `UserMeta::REGISTRATION_IP` i `UserMeta::REJECTION_REASON`: oba powstały w Planie 6 i oba są danymi osobowymi przy koncie. Wiersze `credential_changed` w logu zdarzeń (`ProfileSync::LOG_CREDENTIAL_CHANGED`) niosą numer uprawnień w `context` (klucze `old` i `new`) i podlegają anonimizacji logu (kolumna `anonymized`), nie usunięciu.
+`EventLog::anonymize_subject()` szuka po `subject_user_id`, a `src/Front/PasswordReset.php` (okolice linii 405 i 1016) oraz `src/Front/SpamGuard.php` (okolice 179) piszą do logu z podmiotem `0`, bo na ścieżce odzyskiwania hasła wtyczka świadomie nie ustala, czy adres należy do konta. Kontekst tych wierszy niesie adres IP oraz `email_hash`, który jest wyliczalny z adresu (komentarz w `PasswordReset` mówi to wprost), więc wtyczka umie powiązać te wiersze z osobą, a eraser ich nie rusza. Dodatkowo `event_log` nie ma żadnego okna retencji, więc wiersze zostają bezterminowo.
+
+To defekt planu, nie wykonania; nie jest zamknięty w gałęzi Planu 7. Dwie możliwe naprawy, nie wykluczają się: (1) w erazerze anonimizować też wiersze z podmiotem `0`, których `email_hash` równa się skrótowi adresu z żądania (reguła „co zostaje" już istnieje: `ContextFilter` usuwa `ip` i `email_hash`); (2) okno retencji dla `event_log`, jak dla kolejki maili.
+
+### Anonimizacja ściga się z wysyłką w locie
+
+Wiersz w stanie `sending` w chwili żądania usunięcia jest już zajęty przez dispatchera, który trzyma treść w pamięci, więc mail może wyjść, i to jest poprawne. Eraser przestawia taki wiersz na `failed` z `CANCELLED_BY_ERASURE`, a dispatcher kończy próbę przez `mark_sent()`, które zapisuje tylko wiersz w stanie `sending` z tym samym numerem próby (`MailQueueRepository::finish()`). Zapis więc nie trafia, a wiersz zostaje `failed` / `CANCELLED_BY_ERASURE`, choć mail wyszedł. Log wysyłek mówi, że mail anulowano, a adresat go dostał: wiersz jest nieprawdziwy co do faktu wysyłki, nie tylko sprzeczny wewnętrznie. Zapisane tutaj, żeby następny czytelnik logu nie szukał błędu w dispatcherze ani w erazerze: to cena tego, że anonimizacja nie czeka na wysyłki w locie. Naprawa, gdy będzie warta kosztu: eraser pomija wiersze `sending` i zgłasza je jako niezanonimizowane (pętla rdzenia wróci po nie w następnym przebiegu), a test wyścigu wymaga drugiego połączenia.
+
+### `dedupe_key` zostaje po anonimizacji — decyzja właściciela
+
+Anonimizacja wiersza kolejki nadpisuje adresata, temat, treść i `last_error`, ale nie `dedupe_key`. Klucz niesie identyfikator użytkownika i minutę, nie adres ani treść, więc sam nie wydaje danych osobowych, ale jest trwałym śladem „ten użytkownik dostał maila tego rodzaju w tej minucie". Zostawiony świadomie: wyczyszczenie klucza rozbiłoby ochronę przed duplikatem dla maili wysyłanych **po** anonimizacji (konto po usunięciu danych dalej istnieje i dalej może dostać maila). Jeżeli ślad ma zniknąć — jedna kolumna więcej w UPDATE i świadoma rezygnacja z dedupe dla kont po erasure.
 
 ---
 
-## Plan 8 — Aktualizacje i release
+## Plan 8 — Import i backfill stanów
+
+Ta sekcja jest nowa: import z poprzedniej wtyczki i backfill stanów przy aktywacji wydzielono z Planu 7 (decyzja właściciela z 2026-10-29), a dawny Plan 8 (Aktualizacje i release) stał się Planem 9.
+
+### Backfill stanów przy aktywacji
+
+Konta istniejące na portalu przed wdrożeniem nie mają stanu. Nie powoduje to utraty dostępu: brama logowania jest podłączona (Plan 4) i celowo wpuszcza konta bez zapisanego stanu (`LoginGate::decide( null )`), żeby nie zamknąć poza portalem administratora dodanego ręcznie. Konto bez stanu nie podlega jednak żadnej regule bramy (ani odmowom dla `rejected` i `pending`), więc backfill jest warunkiem, żeby istniejące konta objęły stany.
+
+### Eksport CSV i eksporter danych osobowych widzą tylko pola z grupy ACF
+
+Oba czytają pola przez grupę ACF wskazaną w ustawieniach (`AcfFieldSource`) i metadane z przedrostkiem `UserMeta::ACF_PREFIX`. Import, który wpisze wartości pod metadane spoza grupy albo bez przedrostka, będzie dla obu **niewidoczny**: eksport CSV nie da ich w kolumnach, a eksporter i eraser danych osobowych ich nie wydadzą ani nie skasują. Import musi zapisywać wartości pod `UserMeta::ACF_PREFIX . <nazwa pola z grupy>` albo rozszerzyć oba narzędzia razem z importem.
+
+---
+
+## Plan 9 — Aktualizacje i release
+
+Numer zmieniony: dawniej Plan 8; import i backfill stanów zajęły Plan 8 (zob. wyżej).
 
 ### CI woła `composer analyse`, nie gołe `phpstan analyse`
 
@@ -251,3 +261,13 @@ Te pozycje przeszły triage recenzji końcowej jako „mogą zostać". Spisane, 
 - **Temat szablonu maila dalej zamienia goły `<` na `&lt;`** (`sanitize_text_field`). Naprawione tylko w treści; temat to jedna linia i operator porównania jest w nim rzadkością.
 - **`sanitize_textarea_field()` usuwa `<` razem z tekstem, gdy dalej w linii stoi `>`** — „Wiek < 30 > nie" traci trzy słowa, bo `wp_pre_kses_less_than()` przepuszcza taki fragment do `wp_strip_all_tags()`. Ekran ostrzega, że znaczniki są zdejmowane, ale docblock mówi o niższej cenie, niż jest.
 - **Brak testu wyścigu `claim()` na dwóch połączeniach do bazy.** Gwarancję daje warunkowy UPDATE, który wymusza baza; prawdziwy test wymagałby drugiego połączenia i uśpienia, więc byłby chwiejny.
+
+### Z recenzji całej gałęzi Planu 7 (2026-10-29)
+
+- **Powód odrzucenia złożony z samych znaków białych da w eksporcie danych osobowych pustą parę.** Warunek to `'' !== $reason`, a `text()` nie przycina, więc wartość ze spacji przechodzi jako „niepusta". Jeden `trim` przy warunku, gdy przyjdzie realny przypadek.
+- **Komunikat erazera po przekroczeniu limitu przebiegów nie powtarza, co zostało zachowane** — rdzeń zebrał to już z pierwszego przebiegu, więc administrator ma tę informację, tylko wyżej na stronie.
+- **Przy trwale padającym zapisie eraser wykonuje pełną pracę w każdym z dziesięciu przebiegów** przed poddaniem się. Praca jest ograniczona z góry (`MAX_PASSES`), więc to koszt, nie pętla.
+- **Wyniki `fputcsv()` i `rewind()` w `CsvDocument::render()` zostają niesprawdzane** (rozstrzygnięcie R4). Na buforze w pamięci pierwsze pada praktycznie tylko przy wyczerpaniu pamięci, co kończy się fatalem, a drugie na świeżym `php://temp` nie ma trybu porażki.
+- **Dwie świadome duplikacje czekają na trzecią kopię jako sygnał do wyciągnięcia:** `flatten` (eksport CSV i panel szczegółów wniosku) oraz pomocnik filtra `query` w dwóch plikach testowych.
+- **Napis „Odrzucono wniosków", gdy padnie zapis logu przy korekcie powodu** (rozstrzygnięcie R6). Redaktor dostaje osobne ostrzeżenie o luce w audycie, ale czasownik jest nieprecyzyjny; rozróżnienie wymagałoby osobnego kodu zwracanego dla każdej kombinacji ścieżki i porażki.
+- **Szew `pusers_export_headers_sent`** istnieje, bo `headers_sent()` jest pod phpunit zawsze prawdą. Natywne sprawdzenie zostaje bezpośrednio przed `header()`; szew domyślnie zwraca jego wynik.

@@ -214,6 +214,21 @@ final class MailLogScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( MailLogScreen::ACTION_REQUEUE, $this->render_screen() );
 	}
 
+	public function test_a_failed_row_anonymized_by_erasure_has_no_requeue_button(): void {
+		global $wpdb;
+		$id = $this->seed( QueueStatus::Failed, 'e', 'z' );
+		$wpdb->update( Migrations::table( 'mail_queue' ), array( 'anonymized' => 1 ), array( 'id' => $id ) );
+
+		$html = $this->render_screen();
+
+		$this->assertStringContainsString( 'pusers-mail-row', $html, 'Wiersz dalej jest na liście, jako nieudany.' );
+		$this->assertStringNotContainsString( MailLogScreen::ACTION_REQUEUE, $html );
+
+		// Kontrola negatywna: ten sam stan bez anonimizacji dostaje przycisk.
+		$this->seed( QueueStatus::Failed, 'e', 'y' );
+		$this->assertStringContainsString( MailLogScreen::ACTION_REQUEUE, $this->render_screen() );
+	}
+
 	public function test_requeue_returns_a_failed_row_to_the_queue(): void {
 		$id = $this->seed( QueueStatus::Failed, 'SMTP connect() failed' );
 		$this->asAdminPosting( MailLogScreen::ACTION_REQUEUE, array( 'mail_id' => (string) $id ) );

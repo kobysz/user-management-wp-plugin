@@ -27,6 +27,11 @@ final class DecisionTest extends WP_UnitTestCase {
 
 	private int $admin = 0;
 
+	/**
+	 * Stan tłumienia błędów $wpdb sprzed breakLogInserts(), żeby przywrócić dokładnie jego.
+	 */
+	private bool $previousSuppress = false;
+
 	public function set_up(): void {
 		parent::set_up();
 		$this->admin = (int) self::factory()->user->create( array( 'role' => 'administrator' ) );
@@ -66,6 +71,109 @@ final class DecisionTest extends WP_UnitTestCase {
 	private function context( object $row ): array {
 		$decoded = json_decode( (string) $row->context, true );
 		return is_array( $decoded ) ? $decoded : array();
+	}
+
+	/**
+	 * Sprawia, że każdy INSERT do logu zdarzeń kończy się błędem SQL, bez DDL (tabela zostaje nietknięta).
+	 *
+	 * @return callable Filtr do zdjęcia przez remove_filter().
+	 */
+	private function breakLogInserts(): callable {
+		global $wpdb;
+		$table  = Migrations::table( 'event_log' );
+		$filter = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+		$this->previousSuppress = (bool) $wpdb->suppress_errors( true );
+		add_filter( 'query', $filter );
+		return $filter;
+	}
+
+	private function restoreLogInserts( callable $filter ): void {
+		global $wpdb;
+		remove_filter( 'query', $filter );
+		$wpdb->suppress_errors( $this->previousSuppress );
+	}
+
+	public function test_porazka_zapisu_logu_daje_wlasny_kod_a_stan_i_mail_zostaja(): void {
+		$id     = $this->account( AccountStatus::Pending );
+		$filter = $this->breakLogInserts();
+		try {
+			$result = Decision::approve( $id, $this->admin );
+		} finally {
+			$this->restoreLogInserts( $filter );
+		}
+
+		$this->assertSame( Decision::RESULT_LOG_FAILED, $result );
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $id ), 'Stan konta jest prawdą, log tylko śladem.' );
+		$mails = $this->mails();
+		$this->assertCount( 1, $mails, 'Mail wychodzi mimo porażki logu.' );
+		$this->assertSame( MailKind::Approved->value, $mails[0]['kind'] );
+		$this->assertCount( 0, $this->logRows( Decision::LOG_APPROVED ) );
+	}
+
+	public function test_udany_zapis_logu_dalej_daje_ok(): void {
+		$id     = $this->account( AccountStatus::Pending );
+		$filter = $this->breakLogInserts();
+		$this->restoreLogInserts( $filter );
+
+		$this->assertSame( Decision::RESULT_OK, Decision::approve( $id, $this->admin ) );
+		$this->assertCount( 1, $this->logRows( Decision::LOG_APPROVED ) );
+	}
+
+	public function test_porazka_logu_przy_odrzuceniu_daje_kod_logu_a_stan_powod_i_mail_zostaja(): void {
+		$id     = $this->account( AccountStatus::Pending );
+		$filter = $this->breakLogInserts();
+		try {
+			$result = Decision::reject( $id, $this->admin, 'numer nieprawidłowy' );
+		} finally {
+			$this->restoreLogInserts( $filter );
+		}
+
+		$this->assertSame( Decision::RESULT_LOG_FAILED, $result );
+		$this->assertSame( AccountStatus::Rejected, AccountStatusRepository::get( $id ) );
+		$this->assertSame( 'numer nieprawidłowy', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		$mails = $this->mails();
+		$this->assertCount( 1, $mails );
+		$this->assertSame( MailKind::Rejected->value, $mails[0]['kind'] );
+		$this->assertCount( 0, $this->logRows( Decision::LOG_REJECTED ) );
+	}
+
+	public function test_porazka_logu_przy_korekcie_powodu_daje_kod_logu_a_powod_i_mail_zostaja(): void {
+		$id = $this->account( AccountStatus::Pending );
+		Decision::reject( $id, $this->admin, 'stary powód' );
+		$logs = count( $this->logRows( Decision::LOG_REJECTED ) );
+		$this->forget_mails();
+
+		$filter = $this->breakLogInserts();
+		try {
+			$result = Decision::reject( $id, $this->admin, 'nowy powód' );
+		} finally {
+			$this->restoreLogInserts( $filter );
+		}
+
+		$this->assertSame( Decision::RESULT_LOG_FAILED, $result );
+		$this->assertSame( 'nowy powód', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		$this->assertCount( 1, $this->mails() );
+		$this->assertCount( $logs, $this->logRows( Decision::LOG_REJECTED ), 'Korekta nie zostawiła nowego wiersza.' );
+	}
+
+	public function test_porazka_logu_wygrywa_z_porazka_maila(): void {
+		$id     = $this->account( AccountStatus::Pending );
+		$freeze = static fn() => '200001010000';
+		add_filter( 'pusers_internal_test_seam_minute_bucket', $freeze );
+		$this->assertTrue( Mailer::approved( $id ), 'Fixtura: pierwszy mail musi wejść do kolejki.' );
+		$this->assertFalse( Mailer::approved( $id ), 'Fixtura: w oknie zamrożonej minuty kolejka odmawia drugiego maila, więc porażka maila zachodzi.' );
+		$filter = $this->breakLogInserts();
+		try {
+			$result = Decision::approve( $id, $this->admin );
+		} finally {
+			$this->restoreLogInserts( $filter );
+			remove_filter( 'pusers_internal_test_seam_minute_bucket', $freeze );
+		}
+
+		$this->assertSame( Decision::RESULT_LOG_FAILED, $result, 'Brak śladu w audycie jest poważniejszy niż brak maila.' );
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $id ) );
 	}
 
 	public function test_zatwierdzenie_zmienia_stan_pisze_log_i_wysyla_mail(): void {

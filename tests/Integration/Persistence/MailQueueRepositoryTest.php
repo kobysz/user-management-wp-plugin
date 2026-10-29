@@ -9,6 +9,7 @@ namespace PortalUsers\Tests\Integration\Persistence;
 
 use PortalUsers\Domain\Mail\QueueStatus;
 use PortalUsers\Persistence\MailQueueRepository;
+use PortalUsers\Persistence\Migrations;
 use WP_UnitTestCase;
 
 final class MailQueueRepositoryTest extends WP_UnitTestCase {
@@ -264,5 +265,177 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		$due = MailQueueRepository::oldest_due_at();
 		$this->assertNotNull( $due );
 		$this->assertGreaterThan( time(), (int) strtotime( $due . ' UTC' ), 'Termin leży w przyszłości, więc kolejka nie zalega.' );
+	}
+
+	/**
+	 * Wstawia wiersz konta i zwraca jego identyfikator.
+	 *
+	 * @param string $key    Klucz odporności.
+	 * @param int    $userId Konto.
+	 * @param string $body   Treść maila.
+	 */
+	private function insert_for( string $key, int $userId, string $body = 'Treść maila' ): int {
+		$row            = $this->row( $key );
+		$row['user_id'] = $userId;
+		$row['body']    = $body;
+		MailQueueRepository::insert( $row );
+
+		global $wpdb;
+		return (int) $wpdb->get_var( $wpdb->prepare( 'SELECT id FROM %i WHERE dedupe_key = %s', Migrations::table( 'mail_queue' ), $key ) );
+	}
+
+	/**
+	 * Surowy wiersz z bazy, z pominięciem metod czytających repozytorium.
+	 *
+	 * @param int $id Identyfikator wiersza.
+	 * @return array<string, mixed>
+	 */
+	private function raw_row( int $id ): array {
+		global $wpdb;
+		$row = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', Migrations::table( 'mail_queue' ), $id ), ARRAY_A );
+		$this->assertIsArray( $row );
+		return $row;
+	}
+
+	public function test_for_user_zwraca_od_najnowszego_i_stronicuje(): void {
+		$first  = $this->insert_for( 'u-1', 21 );
+		$second = $this->insert_for( 'u-2', 21 );
+		$third  = $this->insert_for( 'u-3', 21 );
+
+		$page = MailQueueRepository::for_user( 21, 2, 0 );
+		$this->assertSame( array( $third, $second ), array_column( $page, 'id' ) );
+
+		$next = MailQueueRepository::for_user( 21, 2, 2 );
+		$this->assertSame( array( $first ), array_column( $next, 'id' ) );
+		$this->assertFalse( $next[0]['anonymized'] );
+		$this->assertSame( 'confirmation', $next[0]['kind'] );
+	}
+
+	public function test_for_user_nie_zwraca_tresci_maila(): void {
+		// Snapshot rodzaju confirmation niesie żywy token, więc klucz `body` w ogóle nie może istnieć.
+		$this->insert_for( 'b-1', 22, 'https://portal.example/?token=TAJNY-TOKEN' );
+		$this->insert_for( 'b-2', 22, 'inna treść' );
+
+		$rows = MailQueueRepository::for_user( 22, 10, 0 );
+		$this->assertCount( 2, $rows );
+		foreach ( $rows as $row ) {
+			$this->assertArrayNotHasKey( 'body', $row );
+			$this->assertStringNotContainsString( 'TAJNY-TOKEN', (string) wp_json_encode( $row ) );
+		}
+	}
+
+	public function test_for_user_nie_widzi_wierszy_innego_konta(): void {
+		$this->insert_for( 'o-1', 23 );
+		$this->insert_for( 'o-2', 24 );
+
+		$rows = MailQueueRepository::for_user( 23, 10, 0 );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( array(), MailQueueRepository::for_user( 999, 10, 0 ) );
+	}
+
+	public function test_anonymize_user_nadpisuje_adresata_temat_i_tresc(): void {
+		$id = $this->insert_for( 'a-1', 25, 'https://portal.example/?token=TAJNY-TOKEN' );
+		$this->insert_for( 'a-inne', 26, 'cudza treść' );
+		$before = $this->raw_row( $id );
+
+		$this->assertSame( 1, MailQueueRepository::anonymize_user( 25 ) );
+
+		$after = $this->raw_row( $id );
+		foreach ( array( 'recipient', 'subject', 'body' ) as $column ) {
+			$this->assertSame( MailQueueRepository::ANONYMIZED_PLACEHOLDER, $after[ $column ] );
+			$this->assertStringNotContainsString( 'TAJNY-TOKEN', (string) $after[ $column ] );
+		}
+		$this->assertSame( '1', (string) $after['anonymized'] );
+		foreach ( array( 'kind', 'created_at', 'sent_at', 'attempts' ) as $column ) {
+			$this->assertSame( $before[ $column ], $after[ $column ], $column );
+		}
+
+		$other = $this->raw_row( (int) MailQueueRepository::for_user( 26, 1, 0 )[0]['id'] );
+		$this->assertSame( 'cudza treść', $other['body'], 'Cudze konto nietknięte.' );
+	}
+
+	public function test_anonymize_user_jest_idempotentne(): void {
+		$id = $this->insert_for( 'i-1', 27 );
+		$this->insert_for( 'i-2', 27 );
+
+		$this->assertSame( 2, MailQueueRepository::anonymize_user( 27 ) );
+		$once = $this->raw_row( $id );
+
+		$this->assertSame( 0, MailQueueRepository::anonymize_user( 27 ), 'Drugi przebieg nie liczy wierszy.' );
+		$this->assertSame( $once, $this->raw_row( $id ), 'Drugi przebieg nie zmienia treści wiersza.' );
+	}
+
+	public function test_anonymize_user_dla_konta_bez_wierszy_zwraca_zero(): void {
+		$this->assertSame( 0, MailQueueRepository::anonymize_user( 424242 ) );
+	}
+
+	public function test_anonymizacja_nie_psuje_odpornosci_na_duplikaty(): void {
+		// Nadpisany dedupe_key pozwoliłby wysłać ten sam mail drugi raz: unikalny indeks jest jedyną odpornością kolejki.
+		$id     = $this->insert_for( 'd-klucz', 28 );
+		$before = $this->raw_row( $id )['dedupe_key'];
+
+		MailQueueRepository::anonymize_user( 28 );
+
+		$this->assertSame( $before, $this->raw_row( $id )['dedupe_key'] );
+		$this->assertFalse( MailQueueRepository::insert( $this->row( 'd-klucz' ) ), 'Ten sam klucz nadal jest duplikatem.' );
+	}
+
+	public function test_anonymize_user_zatrzymuje_wiersz_ktory_nie_wyszedl(): void {
+		// Wiersz queued z napisem zamiast adresu trafiałby do dispatchera, a ostrzeżenie o zaległej kolejce paliłoby się na zawsze.
+		$id = $this->insert_for( 'c-1', 29 );
+
+		$this->assertSame( 1, MailQueueRepository::anonymize_user( 29 ) );
+
+		$after = $this->raw_row( $id );
+		$this->assertSame( QueueStatus::Failed->value, $after['status'] );
+		$this->assertSame( MailQueueRepository::CANCELLED_BY_ERASURE, $after['last_error'] );
+		$ids = array_column( MailQueueRepository::due( gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS ), 100 ), 'id' );
+		$this->assertNotContains( (string) $id, array_map( 'strval', $ids ), 'Anulowany wiersz nie jest już do wysłania.' );
+		$this->assertNull( MailQueueRepository::oldest_due_at() );
+	}
+
+	public function test_anonymize_user_zachowuje_status_i_date_wyslanego_wiersza_a_czysci_blad_z_adresem(): void {
+		// Komunikat serwera pocztowego z nieudanej próby niesie adres odbiorcy; po udanej drugiej próbie zostaje w wierszu `sent`.
+		$id  = $this->insert_for( 'c-2', 30 );
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertSame( 1, MailQueueRepository::claim( $id, $now ) );
+		$this->assertTrue( MailQueueRepository::reschedule( $id, gmdate( 'Y-m-d H:i:s', time() - 60 ), '550 5.1.1 <jan.kowalski@example.com>: Recipient address rejected', 1 ) );
+		$this->assertSame( 2, MailQueueRepository::claim( $id, $now ) );
+		$this->assertTrue( MailQueueRepository::mark_sent( $id, '2026-01-02 03:04:05', 2 ) );
+		$before = $this->raw_row( $id );
+		$this->assertSame( QueueStatus::Sent->value, $before['status'] );
+		$this->assertNotNull( $before['sent_at'] );
+		$this->assertStringContainsString( 'jan.kowalski@example.com', (string) $before['last_error'], 'Warunek wstępny: błąd z adresem przeżył wysyłkę.' );
+
+		$this->assertSame( 1, MailQueueRepository::anonymize_user( 30 ) );
+
+		$after = $this->raw_row( $id );
+		$this->assertSame( $before['status'], $after['status'] );
+		$this->assertSame( $before['sent_at'], $after['sent_at'] );
+		$this->assertNull( $after['last_error'], 'Wysłany wiersz nie dostaje znacznika anulowania, a błąd znika.' );
+		$this->assertSame( MailQueueRepository::ANONYMIZED_PLACEHOLDER, $after['body'] );
+		$this->assertStringNotContainsString( 'jan.kowalski@example.com', (string) wp_json_encode( $after ), 'Adresu nie ma w żadnej kolumnie.' );
+	}
+
+	public function test_requeue_failed_odmawia_wiersza_zanonimizowanego(): void {
+		// Zanonimizowany wiersz nie ma adresata ani treści; wznowienie wysłałoby na napis zastępczy i odwróciłoby skutek żądania usunięcia danych.
+		$id = $this->insert_for( 'r-1', 31 );
+		MailQueueRepository::anonymize_user( 31 );
+		$this->assertSame( QueueStatus::Failed->value, $this->raw_row( $id )['status'] );
+
+		$this->assertFalse( MailQueueRepository::requeue_failed( $id ) );
+
+		$after = $this->raw_row( $id );
+		$this->assertSame( QueueStatus::Failed->value, $after['status'] );
+		$this->assertSame( '1', (string) $after['anonymized'] );
+	}
+
+	public function test_requeue_failed_nadal_wznawia_wiersz_nieanonimizowany(): void {
+		$id = $this->insert_for( 'r-2', 32 );
+		$this->assertSame( 1, MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
+		$this->assertTrue( MailQueueRepository::mark_failed( $id, 'SMTP', 1 ) );
+
+		$this->assertTrue( MailQueueRepository::requeue_failed( $id ) );
+		$this->assertSame( QueueStatus::Queued->value, $this->raw_row( $id )['status'] );
 	}
 }

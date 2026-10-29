@@ -125,6 +125,24 @@ final class ApplicationRepositoryTest extends WP_UnitTestCase {
 		$this->assertSame( 3, ApplicationRepository::total( AccountStatus::Pending ) );
 	}
 
+	public function test_konta_z_ta_sama_sekunda_rejestracji_nie_powtarzaja_sie_ani_nie_ginie_miedzy_stronami(): void {
+		$ids = array();
+		for ( $i = 0; $i < 6; $i++ ) {
+			$ids[] = $this->account( 'pending', 'lekarz', '2026-05-01 10:00:00' );
+		}
+
+		$first  = array_map( static fn ( $row ) => $row->userId, ApplicationRepository::paginate( AccountStatus::Pending, '', 3, 0 ) );
+		$second = array_map( static fn ( $row ) => $row->userId, ApplicationRepository::paginate( AccountStatus::Pending, '', 3, 3 ) );
+
+		$all = array_merge( $first, $second );
+		$this->assertCount( 6, array_unique( $all ), 'Żadne konto nie wystąpiło dwa razy.' );
+		$sorted = $all;
+		sort( $sorted );
+		$this->assertSame( $ids, $sorted, 'Suma stron to pełny zbiór kont.' );
+		// Rozstrzygacz po ID jest jawny: to on czyni kolejność deterministyczną.
+		$this->assertSame( array_reverse( $ids ), $all );
+	}
+
 	public function test_total_zwraca_pelna_liczbe_wnioskow_a_nie_rozmiar_strony(): void {
 		for ( $i = 0; $i < 5; $i++ ) {
 			$this->account( 'pending' );
