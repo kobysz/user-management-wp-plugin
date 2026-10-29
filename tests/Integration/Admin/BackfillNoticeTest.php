@@ -170,7 +170,8 @@ final class BackfillNoticeTest extends WP_UnitTestCase {
 		$html = $this->renderImport();
 
 		$this->assertStringContainsString( 'name="action" value="' . ImportScreen::ACTION_BACKFILL . '"', $html );
-		$this->assertMatchesRegularExpression( '#\b4\b#', $html );
+		// Liczba w akapicie sekcji, nie gdziekolwiek: tabela skanu też zawiera liczby kont.
+		$this->assertMatchesRegularExpression( '#<div class="pusers-backfill">.*?<p>4 kont sprzed wdrożenia#us', $html );
 	}
 
 	public function test_ekran_importu_bez_kont_bez_stanu_nie_ma_przycisku(): void {
