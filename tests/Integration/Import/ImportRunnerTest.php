@@ -131,6 +131,68 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_porazka_zapisu_logu_jest_w_raporcie_a_dane_zostaja_zapisane(): void {
+		global $wpdb;
+		$id     = $this->source_account();
+		$actor  = $this->actor();
+		$table  = Migrations::table( 'event_log' );
+		$filter = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+
+		$previous_suppress = (bool) $wpdb->suppress_errors( true );
+		add_filter( 'query', $filter );
+		try {
+			$report = ( new ImportRunner() )->apply( $this->mapping(), $actor );
+		} finally {
+			remove_filter( 'query', $filter );
+			$wpdb->suppress_errors( $previous_suppress );
+		}
+
+		$this->assertTrue( $report->logFailed() );
+		$this->assertSame( 1, $report->changed() );
+		$this->assertSame( '1234567', get_user_meta( $id, self::PWZ_FIELD, true ) );
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $id ) );
+		$this->assertSame( array(), $this->log_rows() );
+	}
+
+	public function test_porazka_drugiego_wiersza_logu_tez_jest_w_raporcie(): void {
+		global $wpdb;
+		$victim = $this->source_account();
+		$table  = Migrations::table( 'event_log' );
+		$fail   = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" ) && str_contains( $query, 'import_write_failed' )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+		$pwz    = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$wpdb->usermeta}`" ) && str_contains( $query, "({$victim}, '" . self::PWZ_FIELD . "'" )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+
+		$previous_suppress = (bool) $wpdb->suppress_errors( true );
+		add_filter( 'query', $fail );
+		add_filter( 'query', $pwz );
+		try {
+			$report = ( new ImportRunner() )->apply( $this->mapping(), $this->actor() );
+		} finally {
+			remove_filter( 'query', $fail );
+			remove_filter( 'query', $pwz );
+			$wpdb->suppress_errors( $previous_suppress );
+		}
+
+		$this->assertSame( 1, $report->writeFailures() );
+		$this->assertTrue( $report->logFailed() );
+		$this->assertSame( array( ImportRunner::LOG_APPLIED ), array_map( static fn( object $row ): string => (string) $row->action, $this->log_rows() ) );
+	}
+
+	public function test_porazka_logu_nie_jest_zgloszona_przy_zwyklym_zapisie_ani_w_trybie_probnym(): void {
+		$this->source_account();
+		$actor  = $this->actor();
+		$runner = new ImportRunner();
+
+		$this->assertFalse( $runner->dry_run( $this->mapping() )->logFailed() );
+		$this->assertFalse( $runner->apply( $this->mapping(), $actor )->logFailed() );
+		$this->assertCount( 1, $this->log_rows() );
+	}
+
 	public function test_tryb_probny_nie_zapisuje_nic(): void {
 		$this->source_account();
 		$this->source_account();

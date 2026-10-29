@@ -48,6 +48,13 @@ final class ImportReport {
 	private array $writeFailureSample = array();
 
 	/**
+	 * Czy wiersz logu zdarzeń przebiegu nie powstał (dane mogły się zapisać, ale ślad po nich nie).
+	 *
+	 * @var bool
+	 */
+	private bool $logFailed = false;
+
+	/**
 	 * Liczniki zastrzeżeń: kod => liczba kont.
 	 *
 	 * @var array<string, int>
@@ -133,6 +140,27 @@ final class ImportReport {
 	}
 
 	/**
+	 * Zwraca nowy raport oznaczony porażką zapisu do logu zdarzeń; poprzedni się nie zmienia.
+	 *
+	 * @return self
+	 */
+	public function withLogFailure(): self {
+		$next            = clone $this;
+		$next->logFailed = true;
+
+		return $next;
+	}
+
+	/**
+	 * Czy zapis do logu zdarzeń się nie udał; fałsz także dla raportu z trybu próbnego, który niczego nie loguje.
+	 *
+	 * @return bool
+	 */
+	public function logFailed(): bool {
+		return $this->logFailed;
+	}
+
+	/**
 	 * Liczba kont z danym zastrzeżeniem.
 	 *
 	 * @param string $code Kod zastrzeżenia.
@@ -176,7 +204,7 @@ final class ImportReport {
 	 * Zastrzeżenia i próbki pojawiają się tylko dla kodów z co najmniej jednym wystąpieniem,
 	 * oba w kolejności kluczy (ksort). Próbka porażek jest pusta, gdy porażek nie było.
 	 *
-	 * @return array{scanned: int, changed: int, write_failures: int, issues: array<string, int>, samples: array<string, list<int>>, write_failure_sample: list<int>}
+	 * @return array{scanned: int, changed: int, write_failures: int, issues: array<string, int>, samples: array<string, list<int>>, write_failure_sample: list<int>, log_failed: bool}
 	 */
 	public function toArray(): array {
 		$issues = $this->issues;
@@ -195,6 +223,7 @@ final class ImportReport {
 			'issues'               => $issues,
 			'samples'              => $samples,
 			'write_failure_sample' => $this->writeFailureSample,
+			'log_failed'           => $this->logFailed,
 		);
 	}
 }

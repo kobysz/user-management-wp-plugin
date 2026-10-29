@@ -60,6 +60,9 @@ final class ImportRunner {
 	/**
 	 * Zapisuje import i zostawia w logu jeden wiersz zbiorczy z aktorem (oraz drugi, gdy zapis się nie udał).
 	 *
+	 * Porażka któregokolwiek zapisu do logu nie cofa danych, ale raport ją niesie (`logFailed()`): jedyny ślad tego,
+	 * kto zaimportował co, to właśnie ten wiersz, więc ekran nie może pokazać sukcesu bez ostrzeżenia.
+	 *
 	 * Puste mapowanie nie czyta żadnego klucza, więc nie rusza kont i nie tworzy wiersza logu.
 	 *
 	 * @param ImportMapping $mapping     Mapowanie kluczy źródłowych.
@@ -74,13 +77,13 @@ final class ImportRunner {
 		}
 
 		$counters = $report->toArray();
-		unset( $counters['samples'], $counters['write_failure_sample'] );
+		unset( $counters['samples'], $counters['write_failure_sample'], $counters['log_failed'] );
 		$counters['source_keys'] = $mapping->sourceKeys();
 
-		EventLog::write( self::LOG_APPLIED, 0, $actorUserId, $counters );
+		$logged = EventLog::write( self::LOG_APPLIED, 0, $actorUserId, $counters );
 
 		if ( $report->writeFailures() > 0 ) {
-			EventLog::write(
+			$failedLogged = EventLog::write(
 				self::LOG_WRITE_FAILED,
 				0,
 				$actorUserId,
@@ -89,9 +92,10 @@ final class ImportRunner {
 					'source_keys'    => $mapping->sourceKeys(),
 				)
 			);
+			$logged       = $logged && $failedLogged;
 		}
 
-		return $report;
+		return $logged ? $report : $report->withLogFailure();
 	}
 
 	/**
@@ -157,6 +161,8 @@ final class ImportRunner {
 	 *
 	 * `get_user_meta()` bez klucza oddaje wartości w postaci surowej z bazy, więc przed przekazaniem planerowi
 	 * przechodzą przez `maybe_unserialize()`, tak jak przy odczycie z kluczem; tablica staje się tablicą i planer ją zgłasza.
+	 * Bez tego serializowana tablica ze starej wtyczki wyglądałaby dla planera na zwykły tekst, nie zostałaby zgłoszona
+	 * jako nieużyteczna i trafiłaby do naszych metadanych jako serializowany łańcuch.
 	 *
 	 * @param int      $userId Identyfikator konta.
 	 * @param string[] $keys   Klucze źródłowe z mapowania.
@@ -214,7 +220,9 @@ final class ImportRunner {
 	/**
 	 * Wykonuje zapis planu i każdą pozycję potwierdza odczytem zwrotnym.
 	 *
-	 * Próbuje wszystkich pozycji nawet po pierwszej porażce; powtórny przebieg i tak pomija to, co już się zapisało.
+	 * Próbuje wszystkich pozycji nawet po pierwszej porażce, bo żadna transakcja nie spina kilku `update_user_meta()`.
+	 * Konto policzone jako porażka zapisu mogło więc dostać część wartości, dlatego po usunięciu przyczyny należy
+	 * uruchomić import ponownie; jest to bezpieczne, bo porównanie przed zapisem pomija to, co już się zgadza.
 	 *
 	 * @param AccountChange $change Plan z samymi pozycjami do zapisu.
 	 * @return bool Prawda, gdy każda pozycja po zapisie ma oczekiwaną wartość.

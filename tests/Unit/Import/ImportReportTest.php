@@ -115,6 +115,15 @@ final class ImportReportTest extends TestCase {
 		);
 	}
 
+	public function test_porazka_logu_oznacza_nowy_raport_a_poprzedni_zostaje(): void {
+		$before = ImportReport::empty();
+		$after  = $before->withLogFailure();
+
+		$this->assertFalse( $before->logFailed() );
+		$this->assertTrue( $after->logFailed() );
+		$this->assertTrue( $after->toArray()['log_failed'] );
+	}
+
 	public function test_to_array_niesie_wszystkie_liczniki_i_probki(): void {
 		$report = ImportReport::empty()
 			->with( new AccountChange( 9, array(), null, null, array( AccountChange::ISSUE_VALUE_UNUSABLE ) ) )
@@ -136,6 +145,7 @@ final class ImportReportTest extends TestCase {
 					AccountChange::ISSUE_VALUE_UNUSABLE     => array( 9, 5 ),
 				),
 				'write_failure_sample' => array( 9 ),
+				'log_failed'           => false,
 			),
 			$report->toArray()
 		);
@@ -150,6 +160,7 @@ final class ImportReportTest extends TestCase {
 				'issues'         => array(),
 				'samples'        => array(),
 				'write_failure_sample' => array(),
+				'log_failed'           => false,
 			),
 			ImportReport::empty()->toArray()
 		);
