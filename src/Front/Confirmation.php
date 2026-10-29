@@ -150,6 +150,7 @@ final class Confirmation {
 		AccountStatusRepository::set( $userId, $next );
 		EventLog::write( self::LOG_ACTION, $userId, 0, array( 'status' => $next->value ) );
 		Mailer::editorial( $userId );
+		self::notify_applicant( $userId );
 
 		return self::RESULT_OK;
 	}
@@ -299,6 +300,25 @@ final class Confirmation {
 			default:
 				return __( 'Link potwierdzający jest nieprawidłowy albo został już użyty.', 'portal-users' );
 		}
+	}
+
+	/**
+	 * Mail do wnioskodawcy po potwierdzeniu adresu. Rozstrzyga STAN konta czytany świeżo z repozytorium,
+	 * osobno od wartości, którą przed chwilą zapisało `confirm()` (tak samo jak `Mailer::editorial()`):
+	 * „czeka na decyzję" wobec konta zatwierdzonego byłoby nieprawdą.
+	 *
+	 * Inny stan (odrzucone między zapisem a odczytem, konto usunięte, nieczytelna metadana) nie daje
+	 * żadnego maila: brakujący mail wnioskodawca nadrobi pytaniem do redakcji, a fałszywe „konto
+	 * zatwierdzone" nie da się odkręcić.
+	 *
+	 * @param int $userId Identyfikator użytkownika.
+	 */
+	private static function notify_applicant( int $userId ): void {
+		match ( AccountStatusRepository::get( $userId ) ) {
+			AccountStatus::Pending  => Mailer::application_received( $userId ),
+			AccountStatus::Approved => Mailer::approved( $userId ),
+			default                 => null,
+		};
 	}
 
 	/**

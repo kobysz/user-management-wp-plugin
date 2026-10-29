@@ -11,12 +11,14 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration;
 
+use PortalUsers\Cron\DispatchMail;
+use PortalUsers\Cron\PurgeMailLog;
 use PortalUsers\Persistence\Migrations;
 use WP_UnitTestCase;
 
 final class MigrationsTest extends WP_UnitTestCase {
 
-	private const TABLES = array( 'event_log', 'terms_versions' );
+	private const TABLES = array( 'event_log', 'terms_versions', 'mail_queue' );
 
 	public function tear_down(): void {
 		// DDL nie cofa się z transakcją testu: baza musi zostać z tabelami dla innych testów.
@@ -29,7 +31,7 @@ final class MigrationsTest extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_creates_both_tables(): void {
+	public function test_creates_every_table(): void {
 		$this->fresh_install();
 		foreach ( self::TABLES as $name ) {
 			$this->assertFalse( $this->table_exists( Migrations::table( $name ) ), 'Stan wyjściowy: tabeli nie ma.' );
@@ -125,6 +127,74 @@ final class MigrationsTest extends WP_UnitTestCase {
 		$rows = $wpdb->get_results( "SHOW INDEX FROM {$table} WHERE Key_name = 'version_hash'" );
 		$this->assertCount( 1, $rows );
 		$this->assertSame( '0', (string) $rows[0]->Non_unique );
+	}
+
+	public function test_mail_queue_schema(): void {
+		global $wpdb;
+		$this->fresh_install();
+		Migrations::run();
+		$table = Migrations::table( 'mail_queue' );
+
+		$this->assertSame( 'InnoDB', $this->engine( $table ) );
+		$rows = $wpdb->get_results( "SHOW INDEX FROM {$table} WHERE Key_name = 'dedupe_key'" );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( '0', (string) $rows[0]->Non_unique );
+		$indexes = $this->index_names( $table );
+		$this->assertContains( 'dispatch', $indexes );
+		$this->assertContains( 'user_id', $indexes );
+		$this->assertNotEmpty( $wpdb->get_results( "SHOW COLUMNS FROM {$table} LIKE 'anonymized'" ) );
+	}
+
+	public function test_the_mail_queue_table_exists_after_migration(): void {
+		// Aktualizacja wtyczki nie odpala aktywacji: tabela musi powstać z maybe_upgrade() na starej wersji.
+		$this->fresh_install();
+		update_option( 'pusers_db_version', 2 );
+
+		Migrations::maybe_upgrade();
+
+		$this->assertTrue( $this->table_exists( Migrations::table( 'mail_queue' ) ) );
+		$this->assertGreaterThan( 2, Migrations::DB_VERSION );
+		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
+	}
+
+	public function test_the_upgrade_from_version_three_schedules_the_dispatcher_before_init(): void {
+		// Instalacja, która przeszła migrację tabeli kolejki, nie przechodzi hooka aktywacji: bez tego
+		// kroku cron nigdy by nie powstał, a zakolejkowane maile nie wyszłyby nigdy.
+		//
+		// Test idzie całą drogą aktualizacji i trzyma dwie rzeczy, które ją niosą:
+		// 1. `wp_schedule_event()` oddaje false, gdy harmonogramu nie ma w `wp_get_schedules()`, a
+		//    `run()` zapisuje DB_VERSION PRZED tym wywołaniem. Krok wykonany za wcześnie (przed
+		//    `DispatchMail::register()`) byłby cichym no-opem, wersja i tak by się zapisała,
+		//    `maybe_upgrade()` nigdy by nie ponowił, a kolejka nie miałaby konsumenta.
+		// 2. Na prawdziwym żądaniu ta droga biegnie na `plugins_loaded`, czyli PRZED
+		//    `after_setup_theme` i `init`, na którym I18n ładuje tłumaczenia. Gdyby `__()` w
+		//    `add_schedule()` wymusiło ładowanie „just in time”, rdzeń podniósłby _doing_it_wrong,
+		//    a suita testowa zamienia je w pad.
+		unset( $GLOBALS['wp_actions']['after_setup_theme'], $GLOBALS['wp_actions']['init'] );
+		$this->assertSame( 0, did_action( 'after_setup_theme' ), 'Stan wyjściowy ma odwzorowywać plugins_loaded.' );
+		$this->fresh_install();
+		update_option( 'pusers_db_version', 3 );
+		wp_clear_scheduled_hook( DispatchMail::HOOK );
+
+		Migrations::maybe_upgrade();
+
+		$this->assertSame( Migrations::DB_VERSION, (int) get_option( 'pusers_db_version' ) );
+		$this->assertNotFalse( wp_next_scheduled( DispatchMail::HOOK ), 'Krok jednorazowy musi założyć zdarzenie cykliczne.' );
+		$this->assertSame( DispatchMail::SCHEDULE, wp_get_schedule( DispatchMail::HOOK ) );
+	}
+
+	public function test_the_upgrade_from_version_four_schedules_the_mail_log_retention(): void {
+		// Portal, który przeszedł już migrację 4, bez podbicia wersji nigdy nie dostałby crona retencji.
+		$this->fresh_install();
+		update_option( 'pusers_db_version', 4 );
+		wp_clear_scheduled_hook( PurgeMailLog::HOOK );
+
+		Migrations::maybe_upgrade();
+
+		$this->assertSame( 5, Migrations::DB_VERSION );
+		$this->assertSame( 5, (int) get_option( 'pusers_db_version' ) );
+		$this->assertNotFalse( wp_next_scheduled( PurgeMailLog::HOOK ) );
+		$this->assertSame( 'daily', wp_get_schedule( PurgeMailLog::HOOK ) );
 	}
 
 	public function test_terms_version_hash_is_unique(): void {

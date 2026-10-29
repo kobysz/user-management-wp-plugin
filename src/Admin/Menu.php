@@ -20,9 +20,11 @@ final class Menu {
 	public const CAPABILITY = 'manage_options';
 	public const PARENT     = 'users.php';
 
-	public const SLUG_SETTINGS    = 'pusers-settings';
-	public const SLUG_PROFESSIONS = 'pusers-professions';
-	public const SLUG_MATRIX      = 'pusers-matrix';
+	public const SLUG_SETTINGS       = 'pusers-settings';
+	public const SLUG_PROFESSIONS    = 'pusers-professions';
+	public const SLUG_MATRIX         = 'pusers-matrix';
+	public const SLUG_MAIL_TEMPLATES = 'pusers-mail-templates';
+	public const SLUG_MAIL_LOG       = 'pusers-mail-log';
 
 	/**
 	 * Podpina rejestrację podstrony ustawień pod `admin_menu`.

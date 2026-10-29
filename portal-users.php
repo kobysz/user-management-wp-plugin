@@ -46,3 +46,11 @@ add_action( 'plugins_loaded', array( \PortalUsers\Persistence\Migrations::class,
 // Cron czyszczący niepotwierdzone konta: harmonogram zakładany przy aktywacji, zdejmowany przy deaktywacji.
 register_activation_hook( __FILE__, array( \PortalUsers\Cron\PurgeUnconfirmed::class, 'schedule' ) );
 register_deactivation_hook( __FILE__, array( \PortalUsers\Cron\PurgeUnconfirmed::class, 'unschedule' ) );
+
+// Cron opróżniający kolejkę maili: ten sam układ. Deaktywacja zdejmuje też zdarzenia natychmiastowe.
+register_activation_hook( __FILE__, array( \PortalUsers\Cron\DispatchMail::class, 'schedule' ) );
+register_deactivation_hook( __FILE__, array( \PortalUsers\Cron\DispatchMail::class, 'unschedule' ) );
+
+// Cron retencji logu wysyłek: ten sam układ.
+register_activation_hook( __FILE__, array( \PortalUsers\Cron\PurgeMailLog::class, 'schedule' ) );
+register_deactivation_hook( __FILE__, array( \PortalUsers\Cron\PurgeMailLog::class, 'unschedule' ) );

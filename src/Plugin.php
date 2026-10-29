@@ -9,10 +9,15 @@ declare( strict_types=1 );
 
 namespace PortalUsers;
 
+use PortalUsers\Admin\MailLogScreen;
+use PortalUsers\Admin\MailQueueNotice;
+use PortalUsers\Admin\MailTemplatesScreen;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
 use PortalUsers\Admin\SettingsScreen;
+use PortalUsers\Cron\DispatchMail;
+use PortalUsers\Cron\PurgeMailLog;
 use PortalUsers\Cron\PurgeUnconfirmed;
 use PortalUsers\Front\Confirmation;
 use PortalUsers\Front\LoginForm;
@@ -26,6 +31,7 @@ use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\RestUsers;
 use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
+use PortalUsers\Mail\CoreCapture;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -79,6 +85,24 @@ final class Plugin {
 		// dokładnie tę furtkę, którą brama logowania zamknęła. Nie potrzebuje ACF do niczego.
 		RestUsers::register();
 
+		// Z tego samego powodu poza hookiem zależnym od ACF Pro stoi cron opróżniający kolejkę maili:
+		// wyłączone (albo zepsute aktualizacją) ACF Pro zatrzymałoby wysyłkę maili, które JUŻ SĄ
+		// w kolejce — w tym linku potwierdzającego, bez którego lekarz nie wejdzie na konto.
+		// Dispatcher nie potrzebuje ACF do niczego: czyta wiersz i woła wp_mail(). Ekrany panelu
+		// z logiem wysyłek zostają za zależnością.
+		DispatchMail::register();
+
+		// Retencja logu wysyłek też nie zależy od ACF Pro: kolejka rośnie, kiedy dispatcher chodzi,
+		// więc czyszczenie musi chodzić razem z nim.
+		PurgeMailLog::register();
+
+		// I z tego samego powodu poza hookiem zależnym od ACF Pro stoi przechwytywanie maila
+		// rdzeniowego: odzyskiwanie hasła stoi na mechanizmie rdzenia i musi działać także wtedy,
+		// gdy ACF Pro jest wyłączone albo zepsute aktualizacją. Przechwytywanie nie potrzebuje ACF
+		// do niczego: rozbrojone przepuszcza każdą wiadomość nietkniętą, a uzbraja je filtr treści
+		// z `PasswordReset`, który sam jedzie już za sprawdzeniem zależności.
+		CoreCapture::register();
+
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.
 		add_action( 'plugins_loaded', array( self::class, 'load_features' ) );
@@ -88,6 +112,12 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( SettingsScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( ProfessionsScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MatrixScreen::class, 'register' ) );
+		add_action( 'pusers_register_features', array( MailTemplatesScreen::class, 'register' ) );
+		add_action( 'pusers_register_features', array( MailLogScreen::class, 'register' ) );
+		// Komunikat o niedrenowanej kolejce stoi po stronie ekranów panelu, a nie przy dispatcherze:
+		// to powiadomienie dla człowieka w panelu, a nie część wysyłki. Kolejka opróżnia się dalej
+		// bez ACF Pro; komunikat o tym, że przestała, jest wtedy jedną z rzeczy, które milczą.
+		add_action( 'pusers_register_features', array( MailQueueNotice::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginHandler::class, 'register' ) );

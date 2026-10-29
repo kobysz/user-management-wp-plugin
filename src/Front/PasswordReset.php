@@ -12,12 +12,18 @@ namespace PortalUsers\Front;
 defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Domain\Account\PasswordPolicy;
+use PortalUsers\Domain\Mail\MailKind;
+use PortalUsers\Domain\Mail\TemplateRenderer;
 use PortalUsers\Domain\Spam\IpAddress;
+use PortalUsers\Mail\CoreCapture;
+use PortalUsers\Mail\PlaceholderFactory;
 use PortalUsers\Persistence\EventLog;
+use PortalUsers\Persistence\MailTemplateRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use WP_Error;
 use WP_Post;
 use WP_Session_Tokens;
+use WP_User;
 
 /**
  * MECHANIZM JEST RDZENIOWY. `retrieve_password()` generuje klucz, zapisuje go w
@@ -248,7 +254,7 @@ final class PasswordReset {
 		add_action( 'admin_post_' . self::ACTION_REQUEST, array( self::class, 'handle_request' ) );
 		add_action( 'admin_post_nopriv_' . self::ACTION_SET, array( self::class, 'handle_set' ) );
 		add_action( 'admin_post_' . self::ACTION_SET, array( self::class, 'handle_set' ) );
-		add_filter( 'retrieve_password_title', array( self::class, 'mail_title' ) );
+		add_filter( 'retrieve_password_title', array( self::class, 'mail_title' ), 10, 2 );
 		add_filter( 'retrieve_password_message', array( self::class, 'mail_message' ), 10, 3 );
 	}
 
@@ -370,10 +376,27 @@ final class PasswordReset {
 		}
 
 		// 6. Akcja: rdzeń generuje klucz, zapisuje go i wysyła maila (treść podmieniają filtry tej
-		// klasy). Jego `WP_Error` POCHŁANIAMY — zwłaszcza `invalid_email` dla adresu, którego rdzeń
-		// nie zna (patrz reguła 1). Kod błędu zostaje w logu, więc awaria wysyłki jest widoczna
-		// administratorowi, choć nie jest widoczna pytającemu.
-		$result = retrieve_password( $email );
+		// klasy, a samą wysyłkę przejmuje kolejka — patrz `CoreCapture`). Jego `WP_Error`
+		// POCHŁANIAMY — zwłaszcza `invalid_email` dla adresu, którego rdzeń nie zna (patrz reguła 1).
+		// Kod błędu zostaje w logu, więc odmowa rdzenia jest widoczna administratorowi, choć nie
+		// jest widoczna pytającemu.
+		//
+		// O AWARII WYSYŁKI ten kod już nie mówi i mówić nie może: odkąd mail idzie przez kolejkę,
+		// `retrieve_password()` nie dochodzi do transportu poczty, więc nie zna
+		// `retrieve_password_email_failure` i oddaje `true` także wtedy, gdy wiersz w kolejce nie
+		// powstał. Awarię zgłasza wiersz `CoreCapture::LOG_ACTION_NOT_QUEUED`, pisany tam, gdzie
+		// odmowa jest widoczna — a od Planu 5 na pytanie „czy ten mail wyszedł" odpowiada log
+		// wysyłek, nie ten wiersz.
+		//
+		// Rozbrojenie w `finally`, bo uzbraja je filtr treści, a między filtrem i `wp_mail()` rdzeń
+		// ma własne wyjścia (pusta treść po cudzym filtrze, wyjątek z obcego kodu). Uzbrojenie,
+		// które przeżyje żądanie, czeka na pierwszy mail następnego — a przechwytywanie trzyma je
+		// w polu statycznym właśnie po to, żeby nie dało się go odziedziczyć z bazy.
+		try {
+			$result = retrieve_password( $email );
+		} finally {
+			CoreCapture::disarm();
+		}
 
 		// W logu NIE MA adresu jawnego, tylko jego skrót — tak samo jak w logu nieudanych logowań
 		// i w cronie czyszczącym konta. Identyfikatora konta tu NIE ustalamy: rozstrzyganie, czy
@@ -552,9 +575,8 @@ final class PasswordReset {
 	}
 
 	/**
-	 * Temat maila z linkiem (filtr `retrieve_password_title`).
-	 *
-	 * Treść jest minimalna i funkcjonalna; plan szablonów podmieni ją filtrem, nie zdarzeniem.
+	 * Temat maila z linkiem (filtr `retrieve_password_title`), wzięty z SZABLONU rodzaju
+	 * `MailKind::PasswordReset`, czyli edytowalny w panelu jak każdy inny mail wtyczki.
 	 *
 	 * Bez wskazanej (albo po usunięciu) strony odzyskiwania hasła oddajemy temat rdzenia
 	 * NIETKNIĘTY, bo wtedy nietknięta zostaje też treść (patrz `mail_message()`), a nasz temat nad
@@ -562,11 +584,39 @@ final class PasswordReset {
 	 * rozumiemy (wtyczka obca na tym samym filtrze), też nie tykamy — stąd typ `mixed` w obie
 	 * strony, tak samo jak w `Redirects::after_login()`.
 	 *
-	 * @param mixed $title Temat ustalony przez rdzeń.
+	 * PUSTY TEMAT PO RENDERZE oddaje temat rdzenia: o każdym polu rozstrzygamy OSOBNO, tak jak
+	 * repozytorium szablonów odwraca się do treści domyślnej per pole. Pustego tematu rdzeń nie
+	 * sprawdza i wysłałby wiadomość bez tematu.
+	 *
+	 * Login bierzemy z argumentu rdzenia (jest nim od WP 4.4), żeby temat mógł nieść zmienne konta
+	 * — `{login}` i `{nazwa_konta}` są na liście zmiennych tego rodzaju. BRAMKI na brak loginu tu
+	 * NIE MA, inaczej niż w `mail_message()`: temat nie potrzebuje ani klucza, ani odnośnika, więc
+	 * wywołanie uboższe o argument (wtyczka obca) dostaje temat ze zmiennymi samego portalu, a nie
+	 * angielski temat rdzenia nad naszą polską treścią.
+	 *
+	 * Argument loginu jest NULLOWALNY i rzutowany: obca wtyczka potrafi zawołać
+	 * `apply_filters( 'retrieve_password_title', $temat, null )`, a typ `string` zamieniał takie
+	 * wywołanie w `TypeError`, czyli w błąd 500 na ścieżce, która miała tylko przepuścić wartość
+	 * dalej. To ta sama ostrożność, co wartości domyślne w `mail_message()`.
+	 *
+	 * @param mixed       $title     Temat ustalony przez rdzeń.
+	 * @param string|null $userLogin Login konta, do którego klucz należy.
 	 * @return mixed Nasz temat albo wejście nietknięte.
 	 */
-	public static function mail_title( mixed $title ): mixed {
-		return '' === self::link_page() ? $title : __( 'Ustawienie nowego hasła', 'portal-users' );
+	public static function mail_title( mixed $title, ?string $userLogin = null ): mixed {
+		if ( '' === self::link_page() ) {
+			return $title;
+		}
+
+		$user    = self::account_for( (string) $userLogin );
+		$subject = self::render_field(
+			MailTemplateRepository::get( MailKind::PasswordReset )->subject,
+			null === $user ? 0 : $user->ID,
+			array(),
+			Mailer::FILTER_SUBJECT
+		);
+
+		return '' === trim( $subject ) ? $title : $subject;
 	}
 
 	/**
@@ -581,18 +631,42 @@ final class PasswordReset {
 	 * rdzenia (`wp-login.php?action=rp`) działa, bo `wp-login.php` zostaje świadomie otwarte. To ta
 	 * sama reguła, którą po swojej stronie trzyma `Redirects::lostpassword_url()`.
 	 *
-	 * Argumenty 2 i 3 mają wartości domyślne, a bez któregokolwiek z nich treść wraca NIETKNIĘTA:
-	 * obca wtyczka potrafi zawołać `apply_filters( 'retrieve_password_message', $tresc )` z jednym
-	 * argumentem, a wymagane argumenty zamieniały takie wywołanie w `ArgumentCountError`, czyli
-	 * w błąd 500 na ścieżce, która miała tylko przepuścić treść dalej. To ta sama ostrożność, co
-	 * typ `mixed` przy pierwszym argumencie.
+	 * Argumenty 2 i 3 mają wartości domyślne, są NULLOWALNE i rzutowane, a bez któregokolwiek z nich
+	 * treść wraca NIETKNIĘTA: obca wtyczka potrafi zawołać
+	 * `apply_filters( 'retrieve_password_message', $tresc )` z jednym argumentem albo podstawić pod
+	 * nie `null`, a argumenty wymagane dawały `ArgumentCountError`, zaś typ `string` — `TypeError`,
+	 * czyli w obu razach błąd 500 na ścieżce, która miała tylko przepuścić treść dalej. To ta sama
+	 * ostrożność, co typ `mixed` przy pierwszym argumencie.
 	 *
-	 * @param mixed  $message   Treść ustalona przez rdzeń.
-	 * @param string $key       Klucz wygenerowany przez rdzeń.
-	 * @param string $userLogin Login konta, do którego klucz należy.
+	 * Treść bierze SZABLON rodzaju `MailKind::PasswordReset` (edytowalny w panelu jak każdy inny
+	 * mail wtyczki), a odnośnik jedzie do niego zmienną `{link_hasla}`. KONTO ustala login z
+	 * argumentu rdzenia: ta metoda nie dostaje ani identyfikatora, ani adresu, a pytanie o nie
+	 * dopiero w przechwytywaniu byłoby za późno — render już by się odbył. Login, który nie wskazuje
+	 * konta, oddaje treść NIETKNIĘTĄ, dokładnie jak brak klucza albo loginu.
+	 *
+	 * PUSTA TREŚĆ PO RENDERZE oddaje treść rdzenia. `retrieve_password()` sprawdza `! $message`
+	 * i przy pustej treści KOŃCZY z wynikiem „wysłano", nie wysyłając nic: żądanie raportowałoby
+	 * sukces, a lekarz nie dostałby maila. Lepsza treść rdzenia niż żadna.
+	 *
+	 * Tej bramki nie da się rozciągnąć na CAŁĄ drogę wiadomości i trzeba o tym wiedzieć: filtr
+	 * `retrieve_password_notification_email` jest WYWOŁYWANY PO sprawdzeniu `! $message` i potrafi
+	 * wyczyścić treść już za nim, a rdzeń woła wtedy `wp_mail()` mimo wszystko. Przechwytywanie
+	 * takiej wiadomości nie dotknie (treść nie będzie już tą, którą uzbrojenie wyrenderowało), więc
+	 * wyśle ją rdzeń — pustą — i to na odpowiedzialność tej obcej wtyczki, nie naszą.
+	 *
+	 * TA METODA UZBRAJA PRZECHWYTYWANIE wysyłki (patrz `CoreCapture`), bo jest jedynym miejscem,
+	 * które zna klucz, a klucz jest tym, co odróżnia dwa żądania tego samego konta: rdzeń generuje
+	 * go za każdym razem nowy, więc każde żądanie dostaje własny wiersz w kolejce. Uzbrojenie niesie
+	 * też SAMĄ TREŚĆ, bo zakres adresem nie wystarcza (patrz `CoreCapture`).
+	 *
+	 * @param mixed       $message   Treść ustalona przez rdzeń.
+	 * @param string|null $key       Klucz wygenerowany przez rdzeń.
+	 * @param string|null $userLogin Login konta, do którego klucz należy.
 	 * @return mixed Nasza treść albo wejście nietknięte.
 	 */
-	public static function mail_message( mixed $message, string $key = '', string $userLogin = '' ): mixed {
+	public static function mail_message( mixed $message, ?string $key = null, ?string $userLogin = null ): mixed {
+		$key       = (string) $key;
+		$userLogin = (string) $userLogin;
 		if ( '' === $key || '' === $userLogin ) {
 			return $message;
 		}
@@ -602,18 +676,78 @@ final class PasswordReset {
 			return $message;
 		}
 
-		return implode(
-			"\n",
+		$user = self::account_for( $userLogin );
+		if ( null === $user ) {
+			return $message;
+		}
+
+		$body = self::render_field(
+			MailTemplateRepository::get( MailKind::PasswordReset )->body,
+			$user->ID,
+			array( 'link_hasla' => self::link_for( $page, $key, $userLogin ) ),
+			Mailer::FILTER_BODY
+		);
+		if ( '' === trim( $body ) ) {
+			return $message;
+		}
+
+		CoreCapture::arm(
+			MailKind::PasswordReset,
+			$user->ID,
+			(string) $user->user_email,
+			MailKind::PasswordReset->value . ':' . $user->ID . ':' . substr( wp_hash( $key ), 0, 16 ),
+			$body
+		);
+
+		return $body;
+	}
+
+	/**
+	 * Konto o podanym loginie albo `null`. Pustego loginu o nic nie pytamy: zapytanie o konto bez
+	 * loginu kosztowałoby odczyt z bazy i tak nie mogłoby się udać.
+	 *
+	 * @param string $userLogin Login konta.
+	 */
+	private static function account_for( string $userLogin ): ?WP_User {
+		if ( '' === $userLogin ) {
+			return null;
+		}
+		$user = get_user_by( 'login', $userLogin );
+
+		return $user instanceof WP_User ? $user : null;
+	}
+
+	/**
+	 * Renderuje JEDNO pole szablonu i przepuszcza je przez filtr Planu 3 (`FILTER_SUBJECT` albo
+	 * `FILTER_BODY`), tak jak robi to `MailQueue::enqueue()` dla maili wtyczki.
+	 *
+	 * Ten mail nie przechodzi przez `MailQueue::enqueue()` — treść musi powstać TUTAJ, bo wynik
+	 * jedzie najpierw do rdzenia (to on składa wiadomość), a do kolejki trafia dopiero jako gotowy
+	 * snapshot. Filtry stoją więc tu, inaczej `password_reset` byłby jedynym rodzajem, którego ich
+	 * publiczny kontrakt nie obejmuje. Pola renderujemy OSOBNO, bo rdzeń pyta o temat i o treść
+	 * dwoma różnymi filtrami.
+	 *
+	 * Obca wtyczka oddająca nie-tekst nie może zostawić pola bez treści: wracamy na render.
+	 *
+	 * @param string                $template Szablon pola (temat albo treść).
+	 * @param int                   $userId   Konto, którego mail dotyczy (0, gdy nieustalone).
+	 * @param array<string, string> $extra    Zmienne, których fabryka nie zna (odnośnik z kluczem).
+	 * @param non-empty-string      $filter   Nazwa filtra pola (Mailer::FILTER_*).
+	 */
+	private static function render_field( string $template, int $userId, array $extra, string $filter ): string {
+		$values   = PlaceholderFactory::for_user( $userId, $extra );
+		$rendered = TemplateRenderer::render( $template, $values );
+		$filtered = apply_filters(
+			$filter, // phpcs:ignore WordPress.NamingConventions.PrefixAllGlobals.DynamicHooknameFound -- nazwa ze stałej Mailer::FILTER_*, która ma prefiks pusers_.
+			$rendered,
+			MailKind::PasswordReset->value,
 			array(
-				__( 'Ktoś poprosił o ustawienie nowego hasła do konta na tej witrynie.', 'portal-users' ),
-				__( 'Konto:', 'portal-users' ) . ' ' . $userLogin,
-				'',
-				__( 'Jeżeli to nie Ty, zignoruj tę wiadomość. Hasło samo się nie zmieni.', 'portal-users' ),
-				'',
-				__( 'Nowe hasło ustawisz, otwierając odnośnik:', 'portal-users' ),
-				self::link_for( $page, $key, $userLogin ),
+				'user_id' => $userId,
+				'values'  => $values->toArray(),
 			)
 		);
+
+		return is_string( $filtered ) ? $filtered : $rendered;
 	}
 
 	/**

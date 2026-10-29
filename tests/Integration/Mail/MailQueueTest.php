@@ -1,0 +1,366 @@
+<?php
+/**
+ * Testy kolejkowania maila: snapshot treści, klucz odporności, filtry i zdarzenie natychmiastowe.
+ */
+
+declare( strict_types=1 );
+
+namespace PortalUsers\Tests\Integration\Mail;
+
+use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Domain\Mail\MailKind;
+use PortalUsers\Domain\Mail\MailTemplate;
+use PortalUsers\Domain\Mail\QueueStatus;
+use PortalUsers\Front\Mailer;
+use PortalUsers\Mail\MailQueue;
+use PortalUsers\Mail\PlaceholderFactory;
+use PortalUsers\Persistence\MailQueueRepository;
+use PortalUsers\Persistence\MailTemplateRepository;
+use PortalUsers\Persistence\Migrations;
+use PortalUsers\Persistence\SettingsRepository;
+use WP_UnitTestCase;
+
+final class MailQueueTest extends WP_UnitTestCase {
+
+	public function set_up(): void {
+		parent::set_up();
+		SettingsRepository::save( Settings::fromArray( array() ) );
+	}
+
+	private function account(): int {
+		return (int) self::factory()->user->create(
+			array(
+				'user_login' => 'jan.kowalski',
+				'user_email' => 'jan@szpital.pl',
+			)
+		);
+	}
+
+	/**
+	 * Wiersze gotowe do wysyłki, najstarszy naprzód.
+	 *
+	 * @return list<array<string, mixed>>
+	 */
+	private function queued(): array {
+		return MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 20 );
+	}
+
+	public function test_the_queued_row_holds_the_rendered_snapshot(): void {
+		$userId = $this->account();
+		MailTemplateRepository::save( MailKind::Approved, new MailTemplate( 'Konto {email}', 'Wejdź: {link_logowania}' ) );
+
+		$this->assertTrue(
+			MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'approved:' . $userId )
+		);
+
+		$row = $this->queued()[0];
+		$this->assertSame( 'Konto jan@szpital.pl', $row['subject'] );
+		$this->assertStringContainsString( 'Wejdź: http', (string) $row['body'] );
+		$this->assertSame( MailKind::Approved->value, $row['kind'] );
+		$this->assertSame( $userId, (int) $row['user_id'] );
+		$this->assertSame( 'jan@szpital.pl', $row['recipient'] );
+		$this->assertSame( QueueStatus::Queued->value, $row['status'] );
+	}
+
+	public function test_editing_the_template_later_does_not_change_a_row_already_queued(): void {
+		// Snapshot przy zapisie: dispatcher nie potrzebuje ustawień ani konta, a redakcja nie przepisuje
+		// historii maili, które już poszły.
+		$userId = $this->account();
+		MailTemplateRepository::save( MailKind::Approved, new MailTemplate( 'Konto {email}', 'Stara treść' ) );
+		MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'approved:' . $userId );
+
+		MailTemplateRepository::save( MailKind::Approved, new MailTemplate( 'Zupełnie inny temat', 'Nowa treść' ) );
+
+		$row = $this->queued()[0];
+		$this->assertSame( 'Konto jan@szpital.pl', $row['subject'] );
+		$this->assertSame( 'Stara treść', $row['body'] );
+	}
+
+	public function test_the_same_recipient_is_not_queued_twice_for_one_dedupe_key(): void {
+		$userId = $this->account();
+		$values = PlaceholderFactory::for_user( $userId );
+
+		$this->assertTrue( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', $values, 'approved:' . $userId ) );
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', $values, 'approved:' . $userId ) );
+		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_the_same_dedupe_key_with_a_different_recipient_is_queued_again(): void {
+		// Bez odbiorcy w kluczu drugi adres redakcji nigdy nie dostałby wniosku.
+		$userId = $this->account();
+		$values = PlaceholderFactory::for_user( $userId );
+
+		$this->assertTrue( MailQueue::enqueue( MailKind::Editorial, $userId, 'pierwsza@redakcja.test', $values, 'editorial:' . $userId ) );
+		$this->assertTrue( MailQueue::enqueue( MailKind::Editorial, $userId, 'druga@redakcja.test', $values, 'editorial:' . $userId ) );
+		$this->assertSame( 2, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_the_recipient_in_the_key_ignores_letter_case(): void {
+		// Ten sam adres pisany inaczej to nadal jeden człowiek i jeden mail.
+		$userId = $this->account();
+		$values = PlaceholderFactory::for_user( $userId );
+
+		$this->assertTrue( MailQueue::enqueue( MailKind::Approved, $userId, 'Jan@Szpital.pl', $values, 'approved:' . $userId ) );
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', $values, 'approved:' . $userId ) );
+		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_the_body_and_subject_filters_keep_the_contract_from_plan_three(): void {
+		$userId = $this->account();
+		$seen   = array();
+		add_filter(
+			Mailer::FILTER_BODY,
+			static function ( $body, $kind, $context ) use ( &$seen ): string {
+				$seen = array( $kind, $context );
+				return 'podmieniona treść';
+			},
+			10,
+			3
+		);
+		add_filter( Mailer::FILTER_SUBJECT, static fn (): string => 'podmieniony temat', 10, 3 );
+
+		MailQueue::enqueue( MailKind::Confirmation, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'k' );
+
+		$this->assertSame( MailKind::Confirmation->value, $seen[0] );
+		$this->assertSame( $userId, $seen[1]['user_id'] );
+		$this->assertSame( 'jan@szpital.pl', $seen[1]['values']['email'], 'Kontekst niesie zmienne szablonu.' );
+		$row = $this->queued()[0];
+		$this->assertSame( 'podmieniona treść', $row['body'] );
+		$this->assertSame( 'podmieniony temat', $row['subject'] );
+	}
+
+	public function test_a_filter_returning_a_non_string_leaves_the_rendered_content(): void {
+		// Obca wtyczka oddająca null nie może zostawić maila bez treści.
+		$userId = $this->account();
+		MailTemplateRepository::save( MailKind::Approved, new MailTemplate( 'Temat szablonu', 'Treść szablonu' ) );
+		add_filter( Mailer::FILTER_BODY, static fn (): ?string => null, 10, 3 );
+		add_filter( Mailer::FILTER_SUBJECT, static fn (): array => array( 'nie tekst' ), 10, 3 );
+
+		MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'k' );
+
+		$row = $this->queued()[0];
+		$this->assertSame( 'Temat szablonu', $row['subject'] );
+		$this->assertSame( 'Treść szablonu', $row['body'] );
+	}
+
+	public function test_a_newline_in_a_value_cannot_reach_the_subject(): void {
+		// Powód odrzucenia wpisuje ręcznie człowiek, więc może nieść nową linię. Nowa linia w temacie
+		// to wstrzyknięcie nagłówka do wiadomości, nie usterka kosmetyczna.
+		$userId = $this->account();
+		MailTemplateRepository::save( MailKind::Rejected, new MailTemplate( 'Powód: {powod_odrzucenia}', 'Treść' ) );
+		$values = PlaceholderFactory::for_user( $userId, array( 'powod_odrzucenia' => "numer\r\nBcc: obcy@example.test\t  zły" ) );
+
+		MailQueue::enqueue( MailKind::Rejected, $userId, 'jan@szpital.pl', $values, 'rejected:' . $userId );
+
+		$this->assertSame( 'Powód: numer Bcc: obcy@example.test zły', $this->queued()[0]['subject'] );
+	}
+
+	public function test_a_newline_in_the_subject_filter_result_cannot_reach_the_subject_either(): void {
+		$userId = $this->account();
+		add_filter( Mailer::FILTER_SUBJECT, static fn (): string => "Temat\nz nową linią", 10, 3 );
+
+		MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'k' );
+
+		$this->assertSame( 'Temat z nową linią', $this->queued()[0]['subject'] );
+	}
+
+	public function test_the_body_keeps_its_own_newlines(): void {
+		$userId = $this->account();
+		MailTemplateRepository::save( MailKind::Approved, new MailTemplate( 'Temat', "Pierwsza\n\nTrzecia" ) );
+
+		MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'k' );
+
+		$this->assertSame( "Pierwsza\n\nTrzecia", $this->queued()[0]['body'] );
+	}
+
+	public function test_an_invalid_recipient_is_refused_without_a_row(): void {
+		$userId = $this->account();
+		$values = PlaceholderFactory::for_user( $userId );
+
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, 'to-nie-adres', $values, 'k' ) );
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, '', $values, 'k' ) );
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, '   ', $values, 'k' ) );
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_a_template_rendering_to_nothing_is_refused_without_a_row(): void {
+		// Szablon złożony z jednej zmiennej, która wyszła pusta: wiersz bez tematu i bez treści
+		// byłby pustym mailem do człowieka i hałasem w logu wysyłek.
+		$userId = $this->account();
+		MailTemplateRepository::save( MailKind::Rejected, new MailTemplate( '{powod_odrzucenia}', '{powod_odrzucenia}' ) );
+
+		$this->assertFalse(
+			MailQueue::enqueue( MailKind::Rejected, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId, array( 'powod_odrzucenia' => '' ) ), 'k' )
+		);
+		$this->assertFalse( MailQueue::enqueue_rendered( MailKind::Rejected, $userId, 'jan@szpital.pl', ' ', "\n ", 'k' ) );
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_a_dedupe_key_longer_than_the_index_is_refused_without_a_row(): void {
+		// Kolumna `dedupe_key` ma UNIQUE, a wpdb pracuje bez trybów ścisłych: dłuższy klucz MySQL
+		// obciąłby po cichu, dwa różne klucze o wspólnym przedrostku zderzyłyby się na indeksie,
+		// insert() zwrócił false, a wołający odczytał to jako „już w kolejce" — mail by nie wyszedł.
+		$userId = $this->account();
+
+		$this->assertFalse(
+			MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), str_repeat( 'x', 200 ) )
+		);
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_a_dedupe_key_that_exactly_fills_the_index_is_accepted(): void {
+		// Granica liczy się w obie strony: pomyłka na „>=" odrzuciłaby klucz mieszczący się co do znaku
+		// i zgubiła mail. Klucz końcowy to baza plus dwukropek plus 16 znaków skrótu odbiorcy.
+		$userId = $this->account();
+		$base   = str_repeat( 'x', MailQueueRepository::DEDUPE_KEY_MAX - 17 );
+
+		$this->assertTrue( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), $base ) );
+		$this->assertFalse(
+			MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), $base . 'x' ),
+			'Jeden znak za dużo już się nie mieści.'
+		);
+		$this->assertSame( MailQueueRepository::DEDUPE_KEY_MAX, strlen( (string) $this->queued()[0]['dedupe_key'] ) );
+		$this->assertSame( 1, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_a_recipient_longer_than_its_column_is_refused_without_a_row(): void {
+		// `is_email()` przyjmuje adres do 254 znaków (limit RFC), a kolumna `recipient` jest krótsza.
+		// Obcięty adres jest niewidoczny: klucz odporności powstaje z adresu PEŁNEGO, więc pozostaje
+		// spójny, wiersz wygląda normalnie, a mail idzie na adres, którego nikt nie ma.
+		$userId = $this->account();
+		$long   = str_repeat( 'a', 60 ) . '@' . str_repeat( 'b', 60 ) . '.' . str_repeat( 'c', 60 ) . '.przyklad.pl';
+
+		$this->assertGreaterThan( MailQueueRepository::RECIPIENT_MAX, strlen( $long ), 'Adres musi przekraczać kolumnę.' );
+		$this->assertNotFalse( is_email( $long ), 'Adres jest formalnie poprawny: to nie jest test walidacji.' );
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, $long, PlaceholderFactory::for_user( $userId ), 'k' ) );
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+	}
+
+	public function test_an_immediate_mail_schedules_a_dispatch_event(): void {
+		$userId = $this->account();
+
+		MailQueue::enqueue( MailKind::Confirmation, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'k', true );
+
+		$this->assertNotFalse( wp_next_scheduled( MailQueue::DISPATCH_HOOK ) );
+	}
+
+	public function test_a_mail_that_can_wait_does_not_schedule_a_dispatch_event(): void {
+		$userId = $this->account();
+
+		MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'k' );
+
+		$this->assertFalse( wp_next_scheduled( MailQueue::DISPATCH_HOOK ) );
+	}
+
+	public function test_a_refused_mail_does_not_schedule_a_dispatch_event(): void {
+		// Zdarzenie bez wiersza budziłoby dispatchera po nic.
+		$userId = $this->account();
+
+		MailQueue::enqueue( MailKind::Confirmation, $userId, 'to-nie-adres', PlaceholderFactory::for_user( $userId ), 'k', true );
+
+		$this->assertFalse( wp_next_scheduled( MailQueue::DISPATCH_HOOK ) );
+	}
+
+	public function test_a_rendered_mail_can_be_queued_without_a_template(): void {
+		// Droga dla maila rdzeniowego (Task 7): treść jest już gotowa, szablonu nie ma po co czytać.
+		$userId = $this->account();
+
+		$this->assertTrue(
+			MailQueue::enqueue_rendered( MailKind::PasswordReset, $userId, 'jan@szpital.pl', "Temat\nz linii", 'Treść gotowa', 'password_reset:' . $userId )
+		);
+
+		$row = $this->queued()[0];
+		$this->assertSame( 'Temat z linii', $row['subject'] );
+		$this->assertSame( 'Treść gotowa', $row['body'] );
+		$this->assertSame( MailKind::PasswordReset->value, $row['kind'] );
+	}
+
+	/**
+	 * Wiersze logu zdarzeń, najstarszy naprzód.
+	 *
+	 * @return list<object>
+	 */
+	private function logRows(): array {
+		global $wpdb;
+		$table = Migrations::table( 'event_log' );
+
+		return array_values( (array) $wpdb->get_results( "SELECT * FROM {$table} ORDER BY id ASC" ) );
+	}
+
+	/**
+	 * Zawartość kontekstu wiersza logu.
+	 *
+	 * @param object $row Wiersz logu.
+	 * @return array<string, mixed>
+	 */
+	private function contextOf( object $row ): array {
+		$context = json_decode( (string) ( $row->context ?? '' ), true );
+
+		return is_array( $context ) ? $context : array();
+	}
+
+	/**
+	 * Filtr zapytań: wstawienie wiersza kolejki pada na bazie.
+	 *
+	 * @param string $query Zapytanie SQL.
+	 */
+	public function break_the_insert( $query ): string {
+		return false !== strpos( (string) $query, 'INSERT IGNORE INTO' ) ? 'TO NIE JEST SQL' : (string) $query;
+	}
+
+	public function test_a_database_error_while_queueing_leaves_a_trace_in_the_event_log(): void {
+		// To jedyne miejsce w kolejce, w którym mail ginie BEZ ŚLADU: wiersza w kolejce nie ma, więc
+		// log wysyłek nie odpowiada na pytanie „czy ten mail wyszedł", a strona rejestracji każe
+		// lekarzowi szukać w skrzynce wiadomości, której nie ma nigdzie.
+		global $wpdb;
+		$userId = $this->account();
+		// Komunikat wpdb o zepsutym zapytaniu jest tu oczekiwany; na wyjściu testów byłby hałasem.
+		$wpdb->suppress_errors( true );
+		add_filter( 'query', array( $this, 'break_the_insert' ) );
+
+		$queued = MailQueue::enqueue( MailKind::Confirmation, $userId, 'jan@szpital.pl', PlaceholderFactory::for_user( $userId ), 'k', true );
+
+		remove_filter( 'query', array( $this, 'break_the_insert' ) );
+		$wpdb->suppress_errors( false );
+		$this->assertFalse( $queued );
+		$this->assertSame( 0, MailQueueRepository::count_by_status( '' ) );
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows, 'Porzucony mail musi zostawić dokładnie jeden wiersz w logu.' );
+		$this->assertSame( MailQueue::LOG_ACTION_REFUSED, $rows[0]->action );
+		$this->assertSame( $userId, (int) $rows[0]->subject_user_id );
+		$this->assertSame( MailKind::Confirmation->value, $this->contextOf( $rows[0] )['kind'] ?? '' );
+		$this->assertSame( 'insert_failed', $this->contextOf( $rows[0] )['reason'] ?? '' );
+		// Adresu jawnego w logu nie ma nigdzie (ta sama higiena, co w logu żądań o link).
+		$this->assertStringNotContainsString( 'jan@szpital.pl', (string) $rows[0]->context );
+	}
+
+	public function test_a_duplicate_stays_silent_in_the_event_log(): void {
+		// Duplikat klucza znaczy „ten sam mail już czeka w kolejce": oczekiwany i niegroźny.
+		// Wiersz w tabeli audytu za każdą ponowną próbę byłby hałasem, a tabela jest śladem
+		// decyzji redakcji, nie dziennikiem żądań.
+		$userId = $this->account();
+		$values = PlaceholderFactory::for_user( $userId );
+		$this->assertTrue( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', $values, 'k' ) );
+
+		$this->assertFalse( MailQueue::enqueue( MailKind::Approved, $userId, 'jan@szpital.pl', $values, 'k' ) );
+
+		$this->assertSame( array(), $this->logRows(), 'Odmowa na duplikacie nie dopisuje wiersza do logu.' );
+	}
+
+	public function test_an_address_longer_than_its_column_leaves_a_trace_in_the_event_log(): void {
+		// Odmowa osiągalna w praktyce: adres redakcji wpisany w ustawieniach przechodzi `is_email()`,
+		// ale nie mieści się w kolumnie. Bez wiersza w logu `Mailer::editorial()` oddaje false,
+		// `Confirmation::confirm()` to porzuca, a redakcja nigdy nie dowiaduje się o wniosku lekarza.
+		$userId = $this->account();
+		$long   = str_repeat( 'a', 190 ) . '@szpital.pl';
+		$this->assertNotFalse( is_email( $long ), 'Adres jest formalnie poprawny: to nie test walidacji.' );
+
+		$this->assertFalse( MailQueue::enqueue( MailKind::Editorial, $userId, $long, PlaceholderFactory::for_user( $userId ), 'k' ) );
+
+		$rows = $this->logRows();
+		$this->assertCount( 1, $rows );
+		$this->assertSame( MailQueue::LOG_ACTION_REFUSED, $rows[0]->action );
+		$this->assertSame( 'recipient_too_long', $this->contextOf( $rows[0] )['reason'] ?? '' );
+		$this->assertStringNotContainsString( $long, (string) $rows[0]->context );
+	}
+}

@@ -125,6 +125,18 @@ Istnieje od pierwszej migracji, mimo że nic jej jeszcze nie używa. Żądanie u
 
 Konta istniejące na portalu przed wdrożeniem nie mają stanu. Dziś nie powoduje to utraty dostępu, bo brama logowania nie jest podłączona (Plan 4), ale po jej podłączeniu backfill musi już działać.
 
+### Anonimizacja logu wysyłek musi nadpisać `recipient`, `subject` i `body`
+
+Tabela `mail_queue` ma kolumnę `anonymized` od pierwszej migracji, ale samo postawienie jej na `1` nie anonimizuje niczego: dane zostają w wierszu. Treść maila do redakcji niesie imię i nazwisko wnioskodawcy, adres, profesję, numer uprawnień, werdykt walidacji i **każde widoczne pole zgłoszenia**; treść odrzucenia niesie powód wpisany ręcznie przez redakcję. Żądanie usunięcia danych musi więc **nadpisać** `recipient`, `subject` i `body` wiersza, a nie tylko go oznaczyć. Wiersz zostaje, bo log wysyłek wykazuje, że mail wyszedł — to jest w nim wartością, a nie treść.
+
+Pytanie otwarte, na które eksporter musi odpowiedzieć **przed** napisaniem anonimizacji: czy treści wierszy kolejki są danymi osobowymi do **wydania** w eksporcie, czy własnym zapisem administratora danych o tym, co i kiedy wysłał? Od odpowiedzi zależy, czy eksport w ogóle te kolumny czyta.
+
+### Wiersz kolejki trzyma żywy sekret jednorazowy — decyzja o retencji należy do właściciela
+
+Snapshot rodzaju `confirmation` zawiera **token potwierdzenia adresu ważny 48 godzin**, a snapshot `password_reset` — **klucz resetu hasła wygenerowany przez rdzeń**. Oba leżą w tabeli z oknem retencji 90 dni i oba są czytelne w panelu na ekranie logu wysyłek. Jest to nieunikniona konsekwencja wzorca „render treści przy zapisie", którego żąda specyfikacja, i **nie jest** eskalacją uprawnień: każdy, kto widzi ten ekran, ma już `manage_options`. Nie została natomiast nigdzie zapisana decyzja o danych **w spoczynku**: kopia bazy zrobiona w okresie ważności tokenu daje działające linki do przejęcia konta.
+
+Do rozstrzygnięcia przez właściciela, nie przez wykonawcę: czy te dwa rodzaje maili mają mieć okno retencji liczone w **dniach** zamiast w 90 dniach — albo czy po wysyłce ma być czyszczona sama kolumna `body`? Pierwsze jest tańsze, drugie zostawia dłuższy ślad „czy ten mail wyszedł". Dopóki odpowiedzi nie ma, obowiązuje 90 dni dla wszystkich rodzajów.
+
 ---
 
 ## Plan 8 — Aktualizacje i release
@@ -208,3 +220,12 @@ Te pozycje przeszły triage recenzji końcowej jako „mogą zostać". Spisane, 
 - `treatPhpDocTypesAsCertain: false` osłabia „level max"; katalog `tests/` nie jest analizowany przez PHPStan.
 - Aktywacja sieciowa w multisite utworzy tabele tylko dla bieżącej witryny. Multisite jest jawnym celem negatywnym specyfikacji; `$wpdb->prefix` nie blokuje późniejszego dorobienia.
 - Brak testów `Plugin::version()`, `path()`, `plugin_file()` i gałęzi `$fresh` — ta ostatnia będzie podstawą aktualizatora w Planie 8.
+
+### Z recenzji całej gałęzi Planu 5 (2026-10-29)
+
+- **Próg ostrzeżenia o stojącej kolejce równa się progowi odzysku** (900 s w obu miejscach), a ostrzeżenie mierzy tylko zaległość najstarszego wiersza. Zaległość dłuższa niż około 300 wierszy (15 przebiegów po 20) daje ostrzeżenie „kolejka nie jest opróżniana" na portalu, który opróżnia ją normalnie. Domknięcie: dodać warunek „i nic nie wyszło od dawna" (`MAX(sent_at)`) albo odsunąć próg od `Dispatcher::STALE_AFTER`, tak jak `STALE_AFTER` odsunięto od limitu czasu PHPMailera.
+- **Ostrzeżenie o stojącej kolejce rejestruje się za bramką ACF Pro**, a dispatcher, przechwytywanie maila odzyskiwania i cron retencji — poza nią. Na portalu, na którym ACF padnie po zakolejkowaniu maili i jednocześnie nie działa WP-Cron, maile stoją bez żadnego ostrzeżenia. Okno wąskie, bo rejestracja i odzyskiwanie też są za bramką.
+- **Wiersz ginący w pętli `sending` jest niewidoczny dla wszystkiego.** Fatal PHP (nie `Throwable`) zostawia wiersz w `sending`; `recover_stale()` wraca go do kolejki, następny przebieg zajmuje od nowa, a ostrzeżenie filtruje po `status = 'queued'`, więc go nie widzi. Licznik prób rośnie tylko wtedy, gdy dispatcher dojdzie do zapisu wyniku.
+- **Temat szablonu maila dalej zamienia goły `<` na `&lt;`** (`sanitize_text_field`). Naprawione tylko w treści; temat to jedna linia i operator porównania jest w nim rzadkością.
+- **`sanitize_textarea_field()` usuwa `<` razem z tekstem, gdy dalej w linii stoi `>`** — „Wiek < 30 > nie" traci trzy słowa, bo `wp_pre_kses_less_than()` przepuszcza taki fragment do `wp_strip_all_tags()`. Ekran ostrzega, że znaczniki są zdejmowane, ale docblock mówi o niższej cenie, niż jest.
+- **Brak testu wyścigu `claim()` na dwóch połączeniach do bazy.** Gwarancję daje warunkowy UPDATE, który wymusza baza; prawdziwy test wymagałby drugiego połączenia i uśpienia, więc byłby chwiejny.

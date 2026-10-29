@@ -58,11 +58,11 @@ PortalUsers\Admin\Request::{NONCE_FIELD, NOTICE_ARG, NOTICE_SAVED, guard(string)
 PortalUsers\Plugin::{boot(string):void, load_features():void}   // hook `pusers_register_features`
 ```
 
-**Zweryfikowane w źródłach rdzenia** (kontener wp-env, WordPress 6.9):
+**Zweryfikowane w źródłach rdzenia** (kontener wp-env, WordPress 7.1.3 — numery linii sprawdzone ponownie na tej wersji po realizacji planu):
 
 - `wp-includes/pluggable.php:233` — `$pre_wp_mail = apply_filters( 'pre_wp_mail', null, $atts ); if ( null !== $pre_wp_mail ) { return $pre_wp_mail; }`. Filtr stoi **przed** jakimkolwiek przetwarzaniem odbiorców, a zwrot różny od `null` zastępuje całą wysyłkę i staje się wynikiem `wp_mail()`. To jedyny szew, którym da się przenieść rdzeniowy mail do kolejki, nie dotykając rdzenia.
 - `wp-includes/user.php:3471` — `retrieve_password()` woła `apply_filters( 'retrieve_password_notification_email', … )` i dopiero potem **jedno** `wp_mail()`. Nie ma w nim przełącznika „nie wysyłaj": dlatego przechwytujemy na `pre_wp_mail`, a nie tam.
-- `wp-includes/user.php:3439` — `if ( ! $message ) { return true; }` **przed** złożeniem wiadomości. Filtr `retrieve_password_message`, który oddałby pusty łańcuch, nie zatrzymuje wysyłki — rdzeń wyśle mail z pustą treścią. Szablon z pustą treścią nie może więc dojechać do rdzenia (patrz Task 7).
+- `wp-includes/user.php:3436` — `apply_filters( 'retrieve_password_message', … )`, a **zaraz po nim**, w `:3439`, `if ( ! $message ) { return true; }`. Kolejność jest więc odwrotna, niż pierwotnie zapisano w tym planie: strażnik stoi **za** filtrem, więc pusta treść z filtra nie daje maila z pustą treścią — rdzeń **nie wysyła nic** i zgłasza sukces. Wniosek dla wykonawcy jest ten sam i się nie zmienia: szablon z pustą treścią nie może dojechać do rdzenia (patrz Task 7), bo żądanie zaraportuje „wysłano", a lekarz nie dostanie maila.
 - Rdzeń nie rejestruje harmonogramu krótszego niż `hourly`. Przebieg minutowy wymaga własnego wpisu przez filtr `cron_schedules`.
 
 ## Co ten plan świadomie zostawia
@@ -71,7 +71,8 @@ PortalUsers\Plugin::{boot(string):void, load_features():void}   // hook `pusers_
 - **Eksport i anonimizacja logu wysyłek** — Plan 7. Tabela kolejki **od początku** ma kolumny `user_id` i `anonymized`, żeby Plan 7 miał po czym szukać wierszy konta i co w nich oznaczać; ten plan ich nie używa poza zapisem `user_id`.
 - **Nadpisywanie szablonów plikiem w motywie.** Specyfikacja zostawia mechanizm szablonów wykonawcy; dowozimy edycję w panelu plus filtry `FILTER_SUBJECT` / `FILTER_BODY`, które Plan 3 już wystawił. Szablonów plikowych nie ma — YAGNI, a dwa źródła prawdy o treści maila to pierwszy rozjazd przy pierwszej zmianie.
 - **Mail o zmianie hasła.** Specyfikacja mówi wprost: „Mail o zmianie hasła zostaje standardowy, WordPressowy." Nie przechwytujemy go i nie logujemy.
-- **Układy HTML, grafika, wersja tekstowa jako `multipart/alternative`.** Specyfikacja żąda „tekst zwykły w prostym opakowaniu HTML"; dowozimy dokładnie to.
+- **Układy HTML i grafika.** Specyfikacja żąda „tekst zwykły w prostym opakowaniu HTML"; dowozimy dokładnie to.
+- ~~**Wersja tekstowa jako `multipart/alternative`.**~~ Plan odrzucił ją jako YAGNI i **mylił się**: recenzja całej gałęzi wykazała, że wiadomość wyłącznie HTML bez części alternatywnej jest rozpoznawanym sygnałem spamowym na dokładnie tych filtrach, o których mówią Ograniczenia specyfikacji („Maile trafiają w znacznej części na firmowe serwery pocztowe z agresywnym filtrowaniem"), a uzasadnieniem dla tekstu zwykłego jest tam „tekst rzadziej wpada w filtry". Dispatcher trzyma tekst zwykły w wierszu, więc koszt to trzy linie w już istniejącym `try`. Dowiezione w fali poprawek po recenzji gałęzi (rozstrzygnięcie R30).
 
 ## Review Focus
 
@@ -555,7 +556,7 @@ Od tego zadania żaden mail wtyczki nie idzie przez `wp_mail()` z miejsca zdarze
 - Test: `tests/Integration/Mail/MailQueueTest.php`, `tests/Integration/Front/MailerTest.php`
 
 **Interfejsy:**
-- Konsumuje: `MailKind`, `MailTemplate`, `Placeholders`, `TemplateRenderer`, `MailTemplateRepository`, `MailQueueRepository`, `DispatchMail::HOOK_NOW` (nazwa hooka jako stała; Task 6 dowozi klasę — do tego czasu użyj literału w **jednym** miejscu i zamień go na stałą w Tasku 6).
+- Konsumuje: `MailKind`, `MailTemplate`, `Placeholders`, `TemplateRenderer`, `MailTemplateRepository`, `MailQueueRepository`, nazwa zdarzenia natychmiastowego jako stała. **Rozstrzygnięcie z realizacji, które zastąpiło pierwotny zapis `DispatchMail::HOOK_NOW`:** stała nazywa się `MailQueue::DISPATCH_HOOK` i stoi w **kolejce**, nie w klasie crona — kolejka zna samą nazwę, nie klasę, która jej nasłuchuje, więc wstawienie wiersza nie zależy od tego, czy harmonogram jest zarejestrowany. Znika przy tym dług między zadaniami (żaden literał do późniejszej podmiany).
 - Oddaje:
 
 ```php
@@ -626,7 +627,7 @@ public function test_an_invalid_recipient_is_refused_without_a_row(): void { …
 
 public function test_an_immediate_mail_schedules_a_dispatch_event(): void {
     MailQueue::enqueue( MailKind::Confirmation, $userId, 'jan@szpital.pl', $values, 'k', true );
-    $this->assertNotFalse( wp_next_scheduled( DispatchMail::HOOK_NOW ) );
+    $this->assertNotFalse( wp_next_scheduled( MailQueue::DISPATCH_HOOK ) );
 }
 
 // MailerTest (istniejący plik): testy Planu 3 asertujące wysyłkę przez wp_mail ZMIENIAJĄ SIĘ
@@ -672,7 +673,8 @@ final class Dispatcher {
 }
 final class DispatchMail {
     public const HOOK     = 'pusers_dispatch_mail';
-    public const HOOK_NOW = 'pusers_dispatch_mail_now';
+    // Nazwa zdarzenia natychmiastowego stoi w MailQueue::DISPATCH_HOOK (rozstrzygnięcie z realizacji,
+    // patrz Task 5); ta klasa tylko się pod nią podpina.
     public const SCHEDULE = 'pusers_minute';
     public static function register(): void;     // oba hooki + filtr cron_schedules
     public static function schedule(): void;
@@ -684,7 +686,7 @@ final class DispatchMail {
 
 Wysyłka: powód porażki zbieraj nasłuchem `wp_mail_failed` dodawanym i **zdejmowanym wokół jednego wywołania**, a samo wywołanie otocz `try/catch/finally` — `wp_mail()` potrafi rzucić wyjątkiem z PHPMailera. Opakowanie HTML: `add_filter( 'wp_mail_content_type', … )` zwracający `text/html` zakładany **tuż przed** i zdejmowany w `finally`; treść przez `HtmlBody::wrap()`. Filtr zostawiony na stałe zmieniłby typ treści mailom innych wtyczek — to jest ta sama klasa błędu co nagłówek zostawiony na globalnym filtrze.
 
-Harmonogram: `cron_schedules` dostaje wpis `pusers_minute` o interwale 60 s (rdzeń nie ma nic krótszego niż `hourly`). `register()` podpina `HOOK` **i** `HOOK_NOW` pod `Dispatcher::run()`; `schedule()` zakłada zdarzenie cykliczne **tylko gdy go nie ma** — jak `PurgeUnconfirmed::schedule()`, żeby administrator, który je zdjął, nie odzyskiwał go przy każdym żądaniu.
+Harmonogram: `cron_schedules` dostaje wpis `pusers_minute` o interwale 60 s (rdzeń nie ma nic krótszego niż `hourly`). `register()` podpina `HOOK` **i** `MailQueue::DISPATCH_HOOK` pod `Dispatcher::run()`; `schedule()` zakłada zdarzenie cykliczne **tylko gdy go nie ma** — jak `PurgeUnconfirmed::schedule()`, żeby administrator, który je zdjął, nie odzyskiwał go przy każdym żądaniu.
 
 **Rejestracja stoi w `Plugin::boot()`, nie pod `pusers_register_features`.** Ten sam powód co brama logowania z Planu 4: wyłączone albo zepsute aktualizacją ACF Pro zatrzymałoby wysyłkę maili, które **już są w kolejce** — w tym linku potwierdzającego, bez którego lekarz nie wejdzie na konto. Dispatcher nie potrzebuje ACF do niczego: czyta wiersz i woła `wp_mail()`. Ekrany panelu (Taski 9 i 10) zostają za zależnością.
 
@@ -773,7 +775,7 @@ final class CoreCapture {
 Jak to się składa:
 
 1. `PasswordReset::mail_title()` i `mail_message()` **zachowują swoje dwa guardy w niezmienionej postaci**: brak klucza albo loginu → wejście nietknięte; brak wskazanej strony odzyskiwania → treść i temat rdzenia nietknięte. To nie jest ostrożność kosmetyczna: bez strony wtyczki odnośnik rdzenia (`wp-login.php?action=rp`) **działa**, a nasz nie, więc podmiana treści wysłałaby człowieka w ślepą uliczkę.
-2. Za guardami `mail_message()` renderuje treść z `MailTemplateRepository::get( MailKind::PasswordReset )` ze zmiennymi z `PlaceholderFactory::for_user()` plus `link_hasla`, a `mail_title()` — temat z tego samego szablonu. Szablon, który po renderze dałby **pustą** treść, nie może dojechać do rdzenia: `wp-includes/user.php:3439` sprawdza `! $message` wcześniej i rdzeń wysłałby wiadomość z pustą treścią. Pusty render → oddaj wejście nietknięte.
+2. Za guardami `mail_message()` renderuje treść z `MailTemplateRepository::get( MailKind::PasswordReset )` ze zmiennymi z `PlaceholderFactory::for_user()` plus `link_hasla`, a `mail_title()` — temat z tego samego szablonu. Szablon, który po renderze dałby **pustą** treść, nie może dojechać do rdzenia: `wp-includes/user.php:3439` sprawdza `! $message` **po** filtrze treści (`:3436`), więc rdzeń nie wyśle wówczas nic i zwróci `true` — żądanie zaraportuje sukces, a lekarz nie dostanie maila. Pusty render → oddaj wejście nietknięte.
 3. `mail_message()` (jedyne miejsce, które zna klucz) **uzbraja** przechwytywanie: `CoreCapture::arm( MailKind::PasswordReset, $userId, $email, 'password_reset:' . $userId . ':' . substr( wp_hash( $key ), 0, 16 ) )`.
 4. `CoreCapture::capture()` przepuszcza wejście nietknięte (`$return`), gdy nie jest uzbrojone **albo gdy odbiorca z `$atts['to']` nie jest adresem uzbrojonego konta**. Dopiero zgodny adres idzie do `enqueue_rendered()` z `$immediate = true`, po czym przechwytywanie się rozbraja i metoda zwraca `true` (wynik `wp_mail()` dla rdzenia).
 5. `PasswordReset` rozbraja przechwytywanie w `finally` wokół `retrieve_password()` — gdy rdzeń z jakiegokolwiek powodu nie dojdzie do `wp_mail()`, uzbrojenie nie może zostać na następne żądanie.
@@ -1058,7 +1060,7 @@ Na koniec `git status --porcelain` musi być pusty.
 
 Trzy zadania modyfikują `Migrations`: Task 3 (tabela, wersja 3), Task 6 (harmonogram dispatchera, wersja 4), Task 10 (harmonogram retencji, wersja 5). Każde podbija wersję, bo `maybe_upgrade()` wchodzi wyłącznie przy wersji niższej od bieżącej — krok dołożony bez podbicia nigdy nie wykonałby się na portalu, który przeszedł poprzednią migrację. Task 6 **nie wolno** wołać `PurgeMailLog::schedule()`: ta klasa powstaje dopiero w Tasku 10.
 
-`DispatchMail::HOOK_NOW` używane w Tasku 5 jako literał i zamieniane na stałą w Tasku 6 — jedyny świadomy dług między zadaniami, wskazany wprost w interfejsach Taska 5.
+Pierwotnie: `DispatchMail::HOOK_NOW` używane w Tasku 5 jako literał i zamieniane na stałą w Tasku 6 — jedyny świadomy dług między zadaniami. **Rozstrzygnięcie z realizacji go usunęło:** stała to `MailQueue::DISPATCH_HOOK`, powstaje razem z kolejką w Tasku 5 i żadnego literału do późniejszej podmiany nie ma.
 
 **4. Review Focus.** Pięć klas wejścia wyżej, każda z przypisanym testem w zadaniu, które posiada kod. Szósta, która nie jest nowa, ale którą ten plan mógłby złamać: „brak strony odzyskiwania → treść rdzenia nietknięta" z Planu 4, przypięta ponownie w Tasku 7.
 
