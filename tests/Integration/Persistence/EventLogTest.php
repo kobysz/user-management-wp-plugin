@@ -189,6 +189,84 @@ final class EventLogTest extends WP_UnitTestCase {
 		);
 	}
 
+	public function test_anonymize_subject_zwraca_sume_po_wielu_wierszach_tego_samego_konta(): void {
+		EventLog::write(
+			'a',
+			21,
+			3,
+			array(
+				'status' => 'approved',
+				'ip'     => '10.0.0.1',
+			)
+		);
+		EventLog::write( 'b', 21, 3, array( 'reason' => 'brak PWZ' ) );
+		EventLog::write(
+			'c',
+			21,
+			3,
+			array(
+				'email' => 'a@example.com',
+				'ip'    => '10.0.0.3',
+			)
+		);
+
+		$this->assertSame( 3, EventLog::anonymize_subject( 21 ) );
+
+		$expected = array(
+			array(
+				'status'  => 'approved',
+				'removed' => array( 'ip' ),
+			),
+			array( 'removed' => array( 'reason' ) ),
+			array( 'removed' => array( 'email', 'ip' ) ),
+		);
+		$rows     = $this->rows();
+		$this->assertCount( 3, $rows );
+		foreach ( $rows as $i => $row ) {
+			$this->assertSame( '1', $row->anonymized );
+			$this->assertSame( $expected[ $i ], json_decode( (string) $row->context, true ) );
+		}
+		$this->assertSame( 0, EventLog::anonymize_subject( 21 ) );
+	}
+
+	public function test_anonymize_subject_kasuje_uszkodzony_kontekst_i_ustawia_flage(): void {
+		$this->insert_raw_context( 21, '{nie-json' );
+
+		$this->assertSame( 1, EventLog::anonymize_subject( 21 ) );
+
+		$row = $this->rows()[0];
+		$this->assertSame( '1', $row->anonymized );
+		$this->assertSame( array(), json_decode( (string) $row->context, true ) );
+	}
+
+	public function test_for_subject_pokazuje_uszkodzony_kontekst_jak_pusty(): void {
+		$this->insert_raw_context( 21, '{nie-json' );
+
+		$rows = EventLog::for_subject( 21, 10, 0 );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( array(), $rows[0]['context'] );
+		$this->assertFalse( $rows[0]['anonymized'] );
+	}
+
+	/**
+	 * Wstawia wiersz z surowym `context`, którego write() nigdy by nie wyprodukował.
+	 */
+	private function insert_raw_context( int $subject, string $raw ): void {
+		global $wpdb;
+		$wpdb->insert(
+			Migrations::table( 'event_log' ),
+			array(
+				'created_at'      => gmdate( 'Y-m-d H:i:s' ),
+				'actor_user_id'   => 3,
+				'subject_user_id' => $subject,
+				'action'          => 'x',
+				'context'         => $raw,
+				'anonymized'      => 0,
+			),
+			array( '%s', '%d', '%d', '%s', '%s', '%d' )
+		);
+	}
+
 	public function test_anonymize_subject_nie_rusza_wierszy_innego_konta(): void {
 		EventLog::write( 'a', 21, 3, array( 'ip' => '10.0.0.1' ) );
 		EventLog::write( 'b', 22, 3, array( 'ip' => '10.0.0.2' ) );
