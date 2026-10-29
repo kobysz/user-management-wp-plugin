@@ -43,6 +43,12 @@ final class MailQueueRepository {
 	public const RECIPIENT_MAX = 191;
 
 	/**
+	 * Wartość, którą anonimizacja wpisuje w `recipient`, `subject` i `body`. Kolumny są NOT NULL, więc
+	 * znacznik zastępuje treść, zamiast ją zerować; ten sam napis w trzech kolumnach mówi czytającemu log, że dane usunięto, a nie że ich nie było.
+	 */
+	public const ANONYMIZED_PLACEHOLDER = '(dane usunięte na żądanie)';
+
+	/**
 	 * Wstawia wiersz w stanie queued. Duplikat `dedupe_key` jest po cichu pomijany.
 	 *
 	 * Klucz `dedupe_key` ma co najwyżej DEDUPE_KEY_MAX znaków. wpdb zdejmuje tryby ścisłe SQL, więc dłuższy
@@ -407,5 +413,89 @@ final class MailQueueRepository {
 		);
 
 		return 1 === $wpdb->rows_affected;
+	}
+
+	/**
+	 * Wiersze kolejki jednego konta, od najnowszego, BEZ kolumny `body`.
+	 *
+	 * Metoda zasila eksport danych osobowych, a treść maila w eksporcie nie wychodzi: snapshot rodzaju
+	 * `confirmation` niesie żywy token potwierdzenia, a `password_reset` klucz resetu hasła. Kolumny,
+	 * której nikt nie czyta, nie ma w zapytaniu, więc nieuważny wywołujący nie ma jak wydać tokenu przejęcia konta.
+	 *
+	 * @param int $userId Konto.
+	 * @param int $limit  Rozmiar strony.
+	 * @param int $offset Przesunięcie.
+	 * @return array<int, array{id: int, kind: string, recipient: string, subject: string, status: string, created_at: string, sent_at: ?string, anonymized: bool}>
+	 */
+	public static function for_user( int $userId, int $limit, int $offset ): array {
+		global $wpdb;
+
+		$rows = $wpdb->get_results(
+			$wpdb->prepare(
+				'SELECT id, kind, recipient, subject, status, created_at, sent_at, anonymized FROM %i WHERE user_id = %d ORDER BY id DESC LIMIT %d OFFSET %d',
+				Migrations::table( self::TABLE ),
+				$userId,
+				max( 0, $limit ),
+				max( 0, $offset )
+			),
+			ARRAY_A
+		);
+
+		$result = array();
+		foreach ( is_array( $rows ) ? $rows : array() as $row ) {
+			$result[] = array(
+				'id'         => (int) $row['id'],
+				'kind'       => (string) $row['kind'],
+				'recipient'  => (string) $row['recipient'],
+				'subject'    => (string) $row['subject'],
+				'status'     => (string) $row['status'],
+				'created_at' => (string) $row['created_at'],
+				'sent_at'    => null === $row['sent_at'] ? null : (string) $row['sent_at'],
+				'anonymized' => '1' === (string) $row['anonymized'],
+			);
+		}
+
+		return $result;
+	}
+
+	/**
+	 * Anonimizuje wiersze konta: nadpisuje adresata, temat i treść znacznikiem, ustawia `anonymized`.
+	 *
+	 * Sama flaga nie anonimizowałaby niczego, bo dane zostają w wierszu. Wiersz musi przeżyć, bo tabela
+	 * jest logiem wysyłek: wartością jest to, że mail wyszedł (`kind`, `created_at`, `sent_at`, `status`,
+	 * `attempts` zostają). `dedupe_key` też zostaje: jego nadpisanie pozwoliłoby wysłać ten sam mail
+	 * drugi raz, a unikalny indeks jest jedyną odpornością kolejki na duplikaty.
+	 * Operacja jest idempotentna: rusza tylko wiersze z `anonymized = 0`, bo rdzeń woła eraser w pętli.
+	 *
+	 * @param int $userId Konto.
+	 * @return int Liczba wierszy faktycznie zmienionych.
+	 */
+	public static function anonymize_user( int $userId ): int {
+		global $wpdb;
+
+		$table = Migrations::table( self::TABLE );
+		$ids   = $wpdb->get_col(
+			$wpdb->prepare( 'SELECT id FROM %i WHERE user_id = %d AND anonymized = 0', $table, $userId )
+		);
+
+		$changed = 0;
+		foreach ( is_array( $ids ) ? $ids : array() as $id ) {
+			// Warunek anonymized = 0 powtórzony przy zapisie: równoległe wywołanie nie policzy wiersza drugi raz.
+			$updated = $wpdb->query(
+				$wpdb->prepare(
+					'UPDATE %i SET recipient = %s, subject = %s, body = %s, anonymized = 1 WHERE id = %d AND anonymized = 0',
+					$table,
+					self::ANONYMIZED_PLACEHOLDER,
+					self::ANONYMIZED_PLACEHOLDER,
+					self::ANONYMIZED_PLACEHOLDER,
+					(int) $id
+				)
+			);
+			if ( is_int( $updated ) ) {
+				$changed += $updated;
+			}
+		}
+
+		return $changed;
 	}
 }
