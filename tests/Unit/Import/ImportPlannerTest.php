@@ -396,4 +396,41 @@ final class ImportPlannerTest extends TestCase {
 		$this->assertFalse( $change->hasWrites() );
 		$this->assertSame( 7, $change->userId );
 	}
+
+	public function test_mapowanie_samych_pol_nie_zglasza_zadnych_zastrzezen_o_profesji_i_stanie(): void {
+		$planner = new ImportPlanner(
+			ImportMapping::fromArray( array( 'fields' => array( 'name' => 'wpmem_name' ) ) ),
+			ProfessionCollection::fromArray( array() ),
+			FieldMatrix::fromArray( array() ),
+			new ValidatorRegistry()
+		);
+
+		$change = $planner->plan( 7, array( 'wpmem_name' => 'Ola' ) );
+
+		$this->assertSame( array( 'name' => 'Ola' ), $change->fields );
+		$this->assertNull( $change->professionKey );
+		$this->assertNull( $change->status );
+		$this->assertSame( array(), $change->issues );
+	}
+
+	public function test_pusty_klucz_stanu_z_fallbackiem_zatwierdzonym_zatwierdza_po_cichu(): void {
+		$planner = new ImportPlanner(
+			ImportMapping::fromArray(
+				array(
+					'fields'   => array( 'name' => 'wpmem_name' ),
+					'fallback' => ImportMapping::FALLBACK_APPROVED,
+				)
+			),
+			ProfessionCollection::fromArray( array() ),
+			FieldMatrix::fromArray( array() ),
+			new ValidatorRegistry()
+		);
+
+		$change = $planner->plan( 7, array( 'wpmem_name' => 'Ola' ) );
+
+		$this->assertSame( AccountStatus::Approved, $change->status );
+		$this->assertFalse( $change->hasIssue( AccountChange::ISSUE_STATUS_MISSING ) );
+		$this->assertFalse( $change->hasIssue( AccountChange::ISSUE_STATUS_UNMAPPED ) );
+		$this->assertSame( array(), $change->issues );
+	}
 }

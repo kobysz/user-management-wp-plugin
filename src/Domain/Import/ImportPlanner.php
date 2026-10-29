@@ -68,13 +68,18 @@ final class ImportPlanner {
 	}
 
 	/**
-	 * Ustala profesję konta albo zgłasza, dlaczego się nie udało.
+	 * Ustala profesję konta albo zgłasza, dlaczego się nie udało. Bez skonfigurowanego klucza
+	 * profesji mapowanie o nią nie pyta, więc nie ma czego rozstrzygać ani zgłaszać.
 	 *
 	 * @param array<string, mixed> $sourceMeta Metadane źródłowe.
 	 * @param string[]             $issues     Zbierane kody zastrzeżeń.
 	 * @return Profession|null
 	 */
 	private function planProfession( array $sourceMeta, array &$issues ): ?Profession {
+		if ( '' === $this->mapping->professionKey() ) {
+			return null;
+		}
+
 		$value = $this->usableText( $sourceMeta, $this->mapping->professionKey(), $issues );
 
 		if ( null === $value ) {
@@ -123,7 +128,8 @@ final class ImportPlanner {
 	 * Sprawdza numer uprawnień rozpoznanej profesji i podmienia go na postać znormalizowaną.
 	 *
 	 * Walidacja jest miękka: zły numer wchodzi do pól i tylko dostaje zastrzeżenie. Numer, który po
-	 * normalizacji jest pusty, nie jest zapisywany, bo import nie nadpisuje danych pustką.
+	 * normalizacji jest pusty, nie jest zapisywany, bo import nie nadpisuje danych pustką; ta reguła
+	 * wygrywa z zapisem postaci znormalizowanej, a administrator i tak dostaje zastrzeżenie o numerze.
 	 *
 	 * @param Profession            $profession Rozpoznana profesja.
 	 * @param array<string, string> $fields     Zaplanowane pola, już po przycięciu macierzą.
@@ -163,10 +169,14 @@ final class ImportPlanner {
 	 * @return AccountStatus|null
 	 */
 	private function planStatus( array $sourceMeta, array &$issues ): ?AccountStatus {
-		$value = $this->usableText( $sourceMeta, $this->mapping->statusKey(), $issues );
+		$configured = '' !== $this->mapping->statusKey();
+		$value      = $configured ? $this->usableText( $sourceMeta, $this->mapping->statusKey(), $issues ) : null;
 
 		if ( null === $value ) {
-			$issues[] = AccountChange::ISSUE_STATUS_MISSING;
+			// Klucz nieskonfigurowany znaczy, że mapowanie o stan nie pyta: fallback działa po cichu.
+			if ( $configured ) {
+				$issues[] = AccountChange::ISSUE_STATUS_MISSING;
+			}
 
 			return match ( $this->mapping->fallback() ) {
 				ImportMapping::FALLBACK_PENDING  => AccountStatus::Pending,
