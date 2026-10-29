@@ -22,6 +22,19 @@ final class OptionStore {
 	public const OPTION_MATRIX      = 'pusers_field_matrix';
 
 	/**
+	 * Mapowanie importu ze starej wtyczki i wynik jego podglądu. Podgląd pilnuje, żeby zastosować
+	 * można było tylko mapowanie, które administrator widział.
+	 */
+	public const OPTION_IMPORT_MAPPING = 'pusers_import_mapping';
+	public const OPTION_IMPORT_PREVIEW = 'pusers_import_preview';
+
+	/**
+	 * Znacznik czasu wdrożenia. Nie jest tablicą, więc jego właściciel czyta i zapisuje go sam;
+	 * spis `all()` musi go jednak znać.
+	 */
+	public const OPTION_DEPLOYED_AT = 'pusers_deployed_at';
+
+	/**
 	 * Nadpisania szablonów maili wpisane przez admina, kluczowane `MailKind::value`.
 	 */
 	public const OPTION_MAIL_TEMPLATES = 'pusers_mail_templates';
@@ -81,6 +94,9 @@ final class OptionStore {
 			self::OPTION_ROLE_REFUSAL_AT,
 			self::OPTION_LIMITER_FAILURE_AT,
 			self::OPTION_PURGE_SKIP_AT,
+			self::OPTION_IMPORT_MAPPING,
+			self::OPTION_IMPORT_PREVIEW,
+			self::OPTION_DEPLOYED_AT,
 		);
 	}
 }
