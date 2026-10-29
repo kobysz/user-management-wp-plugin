@@ -34,6 +34,7 @@ final class ImportScreen {
 
 	public const NOTICE_SAVED_MAPPING  = 'import_mapping_saved';
 	public const NOTICE_NOTHING_MAPPED = 'import_nothing_mapped';
+	public const NOTICE_CLEARED        = 'import_mapping_cleared';
 
 	private const FIELD_PREFIX = 'pusers_';
 
@@ -66,9 +67,9 @@ final class ImportScreen {
 
 	/**
 	 * Zapisuje mapowanie z formularza, scalając je z zapisanym. Pole spoza grupy ACF i profesja spoza kolekcji
-	 * nie są przyjmowane z formularza, a ich zapisane wpisy zostają nietknięte. Mapowanie,
-	 * które nie czytałoby żadnego klucza, nie nadpisuje zapisanego: administrator dostaje
-	 * osobny komunikat zamiast cichego zerowania konfiguracji.
+	 * nie są przyjmowane z formularza, a ich zapisane wpisy zostają nietknięte. Pusty formularz
+	 * przy niepustym zapisanym mapowaniu je czyści (osobny komunikat), a przy już pustym niczego nie zapisuje
+	 * i mówi o tym osobnym komunikatem.
 	 */
 	public static function handle_save(): void {
 		Request::guard( self::ACTION_SAVE );
@@ -81,7 +82,8 @@ final class ImportScreen {
 		// a zapis przycięcia skasowałby na stałe mapowanie pola, którego grupa ACF chwilowo nie zwraca
 		// (literówka w kluczu grupy daje zero pól). Wpisy, których celu teraz nie ma, zostają bez zmian;
 		// wpisy z celem obecnym w całości rządzi formularz.
-		$stored = ImportMapping::fromArray( OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING ) )->toArray();
+		$storedMapping = ImportMapping::fromArray( OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING ) );
+		$stored        = $storedMapping->toArray();
 
 		$fields = array();
 		foreach ( $stored['fields'] as $field => $metaKey ) {
@@ -125,7 +127,10 @@ final class ImportScreen {
 			)
 		);
 
-		if ( $mapping->isEmpty() ) {
+		// Pusty formularz przy pustym zapisanym mapowaniu nic nie zmienia i tak to ogłaszamy. Przy niepustym
+		// zapisanym jest świadomym wyczyszczeniem: odmowa zostawiłaby administratora bez drogi do zera
+		// poza bazą danych (wpisy, których celu teraz nie ma, i tak zostają, patrz wyżej).
+		if ( $mapping->isEmpty() && $storedMapping->isEmpty() ) {
 			Request::redirect( Menu::SLUG_IMPORT, self::NOTICE_NOTHING_MAPPED );
 			return;
 		}
@@ -133,7 +138,7 @@ final class ImportScreen {
 		// Zapis bez zmian zwraca false z update_option(), więc wyniku nie interpretujemy.
 		ImportMappingRepository::save( $mapping );
 
-		Request::redirect( Menu::SLUG_IMPORT, self::NOTICE_SAVED_MAPPING );
+		Request::redirect( Menu::SLUG_IMPORT, $mapping->isEmpty() ? self::NOTICE_CLEARED : self::NOTICE_SAVED_MAPPING );
 	}
 
 	/**
@@ -169,8 +174,11 @@ final class ImportScreen {
 		if ( self::NOTICE_SAVED_MAPPING === $notice ) {
 			echo '<div class="notice notice-success"><p>' . esc_html__( 'Mapowanie importu zostało zapisane.', 'portal-users' ) . '</p></div>';
 		}
+		if ( self::NOTICE_CLEARED === $notice ) {
+			echo '<div class="notice notice-success"><p>' . esc_html__( 'Mapowanie importu zostało wyczyszczone.', 'portal-users' ) . '</p></div>';
+		}
 		if ( self::NOTICE_NOTHING_MAPPED === $notice ) {
-			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nie zapisano mapowania: nie wskazano żadnego klucza metadanych do zaimportowania.', 'portal-users' ) . '</p></div>';
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nic nie zapisano: mapowanie było puste i formularz nie wskazał żadnego klucza metadanych.', 'portal-users' ) . '</p></div>';
 		}
 	}
 

@@ -393,8 +393,57 @@ final class ImportScreenTest extends WP_UnitTestCase {
 		$this->assertSame( 'pielegniarka', ImportMappingRepository::get()->professionFor( 'lek\\arz "x"' ) );
 	}
 
-	public function test_zapis_pustego_mapowania_daje_wlasny_komunikat(): void {
-		$before = $this->withStoredMapping();
+	public function test_pusty_zapis_przy_niepustym_mapowaniu_je_czysci_ale_zachowuje_wpisy_bez_celu(): void {
+		OptionStore::write(
+			OptionStore::OPTION_IMPORT_MAPPING,
+			array(
+				'fields'           => array(
+					'pwz'      => 'wpmem_pwz',
+					'zniknelo' => 'stary_klucz',
+				),
+				'professionKey'    => 'wpmem_zawod',
+				'professionValues' => array( 'lekarz' => 'lekarz' ),
+			)
+		);
+		$this->asAdminPosting(
+			ImportScreen::ACTION_SAVE,
+			array(
+				'fields'   => array( 'pwz' => '' ),
+				'fallback' => ImportMapping::FALLBACK_NONE,
+			)
+		);
+
+		ImportScreen::handle_save();
+
+		$raw = OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING );
+		$this->assertSame( array( 'zniknelo' => 'stary_klucz' ), $raw['fields'], 'Widoczne wpisy znikają, wpis pola nieobecnego w grupie zostaje.' );
+		$this->assertSame( '', $raw['professionKey'] );
+		$this->assertSame( array(), $raw['professionValues'] );
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_SAVED_MAPPING, $this->redirected, 'Zostały wpisy bez celu, więc to zwykły zapis.' );
+	}
+
+	public function test_pusty_zapis_calkowicie_czyszczacy_mapowanie_mowi_ze_je_wyczyszczono(): void {
+		$this->withStoredMapping();
+		$this->asAdminPosting(
+			ImportScreen::ACTION_SAVE,
+			array(
+				'fields'   => array( 'pwz' => '' ),
+				'fallback' => ImportMapping::FALLBACK_NONE,
+			)
+		);
+
+		ImportScreen::handle_save();
+
+		$raw = OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING );
+		$this->assertSame( array(), $raw['fields'] );
+		$this->assertSame( '', $raw['professionKey'] );
+		$this->assertTrue( ImportMappingRepository::get()->isEmpty() );
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_CLEARED, $this->redirected );
+		$this->assertStringNotContainsString( ImportScreen::NOTICE_NOTHING_MAPPED, $this->redirected );
+	}
+
+	public function test_pusty_zapis_przy_pustym_mapowaniu_daje_wlasny_komunikat_i_nic_nie_zapisuje(): void {
+		$this->assertFalse( get_option( OptionStore::OPTION_IMPORT_MAPPING ), 'Punkt wyjścia: brak opcji.' );
 		$this->asAdminPosting(
 			ImportScreen::ACTION_SAVE,
 			array(
@@ -406,16 +455,17 @@ final class ImportScreenTest extends WP_UnitTestCase {
 		ImportScreen::handle_save();
 
 		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_NOTHING_MAPPED, $this->redirected );
-		$this->assertStringNotContainsString( ImportScreen::NOTICE_SAVED_MAPPING, $this->redirected );
-		$this->assertSame( $before->toArray(), ImportMappingRepository::get()->toArray(), 'Puste mapowanie nie nadpisuje zapisanego.' );
+		$this->assertFalse( get_option( OptionStore::OPTION_IMPORT_MAPPING ), 'Nic nie zostało zapisane.' );
 	}
-
 	public function test_komunikaty_po_zapisie_sa_widoczne(): void {
 		$_GET['pusers_notice'] = ImportScreen::NOTICE_SAVED_MAPPING;
 		$this->assertMatchesRegularExpression( '#notice-success.*Mapowanie importu zostało zapisane#s', $this->renderAsAdmin() );
 
 		$_GET['pusers_notice'] = ImportScreen::NOTICE_NOTHING_MAPPED;
-		$this->assertMatchesRegularExpression( '#notice-error.*Nie zapisano#s', $this->renderAsAdmin() );
+		$this->assertMatchesRegularExpression( '#notice-error.*Nic nie zapisano#s', $this->renderAsAdmin() );
+
+		$_GET['pusers_notice'] = ImportScreen::NOTICE_CLEARED;
+		$this->assertMatchesRegularExpression( '#notice-success.*Mapowanie importu zostało wyczyszczone#s', $this->renderAsAdmin() );
 	}
 
 	public function test_zapis_bez_uprawnien_jest_odrzucony(): void {
