@@ -256,6 +256,21 @@ final class ApplicationsScreen {
 	}
 
 	/**
+	 * Ukryte pola z zakładką i filtrem z adresu bieżącego ekranu, żeby po akcji redaktor wrócił tam, skąd kliknął.
+	 * Pola, których adres nie niósł, nie są wypisywane: nikt nie wskazał zakładki, więc nie wymyślamy jej.
+	 */
+	public static function render_return_fields(): void {
+		$status = AccountStatus::tryFrom( sanitize_key( self::query_arg( self::ARG_STATUS ) ) );
+		if ( null !== $status && in_array( $status, self::tabs(), true ) ) {
+			echo '<input type="hidden" name="' . esc_attr( self::ARG_STATUS ) . '" value="' . esc_attr( $status->value ) . '" />';
+		}
+		$profession = self::current_profession();
+		if ( '' !== $profession ) {
+			echo '<input type="hidden" name="' . esc_attr( self::ARG_PROFESSION ) . '" value="' . esc_attr( $profession ) . '" />';
+		}
+	}
+
+	/**
 	 * Komunikat po rozstrzygnięciu; niesie liczby, bo "gotowe" przy pominiętych kontach byłoby nieprawdą.
 	 */
 	private static function render_notice(): void {
@@ -284,8 +299,11 @@ final class ApplicationsScreen {
 				$lines[] = sprintf( __( 'Mail do wnioskodawcy nie wyszedł (wnioski: %s). Konta są rozstrzygnięte, ale trzeba powiadomić ich inaczej.', 'portal-users' ), number_format_i18n( $mail_failed ) );
 			}
 			if ( $unchanged > 0 ) {
-				/* translators: %s: liczba wniosków. */
-				$lines[] = sprintf( __( 'Konta już były w tym stanie (wnioski: %s), nic nie zmieniono; powód nie został zmieniony.', 'portal-users' ), number_format_i18n( $unchanged ) );
+				$lines[] = self::DECIDE_REJECT === self::query_arg( self::ARG_DECISION )
+					/* translators: %s: liczba wniosków. */
+					? sprintf( __( 'Konta już były odrzucone (wnioski: %s), nic nie zmieniono; powód nie został zmieniony.', 'portal-users' ), number_format_i18n( $unchanged ) )
+					/* translators: %s: liczba wniosków. */
+					: sprintf( __( 'Konta były już zatwierdzone (wnioski: %s), nic nie zmieniono.', 'portal-users' ), number_format_i18n( $unchanged ) );
 			}
 			if ( $skipped > 0 ) {
 				/* translators: %s: liczba wniosków. */

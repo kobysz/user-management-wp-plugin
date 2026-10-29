@@ -83,6 +83,7 @@ final class ApplicationDetails {
 		echo '<input type="hidden" name="action" value="' . esc_attr( ApplicationsScreen::ACTION_DECIDE ) . '" />';
 		echo '<input type="hidden" name="' . esc_attr( ApplicationsScreen::FIELD_USERS ) . '[]" value="' . esc_attr( (string) $row->userId ) . '" />';
 		wp_nonce_field( ApplicationsScreen::ACTION_DECIDE, Request::NONCE_FIELD );
+		ApplicationsScreen::render_return_fields();
 
 		if ( AccountStatus::Rejected !== $row->status ) {
 			ApplicationsScreen::render_reason_field();

@@ -503,6 +503,65 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 		$this->assertCount( 0, $this->log_rows( Decision::LOG_APPROVED ) );
 	}
 
+	public function test_ujemny_identyfikator_nie_trafia_w_konto_o_wartosci_bezwzglednej(): void {
+		// absint('-N') daje N, więc bez filtra cyfr ten napis zatwierdziłby konto N.
+		$id = $this->account( 'pending' );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( '-' . $id ) );
+
+		$this->assertSame( ApplicationsScreen::NOTICE_NOTHING_SELECTED, $args['pusers_notice'] );
+		$this->assertSame( AccountStatus::Pending, $this->status_of( $id ) );
+		$this->assertCount( 0, $this->log_rows( Decision::LOG_APPROVED ) );
+	}
+
+	public function test_ponowne_zatwierdzenie_nie_mowi_o_powodzie(): void {
+		$id = $this->account( 'approved' );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $id ) );
+
+		$html = $this->render_notice( $args );
+		$this->assertStringContainsString( 'były już zatwierdzone', $html );
+		$this->assertStringNotContainsString( 'powód', $html );
+	}
+
+	public function test_rozstrzygniecie_ze_szczegolow_zachowuje_zakladke_i_filtr(): void {
+		$id = $this->account( 'rejected' );
+
+		$html = $this->render(
+			array(
+				'user'       => (string) $id,
+				'status'     => 'rejected',
+				'profession' => 'lekarz',
+			)
+		);
+		$this->assertStringContainsString( 'name="status" value="rejected"', $html );
+		$this->assertStringContainsString( 'name="profession" value="lekarz"', $html );
+
+		$this->asAdminPosting(
+			ApplicationsScreen::ACTION_DECIDE,
+			array(
+				'decision' => 'approve',
+				'users'    => array( (string) $id ),
+			)
+		);
+		// Wartości z ukrytych pól formularza szczegółów.
+		$_POST['status']     = 'rejected';
+		$_POST['profession'] = 'lekarz';
+		$args                = $this->run_decide();
+
+		$this->assertSame( 'rejected', $args['status'] );
+		$this->assertSame( 'lekarz', $args['profession'] );
+	}
+
+	public function test_szczegoly_bez_zakladki_w_adresie_nie_wymyslaja_jej(): void {
+		$id = $this->account( 'pending' );
+
+		$html = $this->render( array( 'user' => (string) $id ) );
+
+		$this->assertStringNotContainsString( 'name="status"', $html );
+		$this->assertStringNotContainsString( 'name="profession"', $html );
+	}
+
 	public function test_komunikat_mowi_gdy_mail_nie_wyszedl(): void {
 		$id = $this->account( 'pending' );
 		// Kolejka odmawia przyjęcia: ten sam klucz odporności w tej samej minucie co mail już zakolejkowany.

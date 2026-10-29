@@ -210,8 +210,15 @@ final class ApplicationDetailsTest extends WP_UnitTestCase {
 		$html = $this->panel( $id );
 
 		$this->assertStringContainsString( '5425740', $html );
-		// Jedyny formularz to rozstrzygnięcie; pól danych wniosku tu nie ma.
+		// Jedyny formularz to rozstrzygnięcie i ma być dokładnie jeden; poza nim nie ma żadnych kontrolek.
+		$this->assertSame( 1, preg_match_all( '/<form [^>]*pusers-decision-form.*?<\/form>/s', $html, $forms ) );
+		// Wewnątrz formularza dozwolone są tylko kontrolki, których rozstrzygnięcie naprawdę potrzebuje.
+		preg_match_all( '/<input[^>]*>/i', $forms[0][0], $inputs );
+		foreach ( $inputs[0] as $input ) {
+			$this->assertStringContainsString( 'type="hidden"', $input, 'Pole danych w formularzu rozstrzygnięcia: ' . $input );
+		}
 		$html = (string) preg_replace( '/<form [^>]*pusers-decision-form.*?<\/form>/s', '', $html );
+		$this->assertStringContainsString( '5425740', $html, 'Po wycięciu formularza coś musi zostać.' );
 		$this->assertDoesNotMatchRegularExpression( '/<(input|textarea|select|form)\b/i', $html );
 	}
 
