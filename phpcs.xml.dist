@@ -45,6 +45,17 @@
         </properties>
     </rule>
 
+    <!-- CsvDocument sklada dokument w buforze php://temp i nie dotyka systemu plików, a warstwa domeny nie może sięgać
+         do abstrakcji platformy. Nazwy reguły nie da się wpisać w komentarzu w src/Domain/**, bo strażnik czystości
+         domeny wyłapuje w niej obce słowo, więc wyjątek siedzi tutaj. Zawężenie do src/Domain/Export/* jest celowe:
+         pierwsze prawdziwe fopen() gdziekolwiek indziej ma dalej zapalać ostrzeżenie. -->
+    <rule ref="WordPress.WP.AlternativeFunctions.file_system_operations_fopen">
+        <exclude-pattern>src/Domain/Export/*</exclude-pattern>
+    </rule>
+    <rule ref="WordPress.WP.AlternativeFunctions.file_system_operations_fclose">
+        <exclude-pattern>src/Domain/Export/*</exclude-pattern>
+    </rule>
+
     <config name="minimum_wp_version" value="6.5"/>
     <config name="testVersion" value="8.1-"/>
 </ruleset>

@@ -66,7 +66,7 @@ final class CsvDocument {
 	 * @return string
 	 */
 	public function render(): string {
-		// phpcs:ignore -- bufor w pamięci, nie plik na dysku; to samo uzasadnienie co przy fclose().
+		// Bufor w pamięci, nie plik na dysku.
 		$handle = fopen( 'php://temp', 'r+' );
 		if ( false === $handle ) {
 			return self::BOM;
@@ -79,7 +79,7 @@ final class CsvDocument {
 
 		rewind( $handle );
 		$csv = (string) stream_get_contents( $handle );
-		// phpcs:ignore -- zamyka bufor w pamięci otwarty powyżej, nie plik na dysku; nazwy reguły nie wolno tu wpisać, strażnik domeny wyłapuje w niej obce słowo.
+		// Zamyka bufor w pamięci otwarty powyżej, nie plik na dysku.
 		fclose( $handle );
 
 		return self::BOM . $csv;
