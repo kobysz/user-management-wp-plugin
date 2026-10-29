@@ -81,9 +81,14 @@ final class CsvDocument {
 		}
 
 		rewind( $handle );
-		$csv = (string) stream_get_contents( $handle );
+		$csv = stream_get_contents( $handle );
 		// Zamyka bufor w pamięci otwarty powyżej, nie plik na dysku.
 		fclose( $handle );
+
+		if ( false === $csv ) {
+			// Rzutowanie na napis zamieniłoby false w pusty tekst, czyli znów sam BOM udający pusty eksport.
+			throw new RuntimeException( 'Nie udało się odczytać złożonego dokumentu CSV z bufora w pamięci.' );
+		}
 
 		return self::BOM . $csv;
 	}
