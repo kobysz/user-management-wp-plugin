@@ -81,4 +81,130 @@ final class EventLogTest extends WP_UnitTestCase {
 		$this->assertCount( 1, $rows );
 		$this->assertSame( str_repeat( 'x', 40 ), $rows[0]->action );
 	}
+
+	public function test_write_zwraca_prawde_i_wiersz_jest_czytelny_po_podmiocie(): void {
+		$this->assertTrue( EventLog::write( 'account_approved', 21, 3, array( 'status' => 'approved' ) ) );
+
+		$rows = EventLog::for_subject( 21, 10, 0 );
+		$this->assertCount( 1, $rows );
+		$this->assertSame( 'account_approved', $rows[0]['action'] );
+		$this->assertSame( 3, $rows[0]['actor_user_id'] );
+		$this->assertFalse( $rows[0]['anonymized'] );
+	}
+
+	public function test_for_subject_zwraca_od_najnowszego_i_stronicuje(): void {
+		EventLog::write( 'a', 21, 0, array() );
+		EventLog::write( 'b', 21, 0, array() );
+		EventLog::write( 'c', 21, 0, array() );
+
+		$this->assertSame( array( 'c', 'b', 'a' ), array_column( EventLog::for_subject( 21, 10, 0 ), 'action' ) );
+		$this->assertSame( array( 'c', 'b' ), array_column( EventLog::for_subject( 21, 2, 0 ), 'action' ) );
+		$this->assertSame( array( 'a' ), array_column( EventLog::for_subject( 21, 2, 2 ), 'action' ) );
+		$this->assertSame( array(), EventLog::for_subject( 21, 2, 3 ) );
+	}
+
+	public function test_for_subject_nie_widzi_wierszy_innego_konta(): void {
+		EventLog::write( 'moje', 21, 0, array() );
+		EventLog::write( 'cudze', 22, 0, array() );
+
+		$this->assertSame( array( 'moje' ), array_column( EventLog::for_subject( 21, 10, 0 ), 'action' ) );
+	}
+
+	public function test_for_subject_odserializowuje_kontekst_do_tablicy(): void {
+		EventLog::write(
+			'application_rejected',
+			21,
+			3,
+			array(
+				'reason' => 'zażółć',
+				'n'      => 5,
+			)
+		);
+
+		$rows = EventLog::for_subject( 21, 10, 0 );
+		$this->assertSame(
+			array(
+				'reason' => 'zażółć',
+				'n'      => 5,
+			),
+			$rows[0]['context']
+		);
+	}
+
+	public function test_anonymize_subject_czysci_kontekst_zostawia_dowod_decyzji(): void {
+		EventLog::write(
+			'application_rejected',
+			21,
+			3,
+			array(
+				'status' => 'rejected',
+				'reason' => 'brak PWZ',
+				'ip'     => '10.0.0.1',
+			)
+		);
+		$before = $this->rows()[0];
+
+		$this->assertSame( 1, EventLog::anonymize_subject( 21 ) );
+
+		$after = $this->rows()[0];
+		$this->assertSame( $before->action, $after->action );
+		$this->assertSame( $before->created_at, $after->created_at );
+		$this->assertSame( $before->actor_user_id, $after->actor_user_id );
+		$this->assertSame( $before->subject_user_id, $after->subject_user_id );
+		$this->assertSame( '1', $after->anonymized );
+		$this->assertSame(
+			array(
+				'status'  => 'rejected',
+				'removed' => array( 'ip', 'reason' ),
+			),
+			json_decode( (string) $after->context, true )
+		);
+		$this->assertTrue( EventLog::for_subject( 21, 10, 0 )[0]['anonymized'] );
+	}
+
+	public function test_anonymize_subject_jest_idempotentne(): void {
+		EventLog::write(
+			'application_rejected',
+			21,
+			3,
+			array(
+				'status' => 'rejected',
+				'reason' => 'brak PWZ',
+			)
+		);
+
+		$this->assertSame( 1, EventLog::anonymize_subject( 21 ) );
+		$afterFirst = $this->rows()[0];
+
+		$this->assertSame( 0, EventLog::anonymize_subject( 21 ) );
+		$afterSecond = $this->rows()[0];
+
+		$this->assertEquals( $afterFirst, $afterSecond );
+		$this->assertSame(
+			array(
+				'status'  => 'rejected',
+				'removed' => array( 'reason' ),
+			),
+			json_decode( (string) $afterSecond->context, true )
+		);
+	}
+
+	public function test_anonymize_subject_nie_rusza_wierszy_innego_konta(): void {
+		EventLog::write( 'a', 21, 3, array( 'ip' => '10.0.0.1' ) );
+		EventLog::write( 'b', 22, 3, array( 'ip' => '10.0.0.2' ) );
+		$otherBefore = $this->rows()[1];
+
+		$this->assertSame( 1, EventLog::anonymize_subject( 21 ) );
+
+		$otherAfter = $this->rows()[1];
+		$this->assertEquals( $otherBefore, $otherAfter );
+		$this->assertSame( '0', $otherAfter->anonymized );
+		$this->assertSame( array( 'ip' => '10.0.0.2' ), json_decode( (string) $otherAfter->context, true ) );
+	}
+
+	public function test_anonymize_subject_dla_konta_bez_wierszy_zwraca_zero(): void {
+		EventLog::write( 'a', 22, 3, array( 'ip' => '10.0.0.2' ) );
+
+		$this->assertSame( 0, EventLog::anonymize_subject( 21 ) );
+	}
 }
