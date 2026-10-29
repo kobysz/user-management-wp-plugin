@@ -11,8 +11,8 @@ namespace PortalUsers\Mail;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Domain\Application\CredentialVerdict;
 use PortalUsers\Domain\Credentials\CredentialType;
-use PortalUsers\Domain\Credentials\ValidatorRegistry;
 use PortalUsers\Domain\Mail\Placeholders;
 use PortalUsers\Domain\Profession\Profession;
 use PortalUsers\Front\PageUrl;
@@ -132,29 +132,22 @@ final class PlaceholderFactory {
 	 * „ta profesja numeru nie ma" (wniosek w porządku) a „numeru nie podano" (wniosek do odrzucenia).
 	 * Jedna pustka na oba przypadki zwijała dwa różne fakty w jeden i nie odpowiadała na żadne pytanie.
 	 *
+	 * Fakt orzeka `CredentialVerdict`; tu kod jest tylko tłumaczony na słowo do maila.
+	 *
 	 * @param Profession|null $profession Profesja konta.
 	 * @param string          $number     Zapisany numer.
 	 */
 	private static function validation_result( ?Profession $profession, string $number ): string {
-		// Profesja wycofana z ustawień: nie wiadomo już, czego konto miało dowodzić, więc nie orzekamy.
-		if ( null === $profession || CredentialType::None === $profession->credentialType || '' === $profession->credentialField ) {
-			return __( 'nie dotyczy', 'portal-users' );
-		}
-		if ( '' === $number ) {
-			return __( 'brak numeru', 'portal-users' );
-		}
-		$validator = ( new ValidatorRegistry() )->for( $profession->credentialType );
-		if ( null === $validator ) {
-			return __( 'nie dotyczy', 'portal-users' );
-		}
-
 		// Surowy kod walidatora (`invalid_format`, `invalid_checksum`) zostaje tu CELOWO poza treścią:
 		// to maszynowy żargon po angielsku w polskim mailu do człowieka, a jego następny ruch jest ten
 		// sam bez względu na to, do czego walidator się przyczepił — sprawdzić numer w rejestrze.
 		// Szczegółowy powód należy do ekranu wniosków, obok odnośnika do rejestru. Nie przywracać.
-		return $validator->validate( $number )->isValid()
-			? __( 'poprawny', 'portal-users' )
-			: __( 'niepoprawny', 'portal-users' );
+		return match ( CredentialVerdict::for( $profession, $number ) ) {
+			CredentialVerdict::VALID          => __( 'poprawny', 'portal-users' ),
+			CredentialVerdict::MISSING        => __( 'brak numeru', 'portal-users' ),
+			CredentialVerdict::NOT_APPLICABLE => __( 'nie dotyczy', 'portal-users' ),
+			default                           => __( 'niepoprawny', 'portal-users' ),
+		};
 	}
 
 	/**
