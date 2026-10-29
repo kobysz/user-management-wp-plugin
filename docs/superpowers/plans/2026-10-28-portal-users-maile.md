@@ -71,7 +71,8 @@ PortalUsers\Plugin::{boot(string):void, load_features():void}   // hook `pusers_
 - **Eksport i anonimizacja logu wysyłek** — Plan 7. Tabela kolejki **od początku** ma kolumny `user_id` i `anonymized`, żeby Plan 7 miał po czym szukać wierszy konta i co w nich oznaczać; ten plan ich nie używa poza zapisem `user_id`.
 - **Nadpisywanie szablonów plikiem w motywie.** Specyfikacja zostawia mechanizm szablonów wykonawcy; dowozimy edycję w panelu plus filtry `FILTER_SUBJECT` / `FILTER_BODY`, które Plan 3 już wystawił. Szablonów plikowych nie ma — YAGNI, a dwa źródła prawdy o treści maila to pierwszy rozjazd przy pierwszej zmianie.
 - **Mail o zmianie hasła.** Specyfikacja mówi wprost: „Mail o zmianie hasła zostaje standardowy, WordPressowy." Nie przechwytujemy go i nie logujemy.
-- **Układy HTML, grafika, wersja tekstowa jako `multipart/alternative`.** Specyfikacja żąda „tekst zwykły w prostym opakowaniu HTML"; dowozimy dokładnie to.
+- **Układy HTML i grafika.** Specyfikacja żąda „tekst zwykły w prostym opakowaniu HTML"; dowozimy dokładnie to.
+- ~~**Wersja tekstowa jako `multipart/alternative`.**~~ Plan odrzucił ją jako YAGNI i **mylił się**: recenzja całej gałęzi wykazała, że wiadomość wyłącznie HTML bez części alternatywnej jest rozpoznawanym sygnałem spamowym na dokładnie tych filtrach, o których mówią Ograniczenia specyfikacji („Maile trafiają w znacznej części na firmowe serwery pocztowe z agresywnym filtrowaniem"), a uzasadnieniem dla tekstu zwykłego jest tam „tekst rzadziej wpada w filtry". Dispatcher trzyma tekst zwykły w wierszu, więc koszt to trzy linie w już istniejącym `try`. Dowiezione w fali poprawek po recenzji gałęzi (rozstrzygnięcie R30).
 
 ## Review Focus
 

@@ -220,3 +220,12 @@ Te pozycje przeszły triage recenzji końcowej jako „mogą zostać". Spisane, 
 - `treatPhpDocTypesAsCertain: false` osłabia „level max"; katalog `tests/` nie jest analizowany przez PHPStan.
 - Aktywacja sieciowa w multisite utworzy tabele tylko dla bieżącej witryny. Multisite jest jawnym celem negatywnym specyfikacji; `$wpdb->prefix` nie blokuje późniejszego dorobienia.
 - Brak testów `Plugin::version()`, `path()`, `plugin_file()` i gałęzi `$fresh` — ta ostatnia będzie podstawą aktualizatora w Planie 8.
+
+### Z recenzji całej gałęzi Planu 5 (2026-10-29)
+
+- **Próg ostrzeżenia o stojącej kolejce równa się progowi odzysku** (900 s w obu miejscach), a ostrzeżenie mierzy tylko zaległość najstarszego wiersza. Zaległość dłuższa niż około 300 wierszy (15 przebiegów po 20) daje ostrzeżenie „kolejka nie jest opróżniana" na portalu, który opróżnia ją normalnie. Domknięcie: dodać warunek „i nic nie wyszło od dawna" (`MAX(sent_at)`) albo odsunąć próg od `Dispatcher::STALE_AFTER`, tak jak `STALE_AFTER` odsunięto od limitu czasu PHPMailera.
+- **Ostrzeżenie o stojącej kolejce rejestruje się za bramką ACF Pro**, a dispatcher, przechwytywanie maila odzyskiwania i cron retencji — poza nią. Na portalu, na którym ACF padnie po zakolejkowaniu maili i jednocześnie nie działa WP-Cron, maile stoją bez żadnego ostrzeżenia. Okno wąskie, bo rejestracja i odzyskiwanie też są za bramką.
+- **Wiersz ginący w pętli `sending` jest niewidoczny dla wszystkiego.** Fatal PHP (nie `Throwable`) zostawia wiersz w `sending`; `recover_stale()` wraca go do kolejki, następny przebieg zajmuje od nowa, a ostrzeżenie filtruje po `status = 'queued'`, więc go nie widzi. Licznik prób rośnie tylko wtedy, gdy dispatcher dojdzie do zapisu wyniku.
+- **Temat szablonu maila dalej zamienia goły `<` na `&lt;`** (`sanitize_text_field`). Naprawione tylko w treści; temat to jedna linia i operator porównania jest w nim rzadkością.
+- **`sanitize_textarea_field()` usuwa `<` razem z tekstem, gdy dalej w linii stoi `>`** — „Wiek < 30 > nie" traci trzy słowa, bo `wp_pre_kses_less_than()` przepuszcza taki fragment do `wp_strip_all_tags()`. Ekran ostrzega, że znaczniki są zdejmowane, ale docblock mówi o niższej cenie, niż jest.
+- **Brak testu wyścigu `claim()` na dwóch połączeniach do bazy.** Gwarancję daje warunkowy UPDATE, który wymusza baza; prawdziwy test wymagałby drugiego połączenia i uśpienia, więc byłby chwiejny.
