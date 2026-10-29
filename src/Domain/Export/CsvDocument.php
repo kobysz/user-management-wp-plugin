@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers\Domain\Export;
 
 use InvalidArgumentException;
+use RuntimeException;
 
 /**
  * Neutralizacja komórek siedzi tu, a nie u wołającego: dwukrotna dałaby w arkuszu widoczny podwójny apostrof.
@@ -64,12 +65,14 @@ final class CsvDocument {
 	 * Gotowy tekst pliku: BOM, nagłówek, wiersze.
 	 *
 	 * @return string
+	 * @throws RuntimeException Gdy nie da się otworzyć bufora w pamięci.
 	 */
 	public function render(): string {
 		// Bufor w pamięci, nie plik na dysku.
 		$handle = fopen( 'php://temp', 'r+' );
 		if ( false === $handle ) {
-			return self::BOM;
+			// Sam BOM wyglądałby jak poprawny, pusty eksport i ukryłby awarię przed administratorem.
+			throw new RuntimeException( 'Nie udało się otworzyć bufora w pamięci do złożenia pliku CSV.' );
 		}
 
 		fputcsv( $handle, $this->headers, ',', '"', '\\' );
