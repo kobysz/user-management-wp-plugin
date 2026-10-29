@@ -16,6 +16,7 @@ use PortalUsers\Admin\MailTemplatesScreen;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
+use PortalUsers\Admin\ProfileSync;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Cron\DispatchMail;
 use PortalUsers\Cron\PurgeMailLog;
@@ -137,6 +138,9 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( PasswordReset::class, 'register' ) );
 		add_action( 'pusers_register_features', array( TermsBinding::class, 'register' ) );
 		add_action( 'pusers_register_features', array( PurgeUnconfirmed::class, 'register' ) );
+		// Most ACF do metadanych wtyczki stoi ZA bramką (w przeciwieństwie do ekranu wniosków): bez ACF Pro
+		// nie ma czego synchronizować, a hook `acf/save_post` i tak by nie odpalił.
+		add_action( 'pusers_register_features', array( ProfileSync::class, 'register' ) );
 	}
 
 	/**

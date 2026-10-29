@@ -137,6 +137,10 @@ Snapshot rodzaju `confirmation` zawiera **token potwierdzenia adresu ważny 48 g
 
 Do rozstrzygnięcia przez właściciela, nie przez wykonawcę: czy te dwa rodzaje maili mają mieć okno retencji liczone w **dniach** zamiast w 90 dniach — albo czy po wysyłce ma być czyszczona sama kolumna `body`? Pierwsze jest tańsze, drugie zostawia dłuższy ślad „czy ten mail wyszedł". Dopóki odpowiedzi nie ma, obowiązuje 90 dni dla wszystkich rodzajów.
 
+### Eraser musi czyścić dane osobowe powstałe w Planie 6
+
+Kasowanie danych osobowych (eraser WordPressa) musi usuwać `UserMeta::REGISTRATION_IP` i `UserMeta::REJECTION_REASON`: oba powstały w Planie 6 i oba są danymi osobowymi przy koncie. Wiersze `credential_changed` w logu zdarzeń (`ProfileSync::LOG_CREDENTIAL_CHANGED`) niosą numer uprawnień w `context` (klucze `old` i `new`) i podlegają anonimizacji logu (kolumna `anonymized`), nie usunięciu.
+
 ---
 
 ## Plan 8 — Aktualizacje i release
@@ -156,6 +160,18 @@ Testy jadą na najnowszym WordPressie z kontenera (7.1), a minimum wtyczki to 6.
 ### Pusta suita integracyjna i kod wyjścia
 
 Sprawdzić, czy PHPUnit kończy się kodem 0 przy pustej suicie — zanim CI zacznie na tym polegać.
+
+---
+
+## Zostawione przez Plan 6
+
+### Przycisk zdejmujący blokadę limitu prób
+
+Specyfikacja („Odporność na boty") go wymaga; Plan 4 przypisał go Planowi 6, a Plan 6 świadomie go nie robi. Potrzebny jest rejestr kubełków limitu: `LoginHandler::{BUCKET_IP, BUCKET_USER, BUCKET_IDENTITY}`, `PasswordReset::{BUCKET_IP, BUCKET_EMAIL, BUCKET_SET_IP, BUCKET_SET_USER, BUCKET_LOG_IP}`, `Confirmation::BUCKET_RESEND_IP` (stała prywatna), `PasswordSetup::{BUCKET_SETPASS_IP, BUCKET_SETPASS_USER}` (prywatne), `Mailer::BUCKET_MAIL_TO` (prywatna). Zdejmowanie blokady z adresu IP nie ma gdzie wisieć: żaden ekran nie ma wiersza na adres.
+
+### Data na liście wniosków to data rejestracji, nie zgłoszenia
+
+Moment przejścia konta w `pending` nie jest nigdzie zapisany. Gdyby redakcja potrzebowała kolejki po dacie złożenia wniosku, trzeba dodać metadaną ustawianą przy potwierdzeniu adresu (`Confirmation`). Zob. Zadanie 4 Planu 6.
 
 ---
 

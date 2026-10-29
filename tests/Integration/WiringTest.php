@@ -14,6 +14,7 @@ use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
+use PortalUsers\Admin\ProfileSync;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Cron\DispatchMail;
 use PortalUsers\Cron\PurgeUnconfirmed;
@@ -91,6 +92,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'password reset' => array( PasswordReset::class ),
 			'terms binding' => array( TermsBinding::class ),
 			'purge unconfirmed' => array( PurgeUnconfirmed::class ),
+			'profile sync' => array( ProfileSync::class ),
 		);
 	}
 
