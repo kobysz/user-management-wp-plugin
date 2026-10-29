@@ -274,7 +274,12 @@ final class ImportMappingTest extends TestCase {
 
 		$this->assertSame( AccountStatus::Approved, $mapping->statusFor( '1' ) );
 		$this->assertSame( AccountStatus::Rejected, $mapping->statusFor( '0' ) );
-		$this->assertSame( $mapping->hash(), ImportMapping::fromArray( $mapping->toArray() )->hash() );
+
+		$copy = ImportMapping::fromArray( $mapping->toArray() );
+
+		$this->assertSame( AccountStatus::Approved, $copy->statusFor( '1' ) );
+		$this->assertSame( AccountStatus::Rejected, $copy->statusFor( '0' ) );
+		$this->assertSame( $mapping->hash(), $copy->hash() );
 	}
 
 	public function test_zle_ksztaltowane_wejscie_nie_wywala_wczytania(): void {

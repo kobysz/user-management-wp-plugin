@@ -219,23 +219,7 @@ final class ImportMapping {
 			ksort( $data[ $section ], \SORT_STRING );
 		}
 
-		$canonical = '';
-
-		foreach ( $data as $name => $section ) {
-			$canonical .= self::part( $name );
-
-			if ( is_array( $section ) ) {
-				$canonical .= count( $section ) . '#';
-
-				foreach ( $section as $key => $value ) {
-					$canonical .= self::part( (string) $key ) . self::part( $value );
-				}
-			} else {
-				$canonical .= self::part( $section );
-			}
-		}
-
-		return sha1( $canonical );
+		return sha1( json_encode( $data, \JSON_UNESCAPED_UNICODE | \JSON_FORCE_OBJECT | \JSON_THROW_ON_ERROR ) );
 	}
 
 	/**
@@ -263,16 +247,6 @@ final class ImportMapping {
 			$this->statusValues,
 			$this->fallback
 		);
-	}
-
-	/**
-	 * Składnik odcisku z prefiksem długości, żeby sąsiednie wartości nie mogły się zlać w inne.
-	 *
-	 * @param string $value Dowolny tekst.
-	 * @return string
-	 */
-	private static function part( string $value ): string {
-		return strlen( $value ) . ':' . $value . ';';
 	}
 
 	/**
