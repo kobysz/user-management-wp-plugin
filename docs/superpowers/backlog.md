@@ -137,6 +137,10 @@ To defekt planu, nie wykonania; nie jest zamknięty w gałęzi Planu 7. Dwie mo�
 
 Wiersz w stanie `sending` w chwili żądania usunięcia jest już zajęty przez dispatchera, który trzyma treść w pamięci, więc mail może wyjść, i to jest poprawne. Eraser przestawia taki wiersz na `failed` z `CANCELLED_BY_ERASURE`, a dispatcher kończy próbę przez `mark_sent()`, które zapisuje tylko wiersz w stanie `sending` z tym samym numerem próby (`MailQueueRepository::finish()`). Zapis więc nie trafia, a wiersz zostaje `failed` / `CANCELLED_BY_ERASURE`, choć mail wyszedł. Log wysyłek mówi, że mail anulowano, a adresat go dostał: wiersz jest nieprawdziwy co do faktu wysyłki, nie tylko sprzeczny wewnętrznie. Zapisane tutaj, żeby następny czytelnik logu nie szukał błędu w dispatcherze ani w erazerze: to cena tego, że anonimizacja nie czeka na wysyłki w locie. Naprawa, gdy będzie warta kosztu: eraser pomija wiersze `sending` i zgłasza je jako niezanonimizowane (pętla rdzenia wróci po nie w następnym przebiegu), a test wyścigu wymaga drugiego połączenia.
 
+### `dedupe_key` zostaje po anonimizacji — decyzja właściciela
+
+Anonimizacja wiersza kolejki nadpisuje adresata, temat, treść i `last_error`, ale nie `dedupe_key`. Klucz niesie identyfikator użytkownika i minutę, nie adres ani treść, więc sam nie wydaje danych osobowych, ale jest trwałym śladem „ten użytkownik dostał maila tego rodzaju w tej minucie". Zostawiony świadomie: wyczyszczenie klucza rozbiłoby ochronę przed duplikatem dla maili wysyłanych **po** anonimizacji (konto po usunięciu danych dalej istnieje i dalej może dostać maila). Jeżeli ślad ma zniknąć — jedna kolumna więcej w UPDATE i świadoma rezygnacja z dedupe dla kont po erasure.
+
 ---
 
 ## Plan 8 — Import i backfill stanów
@@ -257,3 +261,13 @@ Te pozycje przeszły triage recenzji końcowej jako „mogą zostać". Spisane, 
 - **Temat szablonu maila dalej zamienia goły `<` na `&lt;`** (`sanitize_text_field`). Naprawione tylko w treści; temat to jedna linia i operator porównania jest w nim rzadkością.
 - **`sanitize_textarea_field()` usuwa `<` razem z tekstem, gdy dalej w linii stoi `>`** — „Wiek < 30 > nie" traci trzy słowa, bo `wp_pre_kses_less_than()` przepuszcza taki fragment do `wp_strip_all_tags()`. Ekran ostrzega, że znaczniki są zdejmowane, ale docblock mówi o niższej cenie, niż jest.
 - **Brak testu wyścigu `claim()` na dwóch połączeniach do bazy.** Gwarancję daje warunkowy UPDATE, który wymusza baza; prawdziwy test wymagałby drugiego połączenia i uśpienia, więc byłby chwiejny.
+
+### Z recenzji całej gałęzi Planu 7 (2026-10-29)
+
+- **Powód odrzucenia złożony z samych znaków białych da w eksporcie danych osobowych pustą parę.** Warunek to `'' !== $reason`, a `text()` nie przycina, więc wartość ze spacji przechodzi jako „niepusta". Jeden `trim` przy warunku, gdy przyjdzie realny przypadek.
+- **Komunikat erazera po przekroczeniu limitu przebiegów nie powtarza, co zostało zachowane** — rdzeń zebrał to już z pierwszego przebiegu, więc administrator ma tę informację, tylko wyżej na stronie.
+- **Przy trwale padającym zapisie eraser wykonuje pełną pracę w każdym z dziesięciu przebiegów** przed poddaniem się. Praca jest ograniczona z góry (`MAX_PASSES`), więc to koszt, nie pętla.
+- **Wyniki `fputcsv()` i `rewind()` w `CsvDocument::render()` zostają niesprawdzane** (rozstrzygnięcie R4). Na buforze w pamięci pierwsze pada praktycznie tylko przy wyczerpaniu pamięci, co kończy się fatalem, a drugie na świeżym `php://temp` nie ma trybu porażki.
+- **Dwie świadome duplikacje czekają na trzecią kopię jako sygnał do wyciągnięcia:** `flatten` (eksport CSV i panel szczegółów wniosku) oraz pomocnik filtra `query` w dwóch plikach testowych.
+- **Napis „Odrzucono wniosków", gdy padnie zapis logu przy korekcie powodu** (rozstrzygnięcie R6). Redaktor dostaje osobne ostrzeżenie o luce w audycie, ale czasownik jest nieprecyzyjny; rozróżnienie wymagałoby osobnego kodu zwracanego dla każdej kombinacji ścieżki i porażki.
+- **Szew `pusers_export_headers_sent`** istnieje, bo `headers_sent()` jest pod phpunit zawsze prawdą. Natywne sprawdzenie zostaje bezpośrednio przed `header()`; szew domyślnie zwraca jego wynik.
