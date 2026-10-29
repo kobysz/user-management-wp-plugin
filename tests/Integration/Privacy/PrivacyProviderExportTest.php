@@ -130,7 +130,8 @@ final class PrivacyProviderExportTest extends WP_UnitTestCase {
 		$groups = $this->groups( $result['data'], 'pusers-account' );
 		$this->assertCount( 1, $groups );
 		$pairs = $this->pairs( $groups[0] );
-		$this->assertContains( 'pending', $pairs );
+		$this->assertContains( 'Oczekuje na zatwierdzenie', $pairs, 'Czytelnik dostaje etykietę, nie kod.' );
+		$this->assertNotContains( 'pending', $pairs );
 		$this->assertContains( 'Lekarz', $pairs );
 		$this->assertContains( $user->user_registered, $pairs );
 		$this->assertContains( '203.0.113.7', $pairs );
@@ -198,6 +199,51 @@ final class PrivacyProviderExportTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'confirmation', $dump );
 		$this->assertStringContainsString( 'Potwierdź adres', $dump );
 		$this->assertStringNotContainsString( 'TOKEN-ZYWY-48H', $dump, 'Treść maila (token potwierdzenia) nie wychodzi w eksporcie.' );
+	}
+
+	public function test_eksport_niesie_powod_odrzucenia_tylko_gdy_zapisany(): void {
+		$user = $this->account();
+		$this->assertStringNotContainsString( 'Powód odrzucenia', serialize( PrivacyProvider::export( 'lekarz@example.com' ) ) );
+
+		update_user_meta( $user->ID, UserMeta::STATUS, 'rejected' );
+		update_user_meta( $user->ID, UserMeta::REJECTION_REASON, 'Brak dokumentu PWZ-ZGODNY' );
+
+		$result = PrivacyProvider::export( 'lekarz@example.com' );
+
+		$this->assertStringContainsString( 'Brak dokumentu PWZ-ZGODNY', serialize( $result ) );
+		$this->assertContains( 'Odrzucone', $this->pairs( $this->groups( $result['data'], 'pusers-account' )[0] ) );
+	}
+
+	public function test_status_maila_jest_etykieta_a_nazwa_zdarzenia_zostaje_surowa(): void {
+		$user = $this->account();
+		$this->mail( $user->ID, 'confirmation', 'Temat', 'x', 'k1' );
+		EventLog::write( 'application_approved', $user->ID, 1, array() );
+
+		$result = PrivacyProvider::export( 'lekarz@example.com' );
+
+		$mail = $this->pairs( $this->groups( $result['data'], 'pusers-mail-queue' )[0] );
+		$this->assertSame( 'W kolejce do wysłania', $mail['Status'] );
+		$event = $this->pairs( $this->groups( $result['data'], 'pusers-event-log' )[0] );
+		$this->assertSame( 'application_approved', $event['Zdarzenie'] );
+	}
+
+	public function test_wiersze_zanonimizowane_maja_oznaczenie_a_zwykle_go_nie_maja(): void {
+		$user = $this->account();
+		$this->mail( $user->ID, 'confirmation', 'Temat', 'x', 'k1' );
+		EventLog::write( 'zdarzenie', $user->ID, 1, array() );
+
+		$plain = PrivacyProvider::export( 'lekarz@example.com' );
+		foreach ( array( 'pusers-event-log', 'pusers-mail-queue' ) as $groupId ) {
+			$this->assertArrayNotHasKey( 'Zanonimizowano', $this->pairs( $this->groups( $plain['data'], $groupId )[0] ), $groupId );
+		}
+
+		EventLog::anonymize_subject( $user->ID );
+		MailQueueRepository::anonymize_user( $user->ID );
+
+		$anon = PrivacyProvider::export( 'lekarz@example.com' );
+		foreach ( array( 'pusers-event-log', 'pusers-mail-queue' ) as $groupId ) {
+			$this->assertArrayHasKey( 'Zanonimizowano', $this->pairs( $this->groups( $anon['data'], $groupId )[0] ), $groupId );
+		}
 	}
 
 	public function test_adres_bez_konta_daje_puste_dane_i_done(): void {

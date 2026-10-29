@@ -111,7 +111,7 @@ final class PrivacyProvider {
 		$profession    = '' === $professionKey ? null : ProfessionRepository::get()->get( $professionKey );
 
 		$pairs = array(
-			self::pair( __( 'Stan konta', 'portal-users' ), self::meta_text( $userId, UserMeta::STATUS ) ),
+			self::pair( __( 'Stan konta', 'portal-users' ), self::account_status_label( self::meta_text( $userId, UserMeta::STATUS ) ) ),
 			// Profesja usunięta z ustawień zostaje w koncie; surowy klucz jest wtedy jedyną informacją.
 			self::pair( __( 'Profesja', 'portal-users' ), null === $profession ? $professionKey : $profession->label ),
 		);
@@ -126,6 +126,13 @@ final class PrivacyProvider {
 
 		$pairs[] = self::pair( __( 'Data rejestracji', 'portal-users' ), $registered );
 		$pairs[] = self::pair( __( 'Adres IP rejestracji', 'portal-users' ), self::meta_text( $userId, UserMeta::REGISTRATION_IP ) );
+
+		// Powód odrzucenia to decyzja o osobie zapisana w jej koncie, więc żądanie dostępu ją obejmuje;
+		// konto, którego nie odrzucono, nie dostaje pustego wiersza.
+		$reason = self::meta_text( $userId, UserMeta::REJECTION_REASON );
+		if ( '' !== $reason ) {
+			$pairs[] = self::pair( __( 'Powód odrzucenia', 'portal-users' ), $reason );
+		}
 
 		return self::group( 'pusers-account', __( 'Konto na portalu', 'portal-users' ), 'pusers-account', $pairs );
 	}
@@ -181,17 +188,18 @@ final class PrivacyProvider {
 	 * @return array<string, mixed>
 	 */
 	private static function event_group( array $event ): array {
-		return self::group(
-			'pusers-event-log',
-			__( 'Log zdarzeń konta', 'portal-users' ),
-			'pusers-event-log-' . $event['id'],
-			array(
-				self::pair( __( 'Czas zdarzenia', 'portal-users' ), $event['created_at'] ),
-				self::pair( __( 'Zdarzenie', 'portal-users' ), $event['action'] ),
-				self::pair( __( 'Wykonawca (identyfikator)', 'portal-users' ), (string) $event['actor_user_id'] ),
-				self::pair( __( 'Szczegóły', 'portal-users' ), array() === $event['context'] ? '' : (string) wp_json_encode( $event['context'], JSON_UNESCAPED_UNICODE ) ),
-			)
+		$pairs = array(
+			self::pair( __( 'Czas zdarzenia', 'portal-users' ), $event['created_at'] ),
+			// Nazwa zdarzenia zostaje surowa: to identyfikator, a jego tłumaczenie rozjechałoby się przy zmianie nazwy akcji.
+			self::pair( __( 'Zdarzenie', 'portal-users' ), $event['action'] ),
+			self::pair( __( 'Wykonawca (identyfikator)', 'portal-users' ), (string) $event['actor_user_id'] ),
+			self::pair( __( 'Szczegóły', 'portal-users' ), array() === $event['context'] ? '' : (string) wp_json_encode( $event['context'], JSON_UNESCAPED_UNICODE ) ),
 		);
+		if ( $event['anonymized'] ) {
+			$pairs[] = self::anonymized_pair();
+		}
+
+		return self::group( 'pusers-event-log', __( 'Log zdarzeń konta', 'portal-users' ), 'pusers-event-log-' . $event['id'], $pairs );
 	}
 
 	/**
@@ -201,19 +209,59 @@ final class PrivacyProvider {
 	 * @return array<string, mixed>
 	 */
 	private static function mail_group( array $mail ): array {
-		return self::group(
-			'pusers-mail-queue',
-			__( 'Wiadomości wysłane do konta', 'portal-users' ),
-			'pusers-mail-queue-' . $mail['id'],
-			array(
-				self::pair( __( 'Rodzaj', 'portal-users' ), $mail['kind'] ),
-				self::pair( __( 'Adresat', 'portal-users' ), $mail['recipient'] ),
-				self::pair( __( 'Temat', 'portal-users' ), $mail['subject'] ),
-				self::pair( __( 'Status', 'portal-users' ), $mail['status'] ),
-				self::pair( __( 'Utworzono', 'portal-users' ), $mail['created_at'] ),
-				self::pair( __( 'Wysłano', 'portal-users' ), $mail['sent_at'] ?? '' ),
-			)
+		$pairs = array(
+			self::pair( __( 'Rodzaj', 'portal-users' ), $mail['kind'] ),
+			self::pair( __( 'Adresat', 'portal-users' ), $mail['recipient'] ),
+			self::pair( __( 'Temat', 'portal-users' ), $mail['subject'] ),
+			self::pair( __( 'Status', 'portal-users' ), self::queue_status_label( $mail['status'] ) ),
+			self::pair( __( 'Utworzono', 'portal-users' ), $mail['created_at'] ),
+			self::pair( __( 'Wysłano', 'portal-users' ), $mail['sent_at'] ?? '' ),
 		);
+		if ( $mail['anonymized'] ) {
+			$pairs[] = self::anonymized_pair();
+		}
+
+		return self::group( 'pusers-mail-queue', __( 'Wiadomości wysłane do konta', 'portal-users' ), 'pusers-mail-queue-' . $mail['id'], $pairs );
+	}
+
+	/**
+	 * Para wyjaśniająca zastępcze napisy w wierszu: bez niej wiersz po wcześniejszym żądaniu usunięcia
+	 * danych czytałby się jak awaria eksportu. Wiersz zwykły jej nie ma.
+	 *
+	 * @return array{name: string, value: string}
+	 */
+	private static function anonymized_pair(): array {
+		return self::pair( __( 'Zanonimizowano', 'portal-users' ), __( 'Tak, dane tego wpisu zostały usunięte na wcześniejsze żądanie.', 'portal-users' ) );
+	}
+
+	/**
+	 * Etykieta stanu konta dla czytelnika (lekarza, nie administratora); nieznany kod zostaje surowy.
+	 *
+	 * @param string $code Zapisany stan.
+	 */
+	private static function account_status_label( string $code ): string {
+		return match ( $code ) {
+			'email_unconfirmed' => __( 'Adres e-mail niepotwierdzony', 'portal-users' ),
+			'pending'           => __( 'Oczekuje na zatwierdzenie', 'portal-users' ),
+			'approved'          => __( 'Zatwierdzone', 'portal-users' ),
+			'rejected'          => __( 'Odrzucone', 'portal-users' ),
+			default             => $code,
+		};
+	}
+
+	/**
+	 * Etykieta statusu wiadomości w kolejce; nieznany kod zostaje surowy.
+	 *
+	 * @param string $code Status wiersza kolejki.
+	 */
+	private static function queue_status_label( string $code ): string {
+		return match ( $code ) {
+			'queued'  => __( 'W kolejce do wysłania', 'portal-users' ),
+			'sending' => __( 'W trakcie wysyłania', 'portal-users' ),
+			'sent'    => __( 'Wysłana', 'portal-users' ),
+			'failed'  => __( 'Wysyłka nieudana', 'portal-users' ),
+			default   => $code,
+		};
 	}
 
 	/**
