@@ -28,6 +28,7 @@ final class BackfillTest extends WP_UnitTestCase {
 		parent::set_up();
 		$this->deployed = time() - 5 * DAY_IN_SECONDS;
 		delete_option( OptionStore::OPTION_DEPLOYED_AT );
+		Backfill::forget_count();
 	}
 
 	/**
@@ -100,6 +101,41 @@ final class BackfillTest extends WP_UnitTestCase {
 		$withStatus = $this->account( true );
 		AccountStatusRepository::set( $withStatus, AccountStatus::Pending );
 
+		$this->assertSame( 1, Backfill::stateless_count() );
+	}
+
+	public function test_liczba_kont_jest_zapamietana_do_czasu_uniewaznienia(): void {
+		$this->deployedAt( $this->deployed );
+		$this->account( true );
+		$this->assertSame( 1, Backfill::stateless_count() );
+
+		$this->account( true );
+		$this->assertSame( 1, Backfill::stateless_count(), 'Druga odpowiedź pochodzi z transientu, nie z nowego zapytania.' );
+		$this->assertSame( 1, get_transient( Backfill::TRANSIENT_COUNT ) );
+
+		Backfill::forget_count();
+		$this->assertSame( 2, Backfill::stateless_count() );
+	}
+
+	public function test_nadanie_stanu_kasuje_zapamietana_liczbe(): void {
+		$this->deployedAt( $this->deployed );
+		$this->account( true );
+		$this->account( true );
+		$this->assertSame( 2, Backfill::stateless_count() );
+
+		$result = Backfill::grant_approved( (int) self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+		$this->assertSame( 2, $result['granted'] );
+		$this->assertFalse( get_transient( Backfill::TRANSIENT_COUNT ) );
+		$this->assertSame( 0, Backfill::stateless_count(), 'Komunikat nie powtarza liczby sprzed nadania.' );
+	}
+
+	public function test_brak_znacznika_nie_zapamietuje_zera(): void {
+		$this->account( true );
+		$this->assertSame( 0, Backfill::stateless_count() );
+		$this->assertFalse( get_transient( Backfill::TRANSIENT_COUNT ) );
+
+		$this->deployedAt( $this->deployed );
 		$this->assertSame( 1, Backfill::stateless_count() );
 	}
 

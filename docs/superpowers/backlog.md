@@ -167,6 +167,18 @@ Przycisk „Zatwierdź wszystkie konta bez stanu” stoi na ekranie importu bezt
 
 Skan pokazuje pięćdziesiąt najczęstszych kluczy `user_meta`, a formularz mapowania oferuje wyłącznie klucze ze skanu (i już zapisane). Na portalu z większą liczbą kluczy rzadszego klucza nie da się zmapować z panelu. Dwa prawdopodobne domknięcia: pole tekstowe na dowolny klucz albo wyższy limit skanu. Decyzja należy do właściciela.
 
+### Import nie ma budżetu czasu i nie umie wznowić przerwanego przebiegu
+
+Cały obchód idzie w jednym żądaniu POST. `WP_User_Query` z `fields => 'ID'` nie zapełnia pamięci podręcznej metadanych, więc na każde konto przypada jedno `get_user_meta()`; przy kilku tysiącach kont domyślny limit czasu PHP przerywa obchód w połowie. Podgląd jest celowo zużywany **przed** zapisem, więc po przerwaniu administrator ma część kont zapisaną, bramka jest zamknięta, a raportu i komunikatu nie ma. Po tej fali przerwanie zostawia przynajmniej wiersz `import_started` (aktor i klucze źródłowe), ale nie wznawia pracy. Dwa prawdopodobne domknięcia: obchód z limitem czasu, który po przekroczeniu zapisuje ostatnią stronę i kontynuuje od niej w następnym żądaniu POST, albo pojedyncze zdarzenie z harmonogramu (WP-Cron), które robi to samo w tle i raportuje na ekranie. Ponowne uruchomienie jest dziś bezpieczne, bo porównanie przed zapisem pomija to, co już się zgadza; brakuje tylko podpowiedzi, że trzeba je uruchomić. Decyzja należy do właściciela.
+
+### Komunikat o kontach bez stanu pojawia się tylko na ekranach wtyczki
+
+Ostrzeżenie `BackfillNotice` jest ograniczone do podstron wtyczki, bo tak ustalał plan. Administrator, który po instalacji trafia na Pulpit albo na ekran Wtyczek, go nie zobaczy, dopóki sam nie otworzy menu wtyczki. Czy komunikat ma pojawiać się także na Pulpicie (koszt: zapytanie liczące, już zapamiętane w transiencie na pięć minut), należy do właściciela.
+
+### Import nie usuwa kont, choć specyfikacja je do tego dopuszcza
+
+Specyfikacja opisuje import tak, że konta, których poprzednia wtyczka nie zatwierdziła, „trafiają na listę wniosków albo zostają usunięte, zależnie od decyzji administratora przy imporcie”. Plan świadomie zbudował tylko pierwszą połowę: import nigdy nie usuwa konta, a stany, które mapowanie może nadać, to `pending`, `approved` i `rejected`. Droga przypadkowa (stan `email_unconfirmed`, który zadanie czyszczące kasuje po okresie karencji) jest zamknięta celowo. Jeśli kasowanie ma istnieć, to osobne zadanie z własnym potwierdzeniem, własnym wierszem w logu i liczbą kont w oknie potwierdzenia, a nie kolejna wartość mapowania.
+
 ---
 
 ## Plan 9 — Aktualizacje i release

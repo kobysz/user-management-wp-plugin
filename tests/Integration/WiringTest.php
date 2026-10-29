@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration;
 
+use PortalUsers\Account\Backfill;
 use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\BackfillNotice;
 use PortalUsers\Admin\ExportHandler;
@@ -39,6 +40,7 @@ use PortalUsers\Front\TermsBinding;
 use PortalUsers\Mail\Dispatcher;
 use PortalUsers\Mail\MailQueue;
 use PortalUsers\Domain\Profession\ProfessionCollection;
+use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Plugin;
@@ -117,6 +119,12 @@ final class WiringTest extends WP_UnitTestCase {
 			has_action( 'pusers_register_features', array( $screen, 'register' ) ),
 			$screen . '::register() nie jest podpięte pod pusers_register_features.'
 		);
+	}
+
+	public function test_znacznik_wdrozenia_jest_zapisywany_takze_przy_aktualizacji_w_miejscu(): void {
+		// Aktualizacja nie odpala hooka aktywacji, więc znacznik musi wejść przez plugins_loaded.
+		$this->assertNotFalse( has_action( 'plugins_loaded', array( Backfill::class, 'record_activation' ) ) );
+		$this->assertNotFalse( has_action( 'plugins_loaded', array( Migrations::class, 'maybe_upgrade' ) ) );
 	}
 
 	public function test_settings_register_hooks_its_save_handler(): void {

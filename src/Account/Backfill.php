@@ -46,6 +46,17 @@ final class Backfill {
 	public const KEY_AT = 'at';
 
 	/**
+	 * Przejściowa kopia liczby kont w zakresie: komunikat liczy je na każdym wyświetleniu ekranu wtyczki,
+	 * a zapytanie łączy `users` z `usermeta` i porównuje daty.
+	 */
+	public const TRANSIENT_COUNT = 'pusers_stateless_count';
+
+	/**
+	 * Jak długo liczba z `TRANSIENT_COUNT` bywa nieaktualna, jeśli nic jej nie unieważni.
+	 */
+	public const COUNT_TTL = 5 * MINUTE_IN_SECONDS;
+
+	/**
 	 * Zapisuje moment wdrożenia, ale tylko gdy go jeszcze nie ma. Aktywacja po deaktywacji nie może
 	 * przesunąć granicy: konta zarejestrowane przez samą wtyczkę w międzyczasie wpadłyby w zakres backfillu.
 	 * Znacznik uszkodzony (bez poprawnego czasu) liczy się jak brak i jest zapisywany od nowa.
@@ -69,6 +80,9 @@ final class Backfill {
 
 	/**
 	 * Ile kont leży w zakresie backfillu. Bez znacznika wdrożenia nie ma granicy, więc zakres jest pusty.
+	 *
+	 * Liczba jest trzymana w krótkim transiencie (`COUNT_TTL`); nadanie stanu i zapis importu go kasują
+	 * (`forget_count()`), więc nie kłamie o tym, co właśnie zmieniły. Zero z braku znacznika nie jest zapamiętywane.
 	 */
 	public static function stateless_count(): int {
 		$deployedAt = self::deployed_at();
@@ -76,10 +90,25 @@ final class Backfill {
 			return 0;
 		}
 
+		$cached = get_transient( self::TRANSIENT_COUNT );
+		if ( is_int( $cached ) && $cached >= 0 ) {
+			return $cached;
+		}
+
 		// Liczenie bez hydracji: jedno konto na stronie wystarcza, bo liczbę daje get_total().
 		$query = self::query( $deployedAt, 1, 0, true );
+		$count = (int) $query->get_total();
 
-		return (int) $query->get_total();
+		set_transient( self::TRANSIENT_COUNT, $count, self::COUNT_TTL );
+
+		return $count;
+	}
+
+	/**
+	 * Kasuje zapamiętaną liczbę kont w zakresie, żeby następne wyświetlenie policzyło je od nowa.
+	 */
+	public static function forget_count(): void {
+		delete_transient( self::TRANSIENT_COUNT );
 	}
 
 	/**
@@ -126,6 +155,8 @@ final class Backfill {
 
 		$logFailed = false;
 		if ( $granted > 0 ) {
+			self::forget_count();
+
 			$logFailed = ! EventLog::write(
 				self::LOG_GRANTED,
 				0,

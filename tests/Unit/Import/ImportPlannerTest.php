@@ -135,6 +135,7 @@ final class ImportPlannerTest extends TestCase {
 		$change = $this->planner( ImportMapping::FALLBACK_PENDING )->plan(
 			7,
 			array(
+				'wpmem_name'   => 'Ola',
 				'wpmem_role'   => array( 'doctor' ),
 				'wpmem_status' => array( 'active' ),
 			)
@@ -395,7 +396,7 @@ final class ImportPlannerTest extends TestCase {
 	}
 
 	public function test_brak_stanu_w_zrodle_bierze_fallback(): void {
-		$change = $this->planner( ImportMapping::FALLBACK_PENDING )->plan( 7, array() );
+		$change = $this->planner( ImportMapping::FALLBACK_PENDING )->plan( 7, array( 'wpmem_name' => 'Ola' ) );
 
 		$this->assertSame( AccountStatus::Pending, $change->status );
 		$this->assertTrue( $change->hasIssue( AccountChange::ISSUE_STATUS_MISSING ) );
@@ -403,16 +404,87 @@ final class ImportPlannerTest extends TestCase {
 	}
 
 	public function test_pusty_stan_w_zrodle_bierze_fallback_zatwierdzony(): void {
-		$change = $this->planner( ImportMapping::FALLBACK_APPROVED )->plan( 7, array( 'wpmem_status' => ' ' ) );
+		$change = $this->planner( ImportMapping::FALLBACK_APPROVED )->plan(
+			7,
+			array(
+				'wpmem_name'   => 'Ola',
+				'wpmem_status' => ' ',
+			)
+		);
 
 		$this->assertSame( AccountStatus::Approved, $change->status );
 		$this->assertTrue( $change->hasIssue( AccountChange::ISSUE_STATUS_MISSING ) );
 	}
 
 	public function test_fallback_none_zostawia_konto_bez_stanu(): void {
-		$change = $this->planner( ImportMapping::FALLBACK_NONE )->plan( 7, array() );
+		$change = $this->planner( ImportMapping::FALLBACK_NONE )->plan( 7, array( 'wpmem_name' => 'Ola' ) );
 
 		$this->assertNull( $change->status );
+		$this->assertTrue( $change->hasIssue( AccountChange::ISSUE_STATUS_MISSING ) );
+	}
+
+	/**
+	 * @return array<string, array{0: string}>
+	 */
+	public static function fallbacks(): array {
+		return array(
+			'pending'  => array( ImportMapping::FALLBACK_PENDING ),
+			'approved' => array( ImportMapping::FALLBACK_APPROVED ),
+		);
+	}
+
+	/**
+	 * @dataProvider fallbacks
+	 */
+	public function test_fallback_nie_dotyczy_konta_bez_zadnego_klucza_zrodlowego(string $fallback): void {
+		// Konto założone przez tę wtyczkę nigdy nie należało do starej: jego stanu import nie rusza ani nie zgłasza.
+		// Mapowanie bez klucza profesji, żeby w zastrzeżeniach nie został nic poza tym, co dotyczy stanu.
+		$planner = new ImportPlanner(
+			ImportMapping::fromArray(
+				array(
+					'fields'       => array( 'name' => 'wpmem_name' ),
+					'statusKey'    => 'wpmem_status',
+					'statusValues' => array( 'active' => 'approved' ),
+					'fallback'     => $fallback,
+				)
+			),
+			ProfessionCollection::fromArray( array() ),
+			FieldMatrix::fromArray( array() ),
+			new ValidatorRegistry()
+		);
+
+		$change = $planner->plan( 7, array() );
+
+		$this->assertNull( $change->status );
+		$this->assertSame( array(), $change->issues );
+		$this->assertFalse( $change->hasWrites() );
+	}
+
+	/**
+	 * @dataProvider fallbacks
+	 */
+	public function test_klucze_zrodlowe_bez_uzytecznej_wartosci_nie_czynia_konta_czlonkiem_starej_wtyczki(string $fallback): void {
+		$change = $this->planner( $fallback )->plan(
+			7,
+			array(
+				'wpmem_name'   => '   ',
+				'wpmem_phone'  => null,
+				'wpmem_status' => '',
+			)
+		);
+
+		$this->assertNull( $change->status );
+		$this->assertFalse( $change->hasIssue( AccountChange::ISSUE_STATUS_MISSING ) );
+	}
+
+	/**
+	 * @dataProvider fallbacks
+	 */
+	public function test_wystarczy_jeden_klucz_zrodlowy_by_fallback_obowiazywal(string $fallback): void {
+		// Klucz profesji, nie stanu i nie pola: liczy się każdy klucz z mapowania.
+		$change = $this->planner( $fallback )->plan( 7, array( 'wpmem_role' => 'doctor' ) );
+
+		$this->assertSame( ImportMapping::FALLBACK_PENDING === $fallback ? AccountStatus::Pending : AccountStatus::Approved, $change->status );
 		$this->assertTrue( $change->hasIssue( AccountChange::ISSUE_STATUS_MISSING ) );
 	}
 

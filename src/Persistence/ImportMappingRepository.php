@@ -26,12 +26,17 @@ final class ImportMappingRepository {
 	 *
 	 * Przycięcie dotyczy wyłącznie zwracanej wartości: zapisana opcja zostaje nietknięta, więc
 	 * usunięte i przywrócone pole nie gubi mapowania.
+	 *
+	 * @param array<string, string>|null $acfFields Pola grupy ACF (klucz => etykieta), jeśli wywołujący już je ma;
+	 *                                              null znaczy, że lista jest czytana z grupy wskazanej w ustawieniach.
 	 */
-	public static function get(): ImportMapping {
-		$source = new AcfFieldSource( SettingsRepository::get()->acfGroupKey );
+	public static function get( ?array $acfFields = null ): ImportMapping {
+		if ( null === $acfFields ) {
+			$acfFields = ( new AcfFieldSource( SettingsRepository::get()->acfGroupKey ) )->fields();
+		}
 
 		return ImportMapping::fromArray( OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING ) )
-			->prunedTo( array_keys( $source->fields() ), ProfessionRepository::get()->keys() );
+			->prunedTo( array_keys( $acfFields ), ProfessionRepository::get()->keys() );
 	}
 
 	/**

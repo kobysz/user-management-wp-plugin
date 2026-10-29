@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Import;
 
+use PortalUsers\Account\Backfill;
 use PortalUsers\Domain\Credentials\ValidatorRegistry;
 use PortalUsers\Domain\Import\AccountChange;
 use PortalUsers\Domain\Import\ImportMapping;
@@ -38,6 +39,14 @@ final class ImportRunner {
 	public const BATCH = 200;
 
 	/**
+	 * Wiersz logu: przebieg z zapisem się zaczął (jeden na przebieg, przed obchodem kont).
+	 *
+	 * Bez liczników i bez identyfikatorów kont, bo w tym miejscu jeszcze ich nie ma. Jeśli obchód przerwie limit czasu,
+	 * to jedyny ślad, kto uruchomił import i na jakich kluczach.
+	 */
+	public const LOG_STARTED = 'import_started';
+
+	/**
 	 * Wiersz logu: przebieg z zapisem (jeden na przebieg).
 	 */
 	public const LOG_APPLIED = 'import_applied';
@@ -63,24 +72,30 @@ final class ImportRunner {
 	 * Porażka któregokolwiek zapisu do logu nie cofa danych, ale raport ją niesie (`logFailed()`): jedyny ślad tego,
 	 * kto zaimportował co, to właśnie ten wiersz, więc ekran nie może pokazać sukcesu bez ostrzeżenia.
 	 *
-	 * Puste mapowanie nie czyta żadnego klucza, więc nie rusza kont i nie tworzy wiersza logu.
+	 * Przed obchodem kont powstaje wiersz `import_started` (aktor i klucze źródłowe), po nim wiersz zbiorczy z licznikami.
+	 * Puste mapowanie nie czyta żadnego klucza, więc nie rusza kont i nie tworzy żadnego wiersza logu.
 	 *
 	 * @param ImportMapping $mapping     Mapowanie kluczy źródłowych.
 	 * @param int           $actorUserId Administrator uruchamiający import.
 	 * @return ImportReport
 	 */
 	public function apply( ImportMapping $mapping, int $actorUserId ): ImportReport {
-		$report = $this->walk( $mapping, true );
-
 		if ( $mapping->isEmpty() ) {
-			return $report;
+			return $this->walk( $mapping, true );
 		}
+
+		// Ślad przed obchodem: obchód idzie jednym żądaniem bez budżetu czasu, a wiersz zbiorczy powstaje dopiero po nim.
+		$started = EventLog::write( self::LOG_STARTED, 0, $actorUserId, array( 'source_keys' => $mapping->sourceKeys() ) );
+		$report  = $this->walk( $mapping, true );
+
+		// Import nadaje stany, więc zmienia też liczbę kont bez stanu, którą komunikat o backfillu trzyma w transiencie.
+		Backfill::forget_count();
 
 		$counters = $report->toArray();
 		unset( $counters['samples'], $counters['write_failure_sample'], $counters['log_failed'] );
 		$counters['source_keys'] = $mapping->sourceKeys();
 
-		$logged = EventLog::write( self::LOG_APPLIED, 0, $actorUserId, $counters );
+		$logged = EventLog::write( self::LOG_APPLIED, 0, $actorUserId, $counters ) && $started;
 
 		if ( $report->writeFailures() > 0 ) {
 			$failedLogged = EventLog::write(

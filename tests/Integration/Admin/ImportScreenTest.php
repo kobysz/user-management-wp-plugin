@@ -1031,6 +1031,29 @@ final class ImportScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'href="' . esc_url( admin_url( 'user-edit.php?user_id=' . $id ) ) . '"', $html );
 	}
 
+	public function test_brak_stanu_w_zrodle_podnosi_ostrzezenie_a_nie_tylko_licznik(): void {
+		$this->seedImportable();
+		OptionStore::write(
+			OptionStore::OPTION_IMPORT_PREVIEW,
+			array(
+				'hash'   => ImportMappingRepository::get()->hash(),
+				'at'     => time(),
+				'report' => array(
+					'scanned'        => 3,
+					'changed'        => 2,
+					'write_failures' => 0,
+					'issues'         => array( AccountChange::ISSUE_STATUS_MISSING => 2 ),
+					'samples'        => array( AccountChange::ISSUE_STATUS_MISSING => array( 7 ) ),
+				),
+			)
+		);
+
+		$html = $this->renderAsAdmin();
+
+		$this->assertMatchesRegularExpression( '#notice-warning inline[^>]*>\s*<p>[^<]*Konto bez rozpoznanego stanu#u', $html );
+		$this->assertStringNotContainsString( 'nie ma rozpoznanej profesji', $html, 'Ostrzeżenie o profesji nie dotyczy raportu z samym brakiem stanu.' );
+	}
+
 	public function test_raport_nie_wypisuje_niezaufanych_wartosci_z_zapisanego_podgladu(): void {
 		$this->seedImportable();
 		OptionStore::write(

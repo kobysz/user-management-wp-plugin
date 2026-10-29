@@ -25,7 +25,23 @@ final class MetaKeyScanner {
 	public const SAMPLE_PER_KEY = 3;
 
 	/**
-	 * Skanuje `usermeta`, pomijając klucze wtyczki (`pusers_`), prywatne (`_`) i systemowe (przedrostek tabel).
+	 * Klucze rdzenia WordPressa zapisywane w `usermeta` pod przedrostkiem tabel, bez przedrostka `wp_`.
+	 *
+	 * Wymienione z nazwy, a nie jako przedrostek: przedrostek ukryłby też klucze cudzych wtyczek (np. `wp_s2member_*`),
+	 * czyli dokładnie te, które portal migruje.
+	 *
+	 * @var list<string>
+	 */
+	private const CORE_KEYS = array(
+		'capabilities',
+		'user_level',
+		'user-settings',
+		'user-settings-time',
+		'dashboard_quick_press_last_post_id',
+	);
+
+	/**
+	 * Skanuje `usermeta`, pomijając klucze wtyczki (`pusers_`), prywatne (`_`) i wymienione z nazwy klucze rdzenia (`CORE_KEYS`).
 	 *
 	 * @param int $limit Najwyżej tyle kluczy; najliczniejsze pierwsze.
 	 * @return list<MetaKeyStat> Malejąco po liczbie kont, przy równej liczbie alfabetycznie po kluczu.
@@ -35,14 +51,15 @@ final class MetaKeyScanner {
 	public static function scan( int $limit = self::MAX_KEYS ): array {
 		global $wpdb;
 
+		$core = array_map( static fn( string $name ): string => $wpdb->prefix . $name, self::CORE_KEYS );
+
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
-				'SELECT meta_key, COUNT(DISTINCT user_id) AS accounts FROM %i WHERE meta_key NOT LIKE %s AND meta_key NOT LIKE %s AND meta_key NOT LIKE %s GROUP BY meta_key ORDER BY accounts DESC, meta_key ASC LIMIT %d',
+				'SELECT meta_key, COUNT(DISTINCT user_id) AS accounts FROM %i WHERE meta_key NOT LIKE %s AND meta_key NOT LIKE %s AND meta_key NOT IN (' . implode( ',', array_fill( 0, count( $core ), '%s' ) ) . ') GROUP BY meta_key ORDER BY accounts DESC, meta_key ASC LIMIT %d',
 				$wpdb->usermeta,
 				$wpdb->esc_like( 'pusers_' ) . '%',
 				$wpdb->esc_like( '_' ) . '%',
-				$wpdb->esc_like( $wpdb->prefix ) . '%',
-				max( 0, $limit )
+				...array_merge( $core, array( max( 0, $limit ) ) )
 			),
 			ARRAY_A
 		);
@@ -58,18 +75,18 @@ final class MetaKeyScanner {
 
 			$samples = $wpdb->get_col(
 				$wpdb->prepare(
-					'SELECT DISTINCT meta_value FROM %i WHERE meta_key = %s ORDER BY meta_value ASC LIMIT %d',
+					'SELECT DISTINCT meta_value FROM %i WHERE meta_key = %s LIMIT %d',
 					$wpdb->usermeta,
 					$key,
 					self::SAMPLE_PER_KEY
 				)
 			);
 
-			$stats[] = MetaKeyStat::fromRow(
-				$key,
-				(int) $row['accounts'],
-				array_map( 'strval', is_array( $samples ) ? $samples : array() )
-			);
+			// Bez ORDER BY: sortowanie LONGTEXT bez indeksu kosztuje przy każdym kluczu. Porządek zapewnia sort poniżej.
+			$samples = array_map( 'strval', is_array( $samples ) ? $samples : array() );
+			sort( $samples, \SORT_STRING );
+
+			$stats[] = MetaKeyStat::fromRow( $key, (int) $row['accounts'], $samples );
 		}
 
 		return $stats;

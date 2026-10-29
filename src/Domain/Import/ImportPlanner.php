@@ -173,6 +173,13 @@ final class ImportPlanner {
 		$value      = $configured ? $this->usableText( $sourceMeta, $this->mapping->statusKey(), $issues ) : null;
 
 		if ( null === $value ) {
+			// Fallback rozstrzyga stan wyłącznie konta, które było w starej wtyczce, czyli nosi choć jeden jej klucz.
+			// Konto bez żadnego z nich (założone przez tę wtyczkę, ręcznie, przez edytora) nie jest tematem importu:
+			// jego stanu nie wolno zmieniać ani zgłaszać, bo raport zalałyby wszystkie niepowiązane konta portalu.
+			if ( ! $this->carriesSourceKey( $sourceMeta ) ) {
+				return null;
+			}
+
 			// Klucz nieskonfigurowany znaczy, że mapowanie o stan nie pyta: fallback działa po cichu.
 			if ( $configured ) {
 				$issues[] = AccountChange::ISSUE_STATUS_MISSING;
@@ -192,6 +199,28 @@ final class ImportPlanner {
 		}
 
 		return $status;
+	}
+
+	/**
+	 * Czy konto nosi choć jeden klucz źródłowy mapowania z użyteczną wartością skalarną.
+	 *
+	 * Nie zgłasza zastrzeżeń: to tylko pytanie o przynależność konta do populacji starej wtyczki.
+	 *
+	 * @param array<string, mixed> $sourceMeta Metadane źródłowe.
+	 * @return bool
+	 */
+	private function carriesSourceKey( array $sourceMeta ): bool {
+		foreach ( $this->mapping->sourceKeys() as $key ) {
+			if ( ! array_key_exists( $key, $sourceMeta ) || ! is_scalar( $sourceMeta[ $key ] ) ) {
+				continue;
+			}
+
+			if ( '' !== trim( (string) $sourceMeta[ $key ] ) ) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 
 	/**

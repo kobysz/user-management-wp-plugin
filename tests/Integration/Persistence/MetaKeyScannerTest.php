@@ -64,6 +64,32 @@ final class MetaKeyScannerTest extends WP_UnitTestCase {
 		$this->assertSame( array( 'wpmem_pwz' ), $this->keys( MetaKeyScanner::scan() ) );
 	}
 
+	public function test_klucze_rdzenia_sa_pomijane_z_nazwy_a_klucze_wtyczek_pod_tym_samym_przedrostkiem_nie(): void {
+		global $wpdb;
+		$id = $this->account();
+		foreach ( array( 'capabilities', 'user_level', 'user-settings', 'user-settings-time', 'dashboard_quick_press_last_post_id' ) as $core ) {
+			update_user_meta( $id, $wpdb->prefix . $core, 'x' );
+		}
+		update_user_meta( $id, $wpdb->prefix . 's2member_custom_fields', 'x' );
+		update_user_meta( $id, $wpdb->prefix . 'capabilities_backup', 'x' );
+
+		$this->assertSame(
+			array( $wpdb->prefix . 'capabilities_backup', $wpdb->prefix . 's2member_custom_fields' ),
+			$this->keys( MetaKeyScanner::scan() )
+		);
+	}
+
+	public function test_probki_sa_posortowane_niezaleznie_od_kolejnosci_w_bazie(): void {
+		$ids = array( $this->account(), $this->account(), $this->account() );
+		update_user_meta( $ids[0], 'wpmem_pwz', 'c-trzecia' );
+		update_user_meta( $ids[1], 'wpmem_pwz', 'a-pierwsza' );
+		update_user_meta( $ids[2], 'wpmem_pwz', 'b-druga' );
+
+		$stats = MetaKeyScanner::scan();
+
+		$this->assertSame( array( 'a-pierwsza', 'b-druga', 'c-trzecia' ), $stats[0]->samples );
+	}
+
 	public function test_podkreslenie_w_przedrostku_nie_dziala_jak_wildcard(): void {
 		$id = $this->account();
 		// Gdyby przedrostek nie przechodził przez esc_like(), "_" pasowałoby do dowolnego znaku, a "pusersXstatus" zniknęłoby ze skanu.

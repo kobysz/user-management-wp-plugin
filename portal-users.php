@@ -44,8 +44,11 @@ register_activation_hook( __FILE__, array( \PortalUsers\Persistence\Migrations::
 add_action( 'plugins_loaded', array( \PortalUsers\Persistence\Migrations::class, 'maybe_upgrade' ) );
 
 // Znacznik wdrożenia: aktywacja niczego nie nadaje, tylko zapisuje moment, od którego liczy się „konto sprzed wtyczki”.
-// Zapisuje się raz; ponowna aktywacja nie przesuwa granicy.
+// Zapisuje się raz; ponowna aktywacja nie przesuwa granicy. Aktualizacja w miejscu też nie odpala hooka aktywacji,
+// więc na portalu, który już działał na wcześniejszej wersji, znacznik zapisuje także plugins_loaded (bez efektu, gdy już jest).
+// Konta założone przez samą wtyczkę zawsze mają stan, więc późne zapisanie znacznika nie wciąga ich w zakres backfillu.
 register_activation_hook( __FILE__, array( \PortalUsers\Account\Backfill::class, 'record_activation' ) );
+add_action( 'plugins_loaded', array( \PortalUsers\Account\Backfill::class, 'record_activation' ) );
 
 // Cron czyszczący niepotwierdzone konta: harmonogram zakładany przy aktywacji, zdejmowany przy deaktywacji.
 register_activation_hook( __FILE__, array( \PortalUsers\Cron\PurgeUnconfirmed::class, 'schedule' ) );

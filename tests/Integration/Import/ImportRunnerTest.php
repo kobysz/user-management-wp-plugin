@@ -181,7 +181,7 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 
 		$this->assertSame( 1, $report->writeFailures() );
 		$this->assertTrue( $report->logFailed() );
-		$this->assertSame( array( ImportRunner::LOG_APPLIED ), array_map( static fn( object $row ): string => (string) $row->action, $this->log_rows() ) );
+		$this->assertSame( array( ImportRunner::LOG_STARTED, ImportRunner::LOG_APPLIED ), array_map( static fn( object $row ): string => (string) $row->action, $this->log_rows() ) );
 	}
 
 	public function test_porazka_logu_nie_jest_zgloszona_przy_zwyklym_zapisie_ani_w_trybie_probnym(): void {
@@ -191,7 +191,7 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 
 		$this->assertFalse( $runner->dry_run( $this->mapping() )->logFailed() );
 		$this->assertFalse( $runner->apply( $this->mapping(), $actor )->logFailed() );
-		$this->assertCount( 1, $this->log_rows() );
+		$this->assertCount( 2, $this->log_rows(), 'Wiersz początku i wiersz zbiorczy.' );
 	}
 
 	public function test_tryb_probny_nie_zapisuje_nic(): void {
@@ -279,7 +279,7 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 		$this->assertSame( 'lekarz', get_user_meta( $victim, UserMeta::PROFESSION, true ), 'Po porażce jednej pozycji pozostałe są nadal zapisywane.' );
 
 		$actions = array_map( static fn( object $row ): string => (string) $row->action, $this->log_rows() );
-		$this->assertSame( array( ImportRunner::LOG_APPLIED, ImportRunner::LOG_WRITE_FAILED ), $actions );
+		$this->assertSame( array( ImportRunner::LOG_STARTED, ImportRunner::LOG_APPLIED, ImportRunner::LOG_WRITE_FAILED ), $actions );
 	}
 
 	public function test_padniety_zapis_stanu_jest_zgloszony_a_pozostale_pozycje_zapisane(): void {
@@ -324,7 +324,9 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 		( new ImportRunner() )->apply( $this->mapping(), $actor );
 
 		$rows = $this->log_rows();
-		$this->assertCount( 1, $rows );
+		$this->assertCount( 2, $rows );
+		$this->assertSame( ImportRunner::LOG_STARTED, $rows[0]->action );
+		$rows = array( $rows[1] );
 		$this->assertSame( ImportRunner::LOG_APPLIED, $rows[0]->action );
 		$this->assertSame( (string) $actor, $rows[0]->actor_user_id );
 		$this->assertSame( '0', $rows[0]->subject_user_id );
@@ -345,7 +347,9 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 		$this->apply_with_broken_insert( $victim );
 
 		$rows = $this->log_rows();
-		$this->assertCount( 2, $rows );
+		$this->assertCount( 3, $rows );
+		$this->assertSame( ImportRunner::LOG_STARTED, $rows[0]->action );
+		$rows = array( $rows[1], $rows[2] );
 		$this->assertSame( ImportRunner::LOG_WRITE_FAILED, $rows[1]->action );
 		$this->assertSame( '0', $rows[1]->subject_user_id );
 		$context = json_decode( (string) $rows[1]->context, true );
@@ -388,14 +392,20 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 	public function test_konta_bez_zadnych_danych_zrodlowych_sa_skanowane_ale_nie_zmieniane(): void {
 		self::factory()->user->create();
 		self::factory()->user->create();
+		$actor       = $this->actor();
 		$meta_before = $this->plugin_meta_rows();
 
-		$report = ( new ImportRunner() )->apply( $this->mapping(), $this->actor() );
+		// Niezmiennik ma trzymać przy każdym fallbacku: dopiero fallback inny niż none potrafił go złamać.
+		foreach ( array( ImportMapping::FALLBACK_NONE, ImportMapping::FALLBACK_PENDING, ImportMapping::FALLBACK_APPROVED ) as $fallback ) {
+			$mapping = ImportMapping::fromArray( array_merge( $this->mapping()->toArray(), array( 'fallback' => $fallback ) ) );
 
-		$this->assertSame( $this->all_accounts(), $report->scanned() );
-		$this->assertGreaterThanOrEqual( 2, $report->scanned() );
-		$this->assertSame( 0, $report->changed() );
-		$this->assertSame( $meta_before, $this->plugin_meta_rows() );
+			$report = ( new ImportRunner() )->apply( $mapping, $actor );
+
+			$this->assertSame( $this->all_accounts(), $report->scanned(), $fallback );
+			$this->assertGreaterThanOrEqual( 2, $report->scanned(), $fallback );
+			$this->assertSame( 0, $report->changed(), $fallback );
+			$this->assertSame( $meta_before, $this->plugin_meta_rows(), $fallback );
+		}
 	}
 
 	public function test_wartosc_tablicowa_w_danych_zrodlowych_jest_zgloszona_a_nie_zapisana(): void {
@@ -407,6 +417,140 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 
 		$this->assertSame( 1, $report->issueCount( 'value_unusable' ) );
 		$this->assertSame( '', get_user_meta( $id, self::PWZ_FIELD, true ) );
+	}
+
+	/**
+	 * @param string $fallback      Fallback stanu.
+	 * @param bool   $withStatusKey Czy mapowanie ma klucz stanu.
+	 * @return ImportMapping Mapowanie z jednym polem i zadanym fallbackiem.
+	 */
+	private function fallback_mapping( string $fallback, bool $withStatusKey ): ImportMapping {
+		$raw = array(
+			'fields'   => array( 'pwz' => 'wpmem_pwz' ),
+			'fallback' => $fallback,
+		);
+		if ( $withStatusKey ) {
+			$raw['statusKey']    = 'wpmem_status';
+			$raw['statusValues'] = array( 'active' => 'approved' );
+		}
+
+		return ImportMapping::fromArray( $raw );
+	}
+
+	/**
+	 * @return int Konto, które nosi klucz starej wtyczki, ale nie ma jej stanu.
+	 */
+	private function old_plugin_account_without_status(): int {
+		$id = (int) self::factory()->user->create();
+		update_user_meta( $id, 'wpmem_pwz', '1234567' );
+
+		return $id;
+	}
+
+	/**
+	 * @param AccountStatus $status Stan nadany przez tę wtyczkę.
+	 * @return int Konto zarządzane przez tę wtyczkę: ma stan i żadnego klucza starej.
+	 */
+	private function plugin_managed_account( AccountStatus $status ): int {
+		$id = (int) self::factory()->user->create();
+		AccountStatusRepository::set( $id, $status );
+
+		return $id;
+	}
+
+	public function test_fallback_pending_dotyka_tylko_kont_starej_wtyczki_a_nie_calego_portalu(): void {
+		$mapping = $this->fallback_mapping( ImportMapping::FALLBACK_PENDING, true );
+		$old     = $this->old_plugin_account_without_status();
+		$managed = $this->plugin_managed_account( AccountStatus::Approved );
+		$actor   = $this->actor();
+		$runner  = new ImportRunner();
+		$dry     = $runner->dry_run( $mapping );
+
+		$report = $runner->apply( $mapping, $actor );
+
+		$this->assertSame( AccountStatus::Pending, AccountStatusRepository::get( $old ), 'Konto starej wtyczki bez stanu idzie do wniosków.' );
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $managed ), 'Konto zarządzane przez wtyczkę zostaje zatwierdzone.' );
+		$this->assertNull( AccountStatusRepository::get( $actor ), 'Administrator nie dostaje stanu.' );
+		$this->assertSame( 1, $report->changed() );
+		$this->assertSame( 1, $dry->changed() );
+		$this->assertSame( $this->all_accounts(), $report->scanned(), 'Wszystkie konta są policzone jako przeskanowane.' );
+		$this->assertSame( 1, $report->issueCount( 'status_missing' ), 'Zastrzeżenie dotyczy tylko konta starej wtyczki.' );
+	}
+
+	public function test_fallback_zatwierdz_bez_klucza_stanu_nie_zmienia_stanu_kont_zarzadzanych_przez_wtyczke(): void {
+		$mapping     = $this->fallback_mapping( ImportMapping::FALLBACK_APPROVED, false );
+		$old         = $this->old_plugin_account_without_status();
+		$rejected    = $this->plugin_managed_account( AccountStatus::Rejected );
+		$unconfirmed = $this->plugin_managed_account( AccountStatus::EmailUnconfirmed );
+		$pending     = $this->plugin_managed_account( AccountStatus::Pending );
+		$actor       = $this->actor();
+
+		$report = ( new ImportRunner() )->apply( $mapping, $actor );
+
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $old ) );
+		$this->assertSame( AccountStatus::Rejected, AccountStatusRepository::get( $rejected ), 'Odrzucone przez edytora zostaje odrzucone.' );
+		$this->assertSame( AccountStatus::EmailUnconfirmed, AccountStatusRepository::get( $unconfirmed ), 'Niepotwierdzony adres zostaje niepotwierdzony.' );
+		$this->assertSame( AccountStatus::Pending, AccountStatusRepository::get( $pending ) );
+		$this->assertNull( AccountStatusRepository::get( $actor ) );
+		$this->assertSame( 1, $report->changed() );
+		$this->assertSame( 0, $report->issueCount( 'status_missing' ), 'Bez klucza stanu fallback działa po cichu.' );
+	}
+
+	public function test_wiersz_poczatku_powstaje_przed_obchodem_i_nie_niesie_licznikow_ani_identyfikatorow(): void {
+		$id    = $this->source_account();
+		$actor = $this->actor();
+		$seen  = null;
+		$spy   = function () use ( &$seen ): void {
+			if ( null === $seen ) {
+				$seen = array_map( static fn( object $row ): string => (string) $row->action, $this->log_rows() );
+			}
+		};
+		add_action( 'pusers_account_status_changed', $spy );
+
+		( new ImportRunner() )->apply( $this->mapping(), $actor );
+
+		remove_action( 'pusers_account_status_changed', $spy );
+		$this->assertSame( array( ImportRunner::LOG_STARTED ), $seen, 'W chwili pierwszego zapisu stanu wiersz początku już istnieje, a zbiorczego jeszcze nie ma.' );
+
+		$rows = $this->log_rows();
+		$this->assertSame( array( ImportRunner::LOG_STARTED, ImportRunner::LOG_APPLIED ), array_map( static fn( object $row ): string => (string) $row->action, $rows ) );
+		$this->assertSame( (string) $actor, $rows[0]->actor_user_id );
+		$this->assertSame( '0', $rows[0]->subject_user_id );
+		$this->assertSame( array( 'source_keys' => array( 'wpmem_pwz', 'wpmem_role', 'wpmem_status' ) ), json_decode( (string) $rows[0]->context, true ) );
+		$this->assertStringNotContainsString( (string) $id, (string) $rows[0]->context );
+		$this->assertLessThanOrEqual( 40, strlen( ImportRunner::LOG_STARTED ), 'Nazwa zdarzenia mieści się w kolumnie.' );
+	}
+
+	public function test_tryb_probny_i_puste_mapowanie_nie_zostawiaja_wiersza_poczatku(): void {
+		$this->source_account();
+		$runner = new ImportRunner();
+
+		$runner->dry_run( $this->mapping() );
+		$runner->apply( ImportMapping::fromArray( array() ), $this->actor() );
+
+		$this->assertSame( array(), $this->log_rows() );
+	}
+
+	public function test_porazka_zapisu_wiersza_poczatku_jest_w_raporcie_a_import_idzie_dalej(): void {
+		global $wpdb;
+		$id     = $this->source_account();
+		$table  = Migrations::table( 'event_log' );
+		$filter = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" ) && str_contains( $query, 'import_started' )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+
+		$previous = (bool) $wpdb->suppress_errors( true );
+		add_filter( 'query', $filter );
+		try {
+			$report = ( new ImportRunner() )->apply( $this->mapping(), $this->actor() );
+		} finally {
+			remove_filter( 'query', $filter );
+			$wpdb->suppress_errors( $previous );
+		}
+
+		$this->assertTrue( $report->logFailed() );
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $id ) );
+		$this->assertSame( array( ImportRunner::LOG_APPLIED ), array_map( static fn( object $row ): string => (string) $row->action, $this->log_rows() ) );
 	}
 
 	public function test_puste_mapowanie_nie_rusza_zadnego_konta(): void {

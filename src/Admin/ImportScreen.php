@@ -274,6 +274,10 @@ final class ImportScreen {
 			wp_die( esc_html__( 'Nie masz uprawnień do wykonania tej operacji.', 'portal-users' ), '', array( 'response' => 403 ) );
 		}
 
+		// Pola grupy ACF i mapowanie czytamy raz na wyświetlenie ekranu i podajemy dalej.
+		$acfFields = self::source()->fields();
+		$mapping   = ImportMappingRepository::get( $acfFields );
+
 		echo '<div class="wrap"><h1>' . esc_html__( 'Import danych', 'portal-users' ) . '</h1>';
 		self::render_notices();
 		self::render_backfill();
@@ -287,8 +291,8 @@ final class ImportScreen {
 			echo '<div class="notice notice-error"><p>' . esc_html( $e->getMessage() ) . '</p></div>';
 		}
 
-		self::render_form( $stats );
-		self::render_report();
+		self::render_form( $stats, $mapping, $acfFields );
+		self::render_report( $mapping );
 		echo '</div>';
 	}
 
@@ -439,10 +443,12 @@ final class ImportScreen {
 	/**
 	 * Raport z trybu próbnego z przyciskiem zapisu. Przycisk pojawia się tylko wtedy, gdy bramka byłaby otwarta;
 	 * nieaktualny raport jest opisany, ale nie można go zatwierdzić.
+	 *
+	 * @param ImportMapping $mapping Mapowanie z `ImportMappingRepository::get()`, to samo, które trafia do bramki.
 	 */
-	private static function render_report(): void {
+	private static function render_report( ImportMapping $mapping ): void {
 		echo '<div class="pusers-import-report"><h2>' . esc_html__( 'Raport z trybu próbnego', 'portal-users' ) . '</h2>';
-		if ( ImportMappingRepository::get()->isEmpty() ) {
+		if ( $mapping->isEmpty() ) {
 			echo '<p>' . esc_html__( 'Nic nie jest zmapowane, więc nie ma czego importować. Zapisz mapowanie, żeby uruchomić tryb próbny.', 'portal-users' ) . '</p></div>';
 			return;
 		}
@@ -459,7 +465,7 @@ final class ImportScreen {
 			return;
 		}
 
-		if ( null === self::valid_preview( ImportMappingRepository::get() ) ) {
+		if ( null === self::valid_preview( $mapping ) ) {
 			echo '<div class="notice notice-warning inline"><p>' . esc_html__( 'Ostatni raport jest nieaktualny: mapowanie zmieniło się albo raport ma ponad godzinę. Uruchom tryb próbny ponownie.', 'portal-users' ) . '</p></div></div>';
 			return;
 		}
@@ -497,9 +503,14 @@ final class ImportScreen {
 			return;
 		}
 
-		$serious = array( AccountChange::ISSUE_PROFESSION_UNMAPPED, AccountChange::ISSUE_PROFESSION_MISSING, AccountChange::ISSUE_CREDENTIAL_INVALID );
+		$serious = array( AccountChange::ISSUE_PROFESSION_UNMAPPED, AccountChange::ISSUE_PROFESSION_MISSING, AccountChange::ISSUE_CREDENTIAL_INVALID, AccountChange::ISSUE_STATUS_MISSING );
 		if ( array() !== array_intersect( $serious, array_keys( $counts ) ) ) {
-			echo '<div class="notice notice-warning inline"><p>' . esc_html__( 'Część kont nie ma rozpoznanej profesji albo ma niepoprawny numer. Sprawdź je przed zapisem: takie konta nie dostaną tych danych.', 'portal-users' ) . '</p></div>';
+			if ( array() !== array_intersect( array( AccountChange::ISSUE_PROFESSION_UNMAPPED, AccountChange::ISSUE_PROFESSION_MISSING, AccountChange::ISSUE_CREDENTIAL_INVALID ), array_keys( $counts ) ) ) {
+				echo '<div class="notice notice-warning inline"><p>' . esc_html__( 'Część kont nie ma rozpoznanej profesji albo ma niepoprawny numer. Sprawdź je przed zapisem: takie konta nie dostaną tych danych.', 'portal-users' ) . '</p></div>';
+			}
+			if ( isset( $counts[ AccountChange::ISSUE_STATUS_MISSING ] ) ) {
+				echo '<div class="notice notice-warning inline"><p>' . esc_html__( 'Część kont ze starej wtyczki nie ma wartości stanu, więc ich stan rozstrzygnie ustawienie „Konto bez rozpoznanego stanu”. Sprawdź je przed zapisem: to ono zdecyduje, czy takie konta wejdą na portal, trafią do wniosków, czy zostaną bez stanu.', 'portal-users' ) . '</p></div>';
+			}
 		}
 
 		$samples = isset( $report['samples'] ) && is_array( $report['samples'] ) ? $report['samples'] : array();
@@ -581,11 +592,12 @@ final class ImportScreen {
 	/**
 	 * Formularz mapowania. Wartości początkowe pochodzą z zapisanego mapowania.
 	 *
-	 * @param array<int, MetaKeyStat> $stats Wynik skanu; pusty także wtedy, gdy skan się nie powiódł.
+	 * @param array<int, MetaKeyStat> $stats     Wynik skanu; pusty także wtedy, gdy skan się nie powiódł.
+	 * @param ImportMapping           $mapping   Zapisane mapowanie.
+	 * @param array<string, string>   $acfFields Pola grupy ACF: klucz => etykieta.
 	 */
-	private static function render_form( array $stats ): void {
-		$mapping = ImportMappingRepository::get();
-		$stored  = $mapping->toArray();
+	private static function render_form( array $stats, ImportMapping $mapping, array $acfFields ): void {
+		$stored = $mapping->toArray();
 
 		// Zapisane klucze zostają na liście także wtedy, gdy skan ich nie widzi (porażka skanu, usunięte konta).
 		$keys = array();
@@ -606,7 +618,6 @@ final class ImportScreen {
 		self::form_header( self::ACTION_SAVE );
 
 		echo '<h3>' . esc_html__( 'Pola', 'portal-users' ) . '</h3>';
-		$acfFields = self::source()->fields();
 		if ( array() === $acfFields ) {
 			echo '<p>' . esc_html__( 'Wybrana grupa pól ACF nie jest dostępna albo nie zawiera pól. Wskaż grupę w ustawieniach.', 'portal-users' ) . '</p>';
 		} else {
