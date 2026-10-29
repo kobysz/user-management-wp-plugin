@@ -15,6 +15,7 @@ use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Fields\SubmissionFilter;
 use PortalUsers\Domain\Profession\ProfessionCollection;
 use PortalUsers\Domain\Registration\BooleanNormalizer;
+use PortalUsers\Domain\Spam\IpAddress;
 use PortalUsers\Domain\Credentials\ValidatorRegistry;
 use PortalUsers\Domain\Spam\SpamVerdict;
 use PortalUsers\Domain\Submission\SubmissionResult;
@@ -472,6 +473,12 @@ final class RegistrationHandler {
 
 		update_user_meta( $userId, UserMeta::PROFESSION, $profession->key );
 		AccountStatusRepository::set( $userId, AccountStatus::EmailUnconfirmed );
+		// Redakcja ocenia wniosek także po adresie zgłaszającego. Tą samą drogą co reszta wtyczki, żeby
+		// zaufany nagłówek proxy miał jedną interpretację; pusty napis nie jest adresem, więc bez metadanej.
+		$ip = IpAddress::from( $_SERVER, SettingsRepository::get()->trustedProxyHeader );
+		if ( '' !== $ip ) {
+			update_user_meta( $userId, UserMeta::REGISTRATION_IP, $ip );
+		}
 		// Odsiew po macierzy z kontekstu; wartości są już sanityzowane (patrz sanitized()), a do metadanych
 		// wchodzi wyłącznie tekst (patrz stored_values()). Wartości pól ACF zapisujemy z przedrostkiem,
 		// więc kolizja z jakąkolwiek metadaną WordPressa jest niemożliwa z konstrukcji.
