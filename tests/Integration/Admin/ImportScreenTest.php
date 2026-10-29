@@ -198,6 +198,53 @@ final class ImportScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '&lt;img src=x', $html );
 	}
 
+	public function test_zapisana_wartosc_zrodlowa_i_etykiety_sa_eskejpowane(): void {
+		$hostile = '"><script>alert(1)</script>';
+		ProfessionRepository::save(
+			ProfessionCollection::fromArray(
+				array(
+					array(
+						'key'             => 'lekarz',
+						'label'           => '<b>profesja</b>',
+						'credential_type' => 'none',
+					),
+				)
+			)
+		);
+		$this->withSource( array( 'pwz' => '<i>pole</i>' ) );
+		ImportMappingRepository::save(
+			ImportMapping::fromArray(
+				array(
+					'fields'           => array( 'pwz' => 'wpmem_pwz' ),
+					'professionKey'    => 'wpmem_zawod',
+					'professionValues' => array( $hostile => 'lekarz' ),
+				)
+			)
+		);
+
+		$html = $this->renderAsAdmin();
+
+		$this->assertStringNotContainsString( '<script>alert(1)', $html );
+		$this->assertStringContainsString( '&lt;script&gt;alert(1)&lt;/script&gt;', $html, 'Wartość źródłowa w atrybucie.' );
+		$this->assertStringNotContainsString( '<b>profesja</b>', $html );
+		$this->assertStringContainsString( '&lt;b&gt;profesja&lt;/b&gt;', $html, 'Etykieta profesji.' );
+		$this->assertStringNotContainsString( '<i>pole</i>', $html );
+		$this->assertStringContainsString( '&lt;i&gt;pole&lt;/i&gt;', $html, 'Etykieta pola ACF.' );
+	}
+
+	public function test_spreparowany_post_nie_nadpisuje_zapisanego_wpisu_pola_bez_celu(): void {
+		OptionStore::write( OptionStore::OPTION_IMPORT_MAPPING, array( 'fields' => array( 'zniknelo' => 'prawdziwy_klucz' ) ) );
+		$post = $this->validPost();
+		$post['fields']['zniknelo'] = 'evil';
+		$this->asAdminPosting( ImportScreen::ACTION_SAVE, $post );
+
+		ImportScreen::handle_save();
+
+		$raw = OptionStore::read( OptionStore::OPTION_IMPORT_MAPPING );
+		$this->assertSame( 'prawdziwy_klucz', $raw['fields']['zniknelo'] ?? null, 'Zapisany wpis przeżywa próbę nadpisania.' );
+		$this->assertSame( 'wpmem_pwz', $raw['fields']['pwz'] ?? null );
+	}
+
 	public function test_formularz_oferuje_tylko_dozwolone_stany(): void {
 		$html = $this->renderAsAdmin();
 

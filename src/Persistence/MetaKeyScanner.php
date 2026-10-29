@@ -49,7 +49,7 @@ final class MetaKeyScanner {
 
 		// get_results() zwraca null przy błędzie SQL; pusta lista oznaczałaby „portal bez metadanych" i administrator nic by nie zmapował.
 		if ( ! is_array( $rows ) || '' !== $wpdb->last_error ) {
-			throw new \RuntimeException( 'Nie udało się odczytać kluczy user_meta z bazy danych.' );
+			throw new \RuntimeException( esc_html__( 'Nie udało się odczytać kluczy user_meta z bazy danych.', 'portal-users' ) );
 		}
 
 		$stats = array();
