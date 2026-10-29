@@ -14,6 +14,7 @@ use PortalUsers\Admin\VerdictLabels;
 use PortalUsers\Domain\Application\CredentialVerdict;
 use PortalUsers\Persistence\EventLog;
 use PortalUsers\Persistence\MailQueueRepository;
+use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Persistence\UserMeta;
@@ -35,8 +36,9 @@ final class PrivacyProvider {
 	public const PER_PAGE = 50;
 
 	/**
-	 * Górna granica przebiegów erasera. Rdzeń woła eraser, aż dostanie `done`, a `done` czeka na przebieg
-	 * pusty; przy trwałej awarii zapisu wiersz wracałby w nieskończoność. Lepiej skończyć i powiedzieć prawdę.
+	 * Górna granica przebiegów erasera. Rdzeń woła eraser, aż dostanie `done`, a `done` czeka, aż konto nie
+	 * ma już wierszy z `anonymized = 0`; przy trwałej awarii zapisu wiersz zostaje i pętla wracałaby w
+	 * nieskończoność. Lepiej skończyć i powiedzieć prawdę.
 	 */
 	public const MAX_PASSES = 10;
 
@@ -153,9 +155,10 @@ final class PrivacyProvider {
 	 * Usuwa dane osobowe konta o danym adresie, a zostawia stan, profesję i zapis zgody.
 	 *
 	 * Rdzeń woła tę metodę w pętli, aż dostanie `done === true`. Anonimizacja wyjmuje wiersze ze zbioru
-	 * dopasowań, więc nie ma offsetu: `$page` służy tylko do przycięcia pętli. `done` znaczy „ten przebieg
-	 * nie miał już czego anonimizować", a nie „zmieniono mniej niż strona": repozytoria po cichu pomijają
-	 * wiersz, którego UPDATE zawiódł, i reguła oparta na rozmiarze strony zostawiłaby w nim dane osobowe.
+	 * dopasowań, więc nie ma offsetu: `$page` służy tylko do przycięcia pętli. `done` znaczy „dla tego konta
+	 * nie został żaden wiersz z `anonymized = 0`", a nie „ten przebieg niczego nie zmienił": repozytoria po
+	 * cichu pomijają wiersz, którego UPDATE zawiódł, więc przebieg bez zmian bywa przebiegiem, który nie
+	 * potrafi zapisać, i uznanie go za koniec zostawiłoby dane osobowe przy koncie z meldunkiem o sukcesie.
 	 *
 	 * @param string $email Adres e-mail z żądania.
 	 * @param int    $page  Numer przebiegu, od 1.
@@ -196,8 +199,33 @@ final class PrivacyProvider {
 			'items_removed'  => $removed || $anonymized > 0,
 			'items_retained' => true,
 			'messages'       => $messages,
-			'done'           => 0 === $anonymized,
+			'done'           => 0 === self::remaining( $user->ID ),
 		);
+	}
+
+	/**
+	 * Liczba wierszy konta, które nadal czekają na anonimizację, w logu zdarzeń i w kolejce razem.
+	 *
+	 * Zapytanie, które zawiodło (brak tabeli, błąd bazy), liczy się jako jeden niezanonimizowany wiersz:
+	 * nie da się wtedy dowieść, że nic nie zostało, a „zero" z awarii zamknęłoby pętlę meldunkiem o sukcesie.
+	 *
+	 * @param int $userId Konto.
+	 */
+	private static function remaining( int $userId ): int {
+		global $wpdb;
+
+		$count = 0;
+		foreach ( array(
+			array( 'event_log', 'subject_user_id' ),
+			array( 'mail_queue', 'user_id' ),
+		) as [ $table, $column ] ) {
+			$left   = $wpdb->get_var(
+				$wpdb->prepare( 'SELECT COUNT(*) FROM %i WHERE %i = %d AND anonymized = 0', Migrations::table( $table ), $column, $userId )
+			);
+			$count += null === $left ? 1 : (int) $left;
+		}
+
+		return $count;
 	}
 
 	/**

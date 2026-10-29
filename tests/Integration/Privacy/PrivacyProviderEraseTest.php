@@ -153,8 +153,9 @@ final class PrivacyProviderEraseTest extends WP_UnitTestCase {
 		} while ( ! $result['done'] && $passes < 10 );
 
 		$this->assertTrue( $result['done'], 'Pętla ma się skończyć na done === true.' );
-		// Dwa przebiegi anonimizują (strona i reszta), trzeci jest pusty i zamyka pętlę.
-		$this->assertLessThanOrEqual( 3, $passes );
+		// Anonimizacja nie stronicuje: pierwszy przebieg bierze wszystkie wiersze konta, a pętla kończy się,
+		// gdy żaden nie zostaje z anonymized = 0. Jeden przebieg wystarcza; zapas na dwa chroni przed kruchością testu.
+		$this->assertLessThanOrEqual( 2, $passes );
 		$this->assertSame( 0, $this->unanonymized_rows( $id ), 'Żaden wiersz konta nie może zostać z danymi.' );
 	}
 
@@ -167,6 +168,45 @@ final class PrivacyProviderEraseTest extends WP_UnitTestCase {
 		$this->assertTrue( $result['done'] );
 		$this->assertNotEmpty( $result['messages'] );
 		$this->assertTrue( $result['items_retained'] );
+		$this->assertFalse( $result['items_removed'], 'Przebieg odcięty limitem niczego nie usuwa, więc nie może tego zgłaszać.' );
+	}
+
+	public function test_trwala_porazka_zapisu_konczy_petle_przez_limit_a_nie_przez_done_z_pustego_przebiegu(): void {
+		global $wpdb;
+		$id = $this->account();
+		EventLog::write( 'application_rejected', $id, 1, array( 'reason' => 'x' ) );
+		$this->mail( $id, 'k-awaria' );
+
+		$table            = Migrations::table( 'mail_queue' );
+		$filter           = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'UPDATE' ) && str_contains( $query, "`{$table}`" )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+		$previousSuppress = (bool) $wpdb->suppress_errors( true );
+		$passes           = 0;
+		$page             = 1;
+		$messages         = array();
+		$result           = array( 'done' => false );
+		add_filter( 'query', $filter );
+		try {
+			// Pętla jak w rdzeniu, z twardym ogranicznikiem ponad MAX_PASSES, żeby błąd nie zawiesił suity.
+			do {
+				$result   = PrivacyProvider::erase( 'lekarz@example.com', $page );
+				$messages = array_merge( $messages, $result['messages'] );
+				++$passes;
+				++$page;
+			} while ( ! $result['done'] && $passes < PrivacyProvider::MAX_PASSES + 5 );
+		} finally {
+			remove_filter( 'query', $filter );
+			$wpdb->suppress_errors( $previousSuppress );
+		}
+
+		$this->assertTrue( $result['done'] );
+		$this->assertSame( PrivacyProvider::MAX_PASSES + 1, $passes, 'Wiersz został z danymi, więc koniec pętli ma dać dopiero limit przebiegów.' );
+		$this->assertContains(
+			'Nie udało się zanonimizować części wpisów logu zdarzeń lub wysyłek tego konta. Powtórz żądanie albo zgłoś sprawę administratorowi.',
+			$messages
+		);
+		$this->assertSame( '0', (string) $wpdb->get_var( $wpdb->prepare( 'SELECT anonymized FROM %i WHERE user_id = %d', $table, $id ) ) );
 	}
 
 	public function test_eraser_nie_rusza_danych_innego_konta(): void {
