@@ -34,11 +34,24 @@ final class ProfileSync {
 	public const LOG_CREDENTIAL_CHANGED = 'credential_changed';
 
 	/**
+	 * Nazwy pól objętych mostem, zapamiętane na czas żądania renderu `user-edit.php`.
+	 *
+	 * `acf/load_value` woła się dla każdego pola ekranu, a wyliczenie czyta ustawienia, macierz i definicje
+	 * pól ACF. Klucz niesie identyfikator konta i jego profesję, więc dwa konta w jednym procesie (testy,
+	 * partie) się nie mieszają. Pamięć jest czyszczona przy rejestracji i przy każdym zapisie ACF,
+	 * a zapis nigdy z niej nie korzysta: tylko odczyt na ekranie toleruje nazwy sprzed zmiany ustawień.
+	 *
+	 * @var array<string, list<string>>
+	 */
+	private static array $namesMemo = array();
+
+	/**
 	 * Podpina zasilanie ACF przy odczycie i przeniesienie przy zapisie. ACF zapisuje wartości na
 	 * priorytecie 10, więc 20 czyta stan już po zapisie; `profile_update` się nie nadaje, bo odpala
 	 * się w `wp_update_user()`, czyli przed zapisem ACF.
 	 */
 	public static function register(): void {
+		self::$namesMemo = array();
 		add_action( 'acf/save_post', array( self::class, 'on_acf_save' ), 20 );
 		add_filter( 'acf/load_value', array( self::class, 'on_load_value' ), 10, 3 );
 	}
@@ -61,7 +74,7 @@ final class ProfileSync {
 			return $value;
 		}
 		$name = $field['name'];
-		if ( ! in_array( $name, self::synced_names( $userId ), true ) ) {
+		if ( ! in_array( $name, self::synced_names_for_screen( $userId ), true ) ) {
 			return $value;
 		}
 		if ( metadata_exists( 'user', $userId, $name ) ) {
@@ -86,7 +99,9 @@ final class ProfileSync {
 			return;
 		}
 
-		$names = self::synced_names( $userId );
+		// Zapis liczy nazwy zawsze od nowa i unieważnia pamięć odczytu.
+		self::$namesMemo = array();
+		$names           = self::synced_names( $userId );
 		if ( array() === $names ) {
 			return;
 		}
@@ -108,13 +123,20 @@ final class ProfileSync {
 
 			// Pusta wartość z ACF nie nadpisuje niepustej wartości z rejestracji. Dopóki zachowanie ACF
 			// nie zostanie potwierdzone na dev z prawdziwym ACF Pro, ciche zniszczenie danych lekarza jest
-			// gorszą awarią niż to, że świadome wyczyszczenie pola przez administratora nie przejdzie tą drogą.
-			// Znany, zapisany koszt; nie zmieniać bez decyzji właściciela.
-			if ( ( array() === $value || '' === $value ) && array() !== $old && '' !== $old && false !== $old ) {
+			// gorszą awarią niż to, że czyszczenie pola nie przejdzie tą drogą.
+			//
+			// Koszt jest TRWAŁY i niewidoczny, nie tylko „nieprzechodzące czyszczenie": administrator czyści
+			// pole, ACF zapisuje '' pod nazwą nieprzedrostkowaną, my robimy `continue`. Od tej chwili ta
+			// metadana istnieje (i jest pusta), więc `on_load_value()` nigdy już nie podstawi wartości z
+			// rejestracji. `user-edit.php` pokazuje wtedy pole PUSTE, a ekran wniosków, mail do redakcji i
+			// eksport dalej pokazują STARĄ wartość, bez żadnego komunikatu; administrator widzi wyczyszczone
+			// pole i wierzy, że je wyczyścił. Zdjęcie tej osłony wymaga (1) potwierdzenia zachowania ACF
+			// na dev z prawdziwym ACF Pro i (2) zasiania metadanej ACF przy odczycie. Decyzja właściciela.
+			if ( '' === $value && '' !== $old && false !== $old && array() !== $old ) {
 				continue;
 			}
 
-			if ( '' !== $credentialField && $name === $credentialField && is_string( $value ) ) {
+			if ( '' !== $credentialField && $name === $credentialField ) {
 				$oldText = is_scalar( $old ) ? (string) $old : '';
 				// Log tylko przy faktycznej zmianie: log rosnący przy każdym otwarciu profilu jest bezużyteczny.
 				if ( $oldText !== $value ) {
@@ -171,22 +193,45 @@ final class ProfileSync {
 	}
 
 	/**
-	 * Sanityzuje wartość: skalar jako tekst, tablicę element po elemencie (zostaje tablicą).
+	 * Sanityzuje wartość i spłaszcza ją do tekstu, tak samo jak rejestracja.
+	 *
+	 * Kształt jest wspólny z `RegistrationHandler::stored_values()`: do metadanych wtyczki wchodzi wyłącznie
+	 * tekst, a pole wielowartościowe jedzie jako lista po przecinkach. Tablica pod tym samym kluczem dałaby
+	 * dwa kształty zależnie od tego, kto pisał ostatni, a `ApplicationRepository::meta_string()` zwraca
+	 * `''` dla nie-napisu, więc numer uprawnień po edycji administratora cicho by znikał. Sanityzacja idzie
+	 * element po elemencie przed złączeniem. Rejestracja używa dla wszystkich pól `sanitize_text_field()`
+	 * (bez rozróżnienia pól wielolinijkowych), więc most robi to samo; zgodność kształtu jest ważniejsza.
 	 *
 	 * @param mixed $value Surowa wartość z metadanej ACF.
-	 * @return string|array<int|string, string>
 	 */
-	private static function sanitized( mixed $value ): string|array {
+	private static function sanitized( mixed $value ): string {
 		if ( is_array( $value ) ) {
-			$clean = array();
-			foreach ( $value as $k => $item ) {
-				if ( is_scalar( $item ) ) {
-					$clean[ $k ] = sanitize_text_field( (string) $item );
+			$parts = array();
+			foreach ( $value as $item ) {
+				$text = self::sanitized( $item );
+				if ( '' !== $text ) {
+					$parts[] = $text;
 				}
 			}
-			return $clean;
+			return implode( ', ', $parts );
 		}
 
 		return is_scalar( $value ) ? sanitize_text_field( (string) $value ) : '';
+	}
+
+	/**
+	 * Nazwy pól objętych mostem, z pamięcią na czas żądania; tylko dla odczytu na ekranie.
+	 *
+	 * @param int $userId Identyfikator konta.
+	 * @return list<string>
+	 */
+	private static function synced_names_for_screen( int $userId ): array {
+		$profession = get_user_meta( $userId, UserMeta::PROFESSION, true );
+		$key        = $userId . ':' . ( is_string( $profession ) ? $profession : '' );
+		if ( ! isset( self::$namesMemo[ $key ] ) ) {
+			self::$namesMemo[ $key ] = self::synced_names( $userId );
+		}
+
+		return self::$namesMemo[ $key ];
 	}
 }

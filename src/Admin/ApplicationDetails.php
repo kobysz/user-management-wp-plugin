@@ -69,8 +69,9 @@ final class ApplicationDetails {
 	}
 
 	/**
-	 * Przyciski rozstrzygnięcia: ten sam punkt wejścia i nonce co lista. Przycisk stanu, w którym konto już jest,
-	 * się nie pojawia, a konto niepotwierdzone nie ma żadnego (nie jest wnioskiem).
+	 * Przyciski rozstrzygnięcia: ten sam punkt wejścia i nonce co lista. Zatwierdzenie zatwierdzonego konta
+	 * się nie pojawia; konto odrzucone dostaje „Popraw powód odrzucenia" zamiast „Odrzuć". Konto niepotwierdzone
+	 * nie ma żadnego przycisku (nie jest wnioskiem).
 	 *
 	 * @param ApplicationRow $row Wniosek.
 	 */
@@ -85,16 +86,15 @@ final class ApplicationDetails {
 		wp_nonce_field( ApplicationsScreen::ACTION_DECIDE, Request::NONCE_FIELD );
 		ApplicationsScreen::render_return_fields();
 
-		if ( AccountStatus::Rejected !== $row->status ) {
-			ApplicationsScreen::render_reason_field();
-		}
+		// Konto odrzucone też dostaje pole powodu: to jedyna droga poprawy pomylonego powodu, bo metadana
+		// nie jest polem ACF i ekran edycji użytkownika jej nie pokazuje.
+		ApplicationsScreen::render_reason_field();
 		echo '<p>';
 		if ( AccountStatus::Approved !== $row->status ) {
 			echo '<button type="submit" class="button button-primary" name="' . esc_attr( ApplicationsScreen::FIELD_DECISION ) . '" value="' . esc_attr( ApplicationsScreen::DECIDE_APPROVE ) . '">' . esc_html__( 'Zatwierdź', 'portal-users' ) . '</button> ';
 		}
-		if ( AccountStatus::Rejected !== $row->status ) {
-			echo '<button type="submit" class="button" name="' . esc_attr( ApplicationsScreen::FIELD_DECISION ) . '" value="' . esc_attr( ApplicationsScreen::DECIDE_REJECT ) . '">' . esc_html__( 'Odrzuć', 'portal-users' ) . '</button>';
-		}
+		$reject_label = AccountStatus::Rejected === $row->status ? __( 'Popraw powód odrzucenia', 'portal-users' ) : __( 'Odrzuć', 'portal-users' );
+		echo '<button type="submit" class="button" name="' . esc_attr( ApplicationsScreen::FIELD_DECISION ) . '" value="' . esc_attr( ApplicationsScreen::DECIDE_REJECT ) . '">' . esc_html( $reject_label ) . '</button>';
 		echo '</p></form>';
 	}
 

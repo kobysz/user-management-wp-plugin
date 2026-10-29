@@ -203,15 +203,28 @@ final class ProfileSyncTest extends WP_UnitTestCase {
 		$this->assertSame( 0, $this->logCount( $id ) );
 	}
 
-	public function test_wartosc_wielowartosciowa_przenosi_sie_jako_lista(): void {
+	public function test_wartosc_wielowartosciowa_trafia_do_metadanej_jako_napis_po_przecinkach_nigdy_jako_tablica(): void {
 		$id = $this->account();
 		update_user_meta( $id, 'miejsca', array( 'Szpital', '<b>Poradnia</b>' ) );
 
 		do_action( 'acf/save_post', 'user_' . $id );
 
 		$stored = get_user_meta( $id, UserMeta::ACF_PREFIX . 'miejsca', true );
-		$this->assertIsArray( $stored );
-		$this->assertSame( array( 'Szpital', 'Poradnia' ), $stored );
+		$this->assertIsNotArray( $stored );
+		$this->assertSame( 'Szpital, Poradnia', $stored, 'Kształt musi być taki sam jak z rejestracji (stored_values()).' );
+		$this->assertFalse( is_serialized( $stored ), 'W wp_usermeta nie ma prawa wylądować zserializowana tablica.' );
+		global $wpdb;
+		$raw = (string) $wpdb->get_var( $wpdb->prepare( "SELECT meta_value FROM {$wpdb->usermeta} WHERE user_id = %d AND meta_key = %s", $id, UserMeta::ACF_PREFIX . 'miejsca' ) ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery
+		$this->assertSame( 'Szpital, Poradnia', $raw );
+	}
+
+	public function test_pole_wielowartosciowe_z_pustymi_elementami_pomija_puste_jak_rejestracja(): void {
+		$id = $this->account();
+		update_user_meta( $id, 'miejsca', array( 'Szpital', '', '  ', 'Poradnia' ) );
+
+		do_action( 'acf/save_post', 'user_' . $id );
+
+		$this->assertSame( 'Szpital, Poradnia', get_user_meta( $id, UserMeta::ACF_PREFIX . 'miejsca', true ) );
 	}
 
 	public function test_wartosci_sa_sanityzowane_przy_przenoszeniu(): void {
@@ -271,6 +284,28 @@ final class ProfileSyncTest extends WP_UnitTestCase {
 		$this->assertSame( '5425740', get_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', true ) );
 		$this->assertSame( 'Szpital', get_user_meta( $id, UserMeta::ACF_PREFIX . 'miejsca', true ) );
 		$this->assertSame( 0, $this->logCount( $id ) );
+	}
+
+	public function test_filtr_odczytu_nie_podstawia_wartosci_gdy_acf_ma_wlasna_pusta_metadana(): void {
+		$id = $this->account();
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', '5425740' );
+		// Po wyczyszczeniu pola ACF zapisuje '' pod nazwą nieprzedrostkowaną; od tej chwili metadana ISTNIEJE
+		// i filtr nigdy już nie podstawi wartości z rejestracji (udokumentowana, trwała rozbieżność, patrz ProfileSync).
+		update_user_meta( $id, 'pwz', '' );
+
+		$this->assertSame( '', apply_filters( 'acf/load_value', '', 'user_' . $id, array( 'name' => 'pwz' ) ) );
+		$this->assertSame( 'wejscie', apply_filters( 'acf/load_value', 'wejscie', 'user_' . $id, array( 'name' => 'pwz' ) ) );
+	}
+
+	public function test_filtr_odczytu_rozroznia_konta_mimo_zapamietanych_nazw(): void {
+		$synced = $this->account();
+		update_user_meta( $synced, UserMeta::ACF_PREFIX . 'pwz', '5425740' );
+		$other = $this->account( '' );
+		update_user_meta( $other, UserMeta::ACF_PREFIX . 'pwz', '9999999' );
+
+		$this->assertSame( '5425740', apply_filters( 'acf/load_value', '', 'user_' . $synced, array( 'name' => 'pwz' ) ) );
+		$this->assertSame( '', apply_filters( 'acf/load_value', '', 'user_' . $other, array( 'name' => 'pwz' ) ), 'Konto bez profesji nie dziedziczy nazw zapamiętanych dla innego konta.' );
+		$this->assertSame( '5425740', apply_filters( 'acf/load_value', '', 'user_' . $synced, array( 'name' => 'pwz' ) ) );
 	}
 
 	public function test_filtr_odczytu_zasila_acf_wartoscia_z_rejestracji(): void {

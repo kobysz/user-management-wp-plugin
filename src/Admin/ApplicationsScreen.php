@@ -46,11 +46,12 @@ final class ApplicationsScreen {
 	public const NOTICE_NOTHING_SELECTED = 'nothing_selected';
 
 	// Liczniki wyniku partii jadą w adresie przekierowania, bo po PRG to jedyne, co ekran ma o wyniku.
-	private const ARG_DECISION    = 'pusers_decision_done';
-	private const ARG_DONE        = 'pusers_done';
-	private const ARG_MAIL_FAILED = 'pusers_mail_failed';
-	private const ARG_UNCHANGED   = 'pusers_unchanged';
-	private const ARG_SKIPPED     = 'pusers_skipped';
+	private const ARG_DECISION       = 'pusers_decision_done';
+	private const ARG_DONE           = 'pusers_done';
+	private const ARG_MAIL_FAILED    = 'pusers_mail_failed';
+	private const ARG_UNCHANGED      = 'pusers_unchanged';
+	private const ARG_REASON_UPDATED = 'pusers_reason_updated';
+	private const ARG_SKIPPED        = 'pusers_skipped';
 
 	/**
 	 * Podpina podstronę i obsługę rozstrzygnięcia. Rejestracja jest wołana z `Plugin::boot()` poza bramką zależności.
@@ -95,10 +96,11 @@ final class ApplicationsScreen {
 
 		$actor  = get_current_user_id();
 		$counts = array(
-			self::ARG_DONE        => 0,
-			self::ARG_MAIL_FAILED => 0,
-			self::ARG_UNCHANGED   => 0,
-			self::ARG_SKIPPED     => 0,
+			self::ARG_DONE           => 0,
+			self::ARG_MAIL_FAILED    => 0,
+			self::ARG_UNCHANGED      => 0,
+			self::ARG_REASON_UPDATED => 0,
+			self::ARG_SKIPPED        => 0,
 		);
 		foreach ( $ids as $id ) {
 			$result = self::DECIDE_APPROVE === $decision ? Decision::approve( $id, $actor ) : Decision::reject( $id, $actor, $reason );
@@ -113,6 +115,10 @@ final class ApplicationsScreen {
 					break;
 				case Decision::RESULT_UNCHANGED:
 					++$counts[ self::ARG_UNCHANGED ];
+					break;
+				case Decision::RESULT_REASON_UPDATED:
+					// Sukces, nie pominięcie: redaktor poprawił powód, a lekarz dostał mail z nowym.
+					++$counts[ self::ARG_REASON_UPDATED ];
 					break;
 				default:
 					++$counts[ self::ARG_SKIPPED ];
@@ -284,6 +290,7 @@ final class ApplicationsScreen {
 			$done        = absint( self::query_arg( self::ARG_DONE ) );
 			$mail_failed = absint( self::query_arg( self::ARG_MAIL_FAILED ) );
 			$unchanged   = absint( self::query_arg( self::ARG_UNCHANGED ) );
+			$updated     = absint( self::query_arg( self::ARG_REASON_UPDATED ) );
 			$skipped     = absint( self::query_arg( self::ARG_SKIPPED ) );
 
 			$lines = array();
@@ -294,6 +301,10 @@ final class ApplicationsScreen {
 					/* translators: %s: liczba wniosków. */
 					: sprintf( __( 'Zatwierdzono wniosków: %s.', 'portal-users' ), number_format_i18n( $done ) );
 			}
+			if ( $updated > 0 ) {
+				/* translators: %s: liczba wniosków. */
+				$lines[] = sprintf( __( 'Poprawiono powód odrzucenia: %s.', 'portal-users' ), number_format_i18n( $updated ) );
+			}
 			if ( $mail_failed > 0 ) {
 				/* translators: %s: liczba wniosków. */
 				$lines[] = sprintf( __( 'Mail do wnioskodawcy nie wyszedł (wnioski: %s). Konta są rozstrzygnięte, ale trzeba powiadomić ich inaczej.', 'portal-users' ), number_format_i18n( $mail_failed ) );
@@ -301,7 +312,7 @@ final class ApplicationsScreen {
 			if ( $unchanged > 0 ) {
 				$lines[] = self::DECIDE_REJECT === self::query_arg( self::ARG_DECISION )
 					/* translators: %s: liczba wniosków. */
-					? sprintf( __( 'Konta już były odrzucone (wnioski: %s), nic nie zmieniono; powód nie został zmieniony.', 'portal-users' ), number_format_i18n( $unchanged ) )
+					? sprintf( __( 'Konta już były odrzucone (wnioski: %s), a powód jest identyczny z zapisanym; nic nie zmieniono.', 'portal-users' ), number_format_i18n( $unchanged ) )
 					/* translators: %s: liczba wniosków. */
 					: sprintf( __( 'Konta były już zatwierdzone (wnioski: %s), nic nie zmieniono.', 'portal-users' ), number_format_i18n( $unchanged ) );
 			}
@@ -313,7 +324,7 @@ final class ApplicationsScreen {
 				$lines[] = __( 'Nic nie zmieniono.', 'portal-users' );
 			}
 
-			$class = $mail_failed > 0 || $unchanged > 0 || $skipped > 0 || 0 === $done ? 'notice-warning' : 'notice-success';
+			$class = $mail_failed > 0 || $unchanged > 0 || $skipped > 0 || ( 0 === $done && 0 === $updated ) ? 'notice-warning' : 'notice-success';
 			echo '<div class="notice ' . esc_attr( $class ) . ' is-dismissible">';
 			foreach ( $lines as $line ) {
 				echo '<p>' . esc_html( $line ) . '</p>';

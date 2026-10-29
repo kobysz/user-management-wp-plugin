@@ -579,18 +579,34 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'notice-warning', $html );
 	}
 
-	public function test_powtorne_odrzucenie_ma_wlasny_komunikat_a_nie_sukces(): void {
+	public function test_powtorne_odrzucenie_z_tym_samym_powodem_mowi_ze_powod_jest_identyczny(): void {
 		$id = $this->account( 'pending' );
 		$this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason' => 'Pierwszy' ) );
 
-		$args = $this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason' => 'Poprawiony' ) );
+		$args = $this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason' => 'Pierwszy' ) );
 
 		$this->assertSame( 'Pierwszy', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
 		$this->assertSame( '0', $args['pusers_done'] );
 		$this->assertSame( '1', $args['pusers_unchanged'] );
 		$html = $this->render_notice( $args );
-		$this->assertStringContainsString( 'powód nie został zmieniony', $html );
+		$this->assertStringContainsString( 'powód jest identyczny z zapisanym', $html );
 		$this->assertStringNotContainsString( 'Odrzucono wniosków', $html );
+	}
+
+	public function test_poprawa_powodu_odrzucenia_ma_wlasny_komunikat_i_jest_sukcesem(): void {
+		$id = $this->account( 'pending' );
+		$this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason' => 'Pierwszy' ) );
+
+		$args = $this->decide( ApplicationsScreen::DECIDE_REJECT, array( (string) $id ), array( 'reason' => 'Poprawiony' ) );
+
+		$this->assertSame( 'Poprawiony', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		$this->assertSame( '1', $args['pusers_reason_updated'] );
+		$this->assertSame( '0', $args['pusers_unchanged'] );
+		$this->assertSame( '0', $args['pusers_skipped'] );
+		$html = $this->render_notice( $args );
+		$this->assertStringContainsString( 'Poprawiono powód odrzucenia: 1', $html );
+		$this->assertStringNotContainsString( 'Pominięto', $html );
+		$this->assertStringContainsString( 'notice-success', $html );
 	}
 
 	public function test_po_akcji_nastepuje_przekierowanie_z_zachowaniem_zakladki_i_filtra(): void {
@@ -654,5 +670,26 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'value="' . ApplicationsScreen::ACTION_DECIDE . '"', $html );
 		$this->assertStringContainsString( 'name="pusers_decision" value="approve"', $html );
 		$this->assertStringContainsString( 'name="pusers_decision" value="reject"', $html );
+	}
+
+	public function test_szczegoly_konta_odrzuconego_maja_pole_powodu_i_przycisk_korekty(): void {
+		$id = $this->account( 'rejected' );
+		update_user_meta( $id, UserMeta::REJECTION_REASON, 'Stary' );
+
+		$html = $this->render( array( 'user' => (string) $id ) );
+
+		$this->assertStringContainsString( 'name="' . ApplicationsScreen::FIELD_REASON . '"', $html );
+		$this->assertStringContainsString( 'name="pusers_decision" value="reject"', $html );
+		$this->assertStringContainsString( 'Popraw powód odrzucenia', $html );
+		$this->assertStringNotContainsString( '>Odrzuć<', $html, 'Przycisk korekty mówi, co robi, a nie „Odrzuć".' );
+	}
+
+	public function test_szczegoly_konta_niepotwierdzonego_nie_maja_zadnego_przycisku(): void {
+		$id = $this->account( 'email_unconfirmed' );
+
+		$html = $this->render( array( 'user' => (string) $id ) );
+
+		$this->assertStringNotContainsString( 'name="pusers_decision"', $html );
+		$this->assertStringNotContainsString( 'name="' . ApplicationsScreen::FIELD_REASON . '"', $html );
 	}
 }

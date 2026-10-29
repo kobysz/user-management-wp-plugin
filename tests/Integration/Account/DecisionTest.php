@@ -218,23 +218,70 @@ final class DecisionTest extends WP_UnitTestCase {
 		$this->assertCount( 1, $this->logRows( Decision::LOG_APPROVED ) );
 	}
 
-	public function test_ponowne_odrzucenie_z_innym_powodem_nie_zmienia_niczego(): void {
+	public function test_ponowne_odrzucenie_z_innym_powodem_poprawia_powod_pisze_log_i_wysyla_mail(): void {
 		$id = $this->account( AccountStatus::Pending );
 		Decision::reject( $id, $this->admin, 'stary powód' );
+		$logs       = count( $this->logRows( Decision::LOG_REJECTED ) );
+		$mailsCount = count( $this->mails() );
+
+		$this->assertSame( Decision::RESULT_REASON_UPDATED, Decision::reject( $id, $this->admin, 'nowy powód' ) );
+
+		$this->assertSame( AccountStatus::Rejected, AccountStatusRepository::get( $id ) );
+		$this->assertSame( 'nowy powód', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		$rows = $this->logRows( Decision::LOG_REJECTED );
+		$this->assertCount( $logs + 1, $rows, 'Korekta zostawia dokładnie jeden nowy wiersz audytu.' );
+		$last = $this->context( $rows[ count( $rows ) - 1 ] );
+		$this->assertSame( 'rejected', $last['previous_status'] ?? null );
+		$this->assertSame( 'nowy powód', $last['reason'] ?? null );
+		$mails = $this->mails();
+		$this->assertCount( $mailsCount + 1, $mails, 'Korekta wysyła dokładnie jeden nowy mail.' );
+		$this->assertSame( MailKind::Rejected->value, $mails[ count( $mails ) - 1 ]['kind'] );
+		$this->assertStringContainsString( 'nowy powód', $mails[ count( $mails ) - 1 ]['message'] );
+	}
+
+	public function test_korekta_powodu_wysyla_dokladnie_jeden_nowy_mail(): void {
+		$id = $this->account( AccountStatus::Rejected );
+		update_user_meta( $id, UserMeta::REJECTION_REASON, 'stary powód' );
+
+		$this->assertSame( Decision::RESULT_REASON_UPDATED, Decision::reject( $id, $this->admin, 'nowy powód' ) );
+
+		$this->assertCount( 1, $this->mails() );
+		$this->assertCount( 1, $this->logRows( Decision::LOG_REJECTED ) );
+	}
+
+	public function test_powtorka_odrzucenia_z_tym_samym_powodem_nie_robi_nic(): void {
+		$id = $this->account( AccountStatus::Pending );
+		Decision::reject( $id, $this->admin, 'ten sam powód' );
 		$logs  = count( $this->logRows( Decision::LOG_REJECTED ) );
 		$mails = count( $this->mails() );
 
-		$this->assertSame( Decision::RESULT_UNCHANGED, Decision::reject( $id, $this->admin, 'nowy powód' ) );
+		$this->assertSame( Decision::RESULT_UNCHANGED, Decision::reject( $id, $this->admin, '  ten sam powód ' ) );
 
-		$this->assertSame( 'stary powód', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
+		$this->assertSame( 'ten sam powód', get_user_meta( $id, UserMeta::REJECTION_REASON, true ) );
 		$this->assertCount( $logs, $this->logRows( Decision::LOG_REJECTED ) );
 		$this->assertCount( $mails, $this->mails() );
 	}
 
-	public function test_ponowne_odrzucenie_z_pustym_powodem_daje_unchanged_nie_empty_reason(): void {
+	public function test_nieudane_nadpisanie_powodu_nie_wysyla_maila(): void {
+		$id = $this->account( AccountStatus::Rejected );
+		update_user_meta( $id, UserMeta::REJECTION_REASON, 'stary powód' );
+		$block = static function ( $check, $object_id, $meta_key ) use ( $id ) {
+			return ( $id === (int) $object_id && UserMeta::REJECTION_REASON === $meta_key ) ? true : $check;
+		};
+		add_filter( 'update_user_metadata', $block, 10, 3 );
+
+		$result = Decision::reject( $id, $this->admin, 'nowy powód' );
+
+		remove_filter( 'update_user_metadata', $block, 10 );
+		$this->assertSame( Decision::RESULT_STORAGE_FAILED, $result );
+		$this->assertSame( array(), $this->mails() );
+		$this->assertCount( 0, $this->logRows( Decision::LOG_REJECTED ) );
+	}
+
+	public function test_ponowne_odrzucenie_z_pustym_powodem_daje_empty_reason_bo_powod_czytany_przed_porownaniem(): void {
 		$id = $this->account( AccountStatus::Rejected );
 
-		$this->assertSame( Decision::RESULT_UNCHANGED, Decision::reject( $id, $this->admin, '' ) );
+		$this->assertSame( Decision::RESULT_EMPTY_REASON, Decision::reject( $id, $this->admin, '' ) );
 	}
 
 	public function test_odrzucenie_konta_zatwierdzonego_jest_dozwolone(): void {
