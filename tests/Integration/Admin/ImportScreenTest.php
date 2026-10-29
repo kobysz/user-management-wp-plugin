@@ -10,12 +10,17 @@ namespace PortalUsers\Tests\Integration\Admin;
 use PortalUsers\Admin\ImportScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Domain\Fields\FieldMatrix;
+use PortalUsers\Domain\Import\AccountChange;
 use PortalUsers\Domain\Import\ImportMapping;
 use PortalUsers\Domain\Profession\ProfessionCollection;
+use PortalUsers\Persistence\FieldMatrixRepository;
 use PortalUsers\Persistence\ImportMappingRepository;
+use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\OptionStore;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
+use PortalUsers\Persistence\UserMeta;
 use WP_UnitTestCase;
 use WPDieException;
 
@@ -639,5 +644,408 @@ final class ImportScreenTest extends WP_UnitTestCase {
 				$GLOBALS['wp_filter']['admin_menu'] = $saved_menu;
 			}
 		}
+	}
+
+	/**
+	 * Mapowanie importu użyte w testach raportu: numer i profesja z kluczy `wpmem_*`.
+	 */
+	private function importMapping(): ImportMapping {
+		return ImportMapping::fromArray(
+			array(
+				'fields'           => array( 'pwz' => 'wpmem_pwz' ),
+				'professionKey'    => 'wpmem_role',
+				'professionValues' => array( 'doctor' => 'lekarz' ),
+			)
+		);
+	}
+
+	/**
+	 * Zapisuje mapowanie importu i macierz pól, a potem tworzy podaną liczbę kont ze źródłowymi danymi.
+	 *
+	 * @param int $accounts Liczba kont do zaimportowania.
+	 * @return list<int> Identyfikatory kont.
+	 */
+	private function seedImportable( int $accounts = 1 ): array {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		ImportMappingRepository::save( $this->importMapping() );
+		$ids = array();
+		for ( $i = 0; $i < $accounts; $i++ ) {
+			$id = (int) self::factory()->user->create();
+			update_user_meta( $id, 'wpmem_pwz', '123456' . $i );
+			update_user_meta( $id, 'wpmem_role', 'doctor' );
+			$ids[] = $id;
+		}
+		return $ids;
+	}
+
+	private function preview(): void {
+		$this->redirected = '';
+		$this->asAdminPosting( ImportScreen::ACTION_PREVIEW, array() );
+		ImportScreen::handle_preview();
+	}
+
+	private function apply(): void {
+		$this->redirected = '';
+		$this->asAdminPosting( ImportScreen::ACTION_APPLY, array() );
+		ImportScreen::handle_apply();
+	}
+
+	/**
+	 * Metadane importu konta w jednym ciągu: puste "|" oznacza, że nic nie zapisano.
+	 *
+	 * @param int $id Konto.
+	 */
+	private function importedMeta( int $id ): string {
+		return get_user_meta( $id, UserMeta::PROFESSION, true ) . '|' . get_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', true );
+	}
+
+	/**
+	 * Przenosi argumenty z ostatniego przekierowania do $_GET, jak zrobiłaby to przeglądarka.
+	 */
+	private function followRedirect(): void {
+		$query = (string) wp_parse_url( $this->redirected, PHP_URL_QUERY );
+		parse_str( $query, $args );
+		$_GET = $args;
+	}
+
+	/**
+	 * Przestawia czas zapisanego podglądu.
+	 *
+	 * @param int $seconds Ile sekund temu powstał.
+	 */
+	private function ageThePreview( int $seconds ): void {
+		$stored       = OptionStore::read( OptionStore::OPTION_IMPORT_PREVIEW );
+		$stored['at'] = time() - $seconds;
+		OptionStore::write( OptionStore::OPTION_IMPORT_PREVIEW, $stored );
+	}
+
+	/**
+	 * Uruchamia zapis z zepsutym zapytaniem; filtr i tryb błędów wracają w finally.
+	 *
+	 * @param callable $broken Filtr `query`.
+	 */
+	private function applyWithBrokenQuery( callable $broken ): void {
+		global $wpdb;
+		$previous = (bool) $wpdb->suppress_errors( true );
+		add_filter( 'query', $broken );
+		try {
+			$this->apply();
+		} finally {
+			remove_filter( 'query', $broken );
+			$wpdb->suppress_errors( $previous );
+		}
+	}
+
+	public function test_raport_po_trybie_probnym_pokazuje_liczby_i_przyciski(): void {
+		$ids = $this->seedImportable( 2 );
+		$this->preview();
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_PREVIEW_READY, $this->redirected );
+		$this->followRedirect();
+
+		$html = $this->renderAsAdmin();
+
+		$this->assertMatchesRegularExpression( '#<th scope="row">Konta do zmiany</th>\s*<td>2</td>#', $html );
+		$this->assertMatchesRegularExpression( '#<th scope="row">Przeskanowane konta</th>\s*<td>\d+</td>#', $html );
+		$this->assertStringContainsString( 'name="action" value="' . ImportScreen::ACTION_APPLY . '"', $html );
+		$this->assertStringContainsString( 'name="action" value="' . ImportScreen::ACTION_PREVIEW . '"', $html );
+		$this->assertSame( '|', $this->importedMeta( $ids[0] ), 'Tryb próbny niczego nie zapisuje.' );
+	}
+
+	public function test_przed_podgladem_jest_przycisk_podgladu_ale_nie_zapisu(): void {
+		$this->seedImportable();
+
+		$html = $this->renderAsAdmin();
+
+		$this->assertStringNotContainsString( 'value="' . ImportScreen::ACTION_APPLY . '"', $html );
+		$this->assertStringContainsString( 'name="action" value="' . ImportScreen::ACTION_PREVIEW . '"', $html );
+	}
+
+	public function test_podglad_zapisuje_odcisk_mapowania_przycietego_przez_get(): void {
+		$this->seedImportable();
+		$raw                   = $this->importMapping()->toArray();
+		$raw['fields']['duch'] = 'wpmem_duch';
+		OptionStore::write( OptionStore::OPTION_IMPORT_MAPPING, $raw );
+		$this->assertNotSame( ImportMapping::fromArray( $raw )->hash(), ImportMappingRepository::get()->hash(), 'Warunek testu: przycięcie zmienia odcisk.' );
+
+		$this->preview();
+
+		$preview = ImportMappingRepository::preview();
+		$this->assertNotNull( $preview );
+		$this->assertSame( ImportMappingRepository::get()->hash(), $preview['hash'] );
+	}
+
+	public function test_zapis_przy_mapowaniu_z_wpisem_do_przyciecia_przechodzi_bramke(): void {
+		$ids                   = $this->seedImportable();
+		$raw                   = $this->importMapping()->toArray();
+		$raw['fields']['duch'] = 'wpmem_duch';
+		OptionStore::write( OptionStore::OPTION_IMPORT_MAPPING, $raw );
+		$this->preview();
+
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_APPLIED, $this->redirected );
+		$this->assertSame( 'lekarz|1234560', $this->importedMeta( $ids[0] ) );
+	}
+
+	public function test_zapis_bez_raportu_jest_odrzucony(): void {
+		$ids = $this->seedImportable();
+
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_STALE_PREVIEW, $this->redirected );
+		$this->assertSame( '|', $this->importedMeta( $ids[0] ), 'Odmowa bramki nie zapisuje niczego.' );
+	}
+
+	public function test_zmiana_mapowania_po_raporcie_uniewaznia_zapis(): void {
+		$ids = $this->seedImportable();
+		$this->preview();
+		ImportMappingRepository::save(
+			ImportMapping::fromArray(
+				array_merge( $this->importMapping()->toArray(), array( 'fallback' => ImportMapping::FALLBACK_APPROVED ) )
+			)
+		);
+
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_STALE_PREVIEW, $this->redirected );
+		$this->assertSame( '|', $this->importedMeta( $ids[0] ) );
+	}
+
+	public function test_przedawniony_raport_uniewaznia_zapis(): void {
+		$ids = $this->seedImportable();
+		$this->preview();
+		$this->ageThePreview( ImportScreen::PREVIEW_MAX_AGE + 1 );
+
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_STALE_PREVIEW, $this->redirected );
+		$this->assertSame( '|', $this->importedMeta( $ids[0] ) );
+	}
+
+	public function test_raport_tuz_przed_granica_wieku_jest_jeszcze_wazny(): void {
+		$ids = $this->seedImportable();
+		$this->preview();
+		$this->ageThePreview( ImportScreen::PREVIEW_MAX_AGE - 30 );
+
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_APPLIED, $this->redirected );
+		$this->assertSame( 'lekarz|1234560', $this->importedMeta( $ids[0] ) );
+	}
+
+	public function test_raport_z_przyszlosci_nie_otwiera_bramki(): void {
+		$ids = $this->seedImportable();
+		$this->preview();
+		$this->ageThePreview( -600 );
+
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_STALE_PREVIEW, $this->redirected );
+		$this->assertSame( '|', $this->importedMeta( $ids[0] ) );
+	}
+
+	public function test_udany_zapis_czysci_podglad_i_drugi_klik_juz_nie_przechodzi(): void {
+		$ids = $this->seedImportable();
+		$this->preview();
+
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_APPLIED, $this->redirected );
+		$this->assertSame( 'lekarz|1234560', $this->importedMeta( $ids[0] ) );
+
+		delete_user_meta( $ids[0], UserMeta::PROFESSION );
+		delete_user_meta( $ids[0], UserMeta::ACF_PREFIX . 'pwz' );
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_STALE_PREVIEW, $this->redirected );
+		$this->assertSame( '|', $this->importedMeta( $ids[0] ), 'Drugi przebieg nie ma prawa niczego zapisać.' );
+	}
+
+	/**
+	 * @return array<string, array{0: string}>
+	 */
+	public static function actions(): array {
+		return array(
+			'podglad' => array( ImportScreen::ACTION_PREVIEW ),
+			'zapis'   => array( ImportScreen::ACTION_APPLY ),
+		);
+	}
+
+	/**
+	 * Wywołuje uchwyt akcji.
+	 *
+	 * @param string $action Akcja admin-post.
+	 */
+	private function call( string $action ): void {
+		if ( ImportScreen::ACTION_PREVIEW === $action ) {
+			ImportScreen::handle_preview();
+			return;
+		}
+		ImportScreen::handle_apply();
+	}
+
+	/**
+	 * Stan, w którym ominięcie bramki żądania zapisałoby dane: ważny podgląd istnieje.
+	 *
+	 * @return int Konto, które nie może zostać zmienione.
+	 */
+	private function armedForApply(): int {
+		$ids = $this->seedImportable();
+		$this->preview();
+		$this->redirected = '';
+		return $ids[0];
+	}
+
+	/**
+	 * @dataProvider actions
+	 */
+	public function test_podglad_i_zapis_odrzucaja_brak_uprawnien( string $action ): void {
+		$id = $this->armedForApply();
+		$this->asRolePosting( 'subscriber', $action, array() );
+
+		try {
+			$this->call( $action );
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( '', $this->redirected );
+			$this->assertSame( '|', $this->importedMeta( $id ) );
+			$this->assertNotNull( ImportMappingRepository::preview(), 'Odmowa nie rusza podglądu.' );
+		}
+	}
+
+	/**
+	 * @dataProvider actions
+	 */
+	public function test_podglad_i_zapis_odrzucaja_brak_nonce( string $action ): void {
+		$id = $this->armedForApply();
+		$this->asAdminPosting( $action, array() );
+		unset( $_POST['pusers_nonce'] );
+
+		try {
+			$this->call( $action );
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( '', $this->redirected );
+			$this->assertSame( '|', $this->importedMeta( $id ) );
+			$this->assertNotNull( ImportMappingRepository::preview() );
+		}
+	}
+
+	/**
+	 * @dataProvider actions
+	 */
+	public function test_podglad_i_zapis_odrzucaja_metode_get( string $action ): void {
+		$id = $this->armedForApply();
+		$this->asAdminPosting( $action, array() );
+		$_SERVER['REQUEST_METHOD'] = 'GET';
+
+		try {
+			$this->call( $action );
+			$this->fail( 'Oczekiwano wp_die().' );
+		} catch ( WPDieException $e ) {
+			$this->assertSame( '', $this->redirected );
+			$this->assertSame( '|', $this->importedMeta( $id ) );
+			$this->assertNotNull( ImportMappingRepository::preview() );
+		}
+	}
+
+	public function test_nieaktualny_raport_jest_opisany_i_nie_ma_przycisku_zapisu(): void {
+		$this->seedImportable();
+		$this->preview();
+		ImportMappingRepository::save(
+			ImportMapping::fromArray( array_merge( $this->importMapping()->toArray(), array( 'fallback' => ImportMapping::FALLBACK_PENDING ) ) )
+		);
+
+		$html = $this->renderAsAdmin();
+
+		$this->assertStringNotContainsString( 'value="' . ImportScreen::ACTION_APPLY . '"', $html );
+		$this->assertMatchesRegularExpression( '#notice-warning[^>]*>\s*<p>[^<]*nieaktualny#u', $html );
+	}
+
+	public function test_raport_ostrzega_o_kontach_bez_profesji_i_pokazuje_probke_jako_linki(): void {
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'required' ) ) ) );
+		ImportMappingRepository::save( $this->importMapping() );
+		$id = (int) self::factory()->user->create();
+		update_user_meta( $id, 'wpmem_pwz', '1234567' );
+		update_user_meta( $id, 'wpmem_role', 'nieznana' );
+		$this->preview();
+
+		$html = $this->renderAsAdmin();
+
+		$this->assertStringContainsString( 'notice-warning', $html );
+		$this->assertStringContainsString( 'href="' . esc_url( admin_url( 'user-edit.php?user_id=' . $id ) ) . '"', $html );
+	}
+
+	public function test_raport_nie_wypisuje_niezaufanych_wartosci_z_zapisanego_podgladu(): void {
+		$this->seedImportable();
+		OptionStore::write(
+			OptionStore::OPTION_IMPORT_PREVIEW,
+			array(
+				'hash'   => ImportMappingRepository::get()->hash(),
+				'at'     => time(),
+				'report' => array(
+					'scanned'        => 3,
+					'changed'        => 2,
+					'write_failures' => 0,
+					'issues'         => array( AccountChange::ISSUE_PROFESSION_UNMAPPED => 2 ),
+					'samples'        => array( AccountChange::ISSUE_PROFESSION_UNMAPPED => array( 7, '"><script>alert(1)</script>', -5 ) ),
+				),
+			)
+		);
+
+		$html = $this->renderAsAdmin();
+
+		$this->assertStringNotContainsString( '<script>alert(1)', $html );
+		$this->assertStringContainsString( 'user_id=7"', $html );
+		$this->assertStringNotContainsString( 'user_id=5"', $html, 'Ujemna liczba nie staje się dodatnim identyfikatorem.' );
+	}
+
+	public function test_porazka_zapisu_logu_daje_ostrzezenie_a_dane_zostaja(): void {
+		$ids    = $this->seedImportable();
+		$table  = Migrations::table( 'event_log' );
+		$filter = static fn ( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+		$this->preview();
+
+		$this->applyWithBrokenQuery( $filter );
+		$this->followRedirect();
+		$html = $this->renderAsAdmin();
+
+		$this->assertSame( 'lekarz|1234560', $this->importedMeta( $ids[0] ) );
+		$this->assertMatchesRegularExpression( '#notice-warning[^>]*>\s*<p>[^<]*dziennik#u', $html );
+		$this->assertStringContainsString( 'notice-success', $html );
+	}
+
+	public function test_udany_zapis_bez_porazek_nie_ostrzega(): void {
+		$this->seedImportable();
+		$this->preview();
+		$this->apply();
+		$this->followRedirect();
+
+		$html = $this->renderAsAdmin();
+
+		$this->assertStringNotContainsString( 'notice-warning', $html );
+		$this->assertStringNotContainsString( 'notice-error', $html );
+		$this->assertMatchesRegularExpression( '#notice-success[^>]*>\s*<p>[^<]*1#u', $html );
+	}
+
+	public function test_porazka_zapisu_konta_mowi_o_czesciowym_zapisie_i_bezpiecznym_ponowieniu(): void {
+		global $wpdb;
+		$ids    = $this->seedImportable( 2 );
+		$victim = $ids[0];
+		$filter = static fn ( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' )
+			&& str_contains( $query, "`{$wpdb->usermeta}`" )
+			&& str_contains( $query, "({$victim}, '" . UserMeta::ACF_PREFIX . "pwz'" )
+			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
+			: $query;
+		$this->preview();
+
+		$this->applyWithBrokenQuery( $filter );
+		$this->assertStringContainsString( 'write_failures=1', $this->redirected );
+		$this->followRedirect();
+		$html = $this->renderAsAdmin();
+
+		$this->assertMatchesRegularExpression( '#notice-(?:warning|error)[^>]*>\s*<p>[^<]*częściowo[^<]*bezpieczne#u', $html );
 	}
 }

@@ -67,6 +67,8 @@ final class WiringTest extends WP_UnitTestCase {
 			MatrixScreen::ACTION_SAVE,
 			MatrixScreen::ACTION_DELETE_FIELD,
 			ImportScreen::ACTION_SAVE,
+			ImportScreen::ACTION_PREVIEW,
+			ImportScreen::ACTION_APPLY,
 			RegistrationHandler::ACTION,
 			LoginHandler::ACTION,
 			Confirmation::ACTION_RESEND,
@@ -303,6 +305,26 @@ final class WiringTest extends WP_UnitTestCase {
 
 		$this->assertNotFalse( has_action( 'admin_post_' . ImportScreen::ACTION_SAVE, array( ImportScreen::class, 'handle_save' ) ) );
 		$this->assertNotFalse( has_action( 'admin_menu', array( ImportScreen::class, 'add_page' ) ) );
+	}
+
+	public function test_ekran_importu_jest_podpiety(): void {
+		add_filter( 'pusers_acf_pro_loaded', '__return_true' );
+		$this->assertTrue( Dependencies::satisfied(), 'Test ma działać przy spełnionych zależnościach.' );
+		$handlers = array(
+			ImportScreen::ACTION_SAVE    => 'handle_save',
+			ImportScreen::ACTION_PREVIEW => 'handle_preview',
+			ImportScreen::ACTION_APPLY   => 'handle_apply',
+		);
+		foreach ( array_keys( $handlers ) as $action ) {
+			$this->assertFalse( has_action( 'admin_post_' . $action ), 'Uchwyt miał być zdjęty przed próbą.' );
+		}
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		foreach ( $handlers as $action => $method ) {
+			$this->assertNotFalse( has_action( 'admin_post_' . $action, array( ImportScreen::class, $method ) ), $action );
+		}
 	}
 
 	public function test_boot_registers_the_session_guard_even_when_acf_pro_is_missing(): void {

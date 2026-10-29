@@ -12,8 +12,11 @@ namespace PortalUsers\Admin;
 defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Acf\AcfFieldSource;
+use PortalUsers\Domain\Import\AccountChange;
 use PortalUsers\Domain\Import\ImportMapping;
+use PortalUsers\Domain\Import\ImportReport;
 use PortalUsers\Domain\Import\MetaKeyStat;
+use PortalUsers\Import\ImportRunner;
 use PortalUsers\Persistence\ImportMappingRepository;
 use PortalUsers\Persistence\MetaKeyScanner;
 use PortalUsers\Persistence\OptionStore;
@@ -27,14 +30,28 @@ use PortalUsers\Persistence\SettingsRepository;
  * Formularz wysyła i czyta mapowanie w kształcie `ImportMapping::toArray()`. Stany konta pochodzą
  * wyłącznie z `ImportMapping::ALLOWED_STATUSES`, a kody są wysyłane małymi literami, bo domena porównuje
  * je dokładnie: to ta ścisłość trzyma stan `email_unconfirmed` poza zasięgiem importu.
+ *
+ * Zapis danych przechodzi przez bramkę: `handle_apply()` działa tylko wtedy, gdy istnieje podgląd, jego odcisk
+ * równa się odciskowi zapisanego mapowania (czytanego tą samą drogą, `ImportMappingRepository::get()`, po obu stronach)
+ * i jest młodszy niż `PREVIEW_MAX_AGE`. Udany zapis czyści podgląd, więc ten sam raport nie autoryzuje drugiego przebiegu.
  */
 final class ImportScreen {
 
-	public const ACTION_SAVE = 'pusers_save_import_mapping';
+	public const ACTION_SAVE    = 'pusers_save_import_mapping';
+	public const ACTION_PREVIEW = 'pusers_preview_import';
+	public const ACTION_APPLY   = 'pusers_apply_import';
 
 	public const NOTICE_SAVED_MAPPING  = 'import_mapping_saved';
 	public const NOTICE_NOTHING_MAPPED = 'import_nothing_mapped';
 	public const NOTICE_CLEARED        = 'import_mapping_cleared';
+	public const NOTICE_PREVIEW_READY  = 'import_preview_ready';
+	public const NOTICE_STALE_PREVIEW  = 'import_stale_preview';
+	public const NOTICE_APPLIED        = 'import_applied';
+
+	/**
+	 * Jak długo (w sekundach) raport z trybu próbnego może autoryzować zapis.
+	 */
+	public const PREVIEW_MAX_AGE = 3600;
 
 	private const FIELD_PREFIX = 'pusers_';
 
@@ -44,11 +61,13 @@ final class ImportScreen {
 	private const BLANK_PAIR_ROWS = 3;
 
 	/**
-	 * Podpina podstronę i obsługę zapisu mapowania.
+	 * Podpina podstronę oraz obsługę zapisu mapowania, trybu próbnego i zapisu danych.
 	 */
 	public static function register(): void {
 		add_action( 'admin_menu', array( self::class, 'add_page' ) );
 		add_action( 'admin_post_' . self::ACTION_SAVE, array( self::class, 'handle_save' ) );
+		add_action( 'admin_post_' . self::ACTION_PREVIEW, array( self::class, 'handle_preview' ) );
+		add_action( 'admin_post_' . self::ACTION_APPLY, array( self::class, 'handle_apply' ) );
 	}
 
 	/**
@@ -142,7 +161,77 @@ final class ImportScreen {
 	}
 
 	/**
-	 * Wypisuje ekran: tabelę skanu, formularz mapowania i miejsce na raport.
+	 * Tryb próbny: liczy raport dla zapisanego mapowania, niczego nie zapisując w kontach, i zapamiętuje go
+	 * razem z odciskiem tego mapowania. Mapowanie czytane jest przez `get()`, czyli przycięte; ten sam obiekt
+	 * idzie do `dry_run()` i do odcisku, a bramka zapisu czyta mapowanie tą samą drogą.
+	 */
+	public static function handle_preview(): void {
+		Request::guard( self::ACTION_PREVIEW );
+		self::require_post();
+
+		$mapping = ImportMappingRepository::get();
+		$report  = ( new ImportRunner() )->dry_run( $mapping );
+
+		// Zapis bez zmian zwraca false z update_option(), więc wyniku nie interpretujemy.
+		ImportMappingRepository::save_preview( $mapping, $report );
+
+		Request::redirect( Menu::SLUG_IMPORT, self::NOTICE_PREVIEW_READY );
+	}
+
+	/**
+	 * Zapisuje import, ale tylko przez bramkę: podgląd istnieje, jego odcisk równa się odciskowi zapisanego
+	 * mapowania i jest młodszy niż `PREVIEW_MAX_AGE`. Niespełniony warunek to komunikat o nieaktualnym raporcie
+	 * i żadnego zapisu. Po przebiegu podgląd jest czyszczony, więc ten sam raport nie zadziała drugi raz;
+	 * wynik wraca do ekranu w adresie przekierowania (liczby, nie treść).
+	 */
+	public static function handle_apply(): void {
+		Request::guard( self::ACTION_APPLY );
+		self::require_post();
+
+		$mapping = ImportMappingRepository::get();
+		if ( null === self::valid_preview( $mapping ) ) {
+			Request::redirect( Menu::SLUG_IMPORT, self::NOTICE_STALE_PREVIEW );
+			return;
+		}
+
+		$report = ( new ImportRunner() )->apply( $mapping, get_current_user_id() );
+		ImportMappingRepository::clear_preview();
+
+		Request::redirect(
+			Menu::SLUG_IMPORT,
+			self::NOTICE_APPLIED,
+			array(
+				self::FIELD_PREFIX . 'changed'        => $report->changed(),
+				self::FIELD_PREFIX . 'write_failures' => $report->writeFailures(),
+				self::FIELD_PREFIX . 'log_failed'     => $report->logFailed() ? 1 : 0,
+			)
+		);
+	}
+
+	/**
+	 * Podgląd, który może teraz autoryzować zapis, albo null. Trzy warunki bramki w jednym miejscu: ekran
+	 * używa tej samej decyzji do pokazania przycisku i obsługa zapisu do wykonania.
+	 *
+	 * @param ImportMapping $mapping Mapowanie z `ImportMappingRepository::get()`; nic innego nie wolno tu hashować.
+	 * @return array{hash: string, report: array<mixed>, at: int}|null
+	 */
+	private static function valid_preview( ImportMapping $mapping ): ?array {
+		$preview = ImportMappingRepository::preview();
+		if ( null === $preview || ! hash_equals( $mapping->hash(), $preview['hash'] ) ) {
+			return null;
+		}
+
+		// Czas z przyszłości (zegar, zmanipulowany zapis) też nie otwiera bramki.
+		$age = time() - $preview['at'];
+		if ( $age < 0 || $age >= self::PREVIEW_MAX_AGE ) {
+			return null;
+		}
+
+		return $preview;
+	}
+
+	/**
+	 * Wypisuje ekran: tabelę skanu, formularz mapowania i raport z trybu próbnego.
 	 */
 	public static function render(): void {
 		if ( ! current_user_can( Menu::CAPABILITY ) ) {
@@ -162,7 +251,7 @@ final class ImportScreen {
 		}
 
 		self::render_form( $stats );
-		echo '<div class="pusers-import-report"></div>';
+		self::render_report();
 		echo '</div>';
 	}
 
@@ -180,6 +269,185 @@ final class ImportScreen {
 		if ( self::NOTICE_NOTHING_MAPPED === $notice ) {
 			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nic nie zapisano: mapowanie było puste i formularz nie wskazał żadnego klucza metadanych.', 'portal-users' ) . '</p></div>';
 		}
+		if ( self::NOTICE_PREVIEW_READY === $notice ) {
+			echo '<div class="notice notice-success"><p>' . esc_html__( 'Raport z trybu próbnego jest gotowy. Nic nie zostało zapisane w kontach.', 'portal-users' ) . '</p></div>';
+		}
+		if ( self::NOTICE_STALE_PREVIEW === $notice ) {
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nic nie zapisano: brak aktualnego raportu z trybu próbnego dla tego mapowania. Uruchom tryb próbny ponownie.', 'portal-users' ) . '</p></div>';
+		}
+		if ( self::NOTICE_APPLIED === $notice ) {
+			self::render_applied_notices();
+		}
+	}
+
+	/**
+	 * Wynik zapisu danych z adresu przekierowania: sukces z liczbą kont oraz ostrzeżenia o częściowym zapisie
+	 * i o braku śladu w dzienniku zdarzeń. Liczby pochodzą z adresu, więc są tylko cyframi i wychodzą przez esc_html().
+	 */
+	private static function render_applied_notices(): void {
+		$changed  = self::query_count( 'changed' );
+		$failures = self::query_count( 'write_failures' );
+
+		echo '<div class="notice notice-success"><p>' . esc_html(
+			sprintf(
+				/* translators: %d: liczba zmienionych kont */
+				_n( 'Import zapisany. Zmienione konta: %d.', 'Import zapisany. Zmienione konta: %d.', $changed, 'portal-users' ),
+				$changed
+			)
+		) . '</p></div>';
+
+		if ( $failures > 0 ) {
+			echo '<div class="notice notice-warning"><p>' . esc_html(
+				sprintf(
+					/* translators: %d: liczba kont, w których zapis się nie udał */
+					_n(
+						'Zapis nie powiódł się dla %d konta, więc mogło zostać zapisane tylko częściowo. Ponowne uruchomienie importu jest bezpieczne: pomija wartości, które już się zgadzają. Uruchom tryb próbny i zapisz jeszcze raz.',
+						'Zapis nie powiódł się dla %d kont, więc mogły zostać zapisane tylko częściowo. Ponowne uruchomienie importu jest bezpieczne: pomija wartości, które już się zgadzają. Uruchom tryb próbny i zapisz jeszcze raz.',
+						$failures,
+						'portal-users'
+					),
+					$failures
+				)
+			) . '</p></div>';
+		}
+
+		if ( self::query_count( 'log_failed' ) > 0 ) {
+			echo '<div class="notice notice-warning"><p>' . esc_html__( 'Dane zostały zapisane, ale nie udało się zapisać wpisu w dzienniku zdarzeń: nie ma śladu, kto uruchomił ten import. Zapisz tę informację osobno.', 'portal-users' ) . '</p></div>';
+		}
+	}
+
+	/**
+	 * Nieujemna liczba całkowita z adresu strony albo zero. Tylko cyfry i rozsądna długość: `absint('-5')` dałoby 5.
+	 *
+	 * @param string $name Nazwa argumentu bez prefiksu.
+	 */
+	private static function query_count( string $name ): int {
+		$key = self::FIELD_PREFIX . $name;
+		// Odczyt liczby do wyświetlenia po przekierowaniu: nic nie zmienia, więc nonce nie obowiązuje.
+		if ( ! isset( $_GET[ $key ] ) || ! is_string( $_GET[ $key ] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+			return 0;
+		}
+		$raw = wp_unslash( $_GET[ $key ] ); // phpcs:ignore WordPress.Security.NonceVerification.Recommended,WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- sprawdzane niżej: tylko cyfry.
+		return ( ctype_digit( $raw ) && strlen( $raw ) <= 9 ) ? (int) $raw : 0;
+	}
+
+	/**
+	 * Raport z trybu próbnego z przyciskiem zapisu. Przycisk pojawia się tylko wtedy, gdy bramka byłaby otwarta;
+	 * nieaktualny raport jest opisany, ale nie można go zatwierdzić.
+	 */
+	private static function render_report(): void {
+		echo '<div class="pusers-import-report"><h2>' . esc_html__( 'Raport z trybu próbnego', 'portal-users' ) . '</h2>';
+		echo '<p>' . esc_html__( 'Tryb próbny liczy, co zmieniłby import dla zapisanego mapowania, i niczego nie zapisuje. Najpierw zapisz mapowanie, potem uruchom tryb próbny.', 'portal-users' ) . '</p>';
+
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+		self::form_header( self::ACTION_PREVIEW );
+		submit_button( __( 'Uruchom tryb próbny', 'portal-users' ), 'secondary' );
+		echo '</form>';
+
+		$preview = ImportMappingRepository::preview();
+		if ( null === $preview ) {
+			echo '</div>';
+			return;
+		}
+
+		if ( null === self::valid_preview( ImportMappingRepository::get() ) ) {
+			echo '<div class="notice notice-warning inline"><p>' . esc_html__( 'Ostatni raport jest nieaktualny: mapowanie zmieniło się albo raport ma ponad godzinę. Uruchom tryb próbny ponownie.', 'portal-users' ) . '</p></div></div>';
+			return;
+		}
+
+		$report = $preview['report'];
+		echo '<table class="widefat striped"><tbody>';
+		echo '<tr><th scope="row">' . esc_html__( 'Przeskanowane konta', 'portal-users' ) . '</th><td>' . esc_html( (string) self::report_int( $report, 'scanned' ) ) . '</td></tr>';
+		echo '<tr><th scope="row">' . esc_html__( 'Konta do zmiany', 'portal-users' ) . '</th><td>' . esc_html( (string) self::report_int( $report, 'changed' ) ) . '</td></tr>';
+		echo '</tbody></table>';
+
+		self::render_issues( $report );
+
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+		self::form_header( self::ACTION_APPLY );
+		submit_button( __( 'Zapisz import', 'portal-users' ) );
+		echo '</form></div>';
+	}
+
+	/**
+	 * Zastrzeżenia raportu: licznik każdego z próbką kont jako linkami do profilu, a nad nimi ostrzeżenie,
+	 * gdy są konta bez profesji albo z niepoprawnym numerem.
+	 *
+	 * @param array<mixed> $report Raport z zapisanego podglądu (dane z bazy, więc czytane defensywnie).
+	 */
+	private static function render_issues( array $report ): void {
+		$issues = isset( $report['issues'] ) && is_array( $report['issues'] ) ? $report['issues'] : array();
+		$counts = array();
+		foreach ( self::issue_labels() as $code => $label ) {
+			$count = isset( $issues[ $code ] ) && is_int( $issues[ $code ] ) && $issues[ $code ] > 0 ? $issues[ $code ] : 0;
+			if ( $count > 0 ) {
+				$counts[ $code ] = $count;
+			}
+		}
+		if ( array() === $counts ) {
+			return;
+		}
+
+		$serious = array( AccountChange::ISSUE_PROFESSION_UNMAPPED, AccountChange::ISSUE_PROFESSION_MISSING, AccountChange::ISSUE_CREDENTIAL_INVALID );
+		if ( array() !== array_intersect( $serious, array_keys( $counts ) ) ) {
+			echo '<div class="notice notice-warning inline"><p>' . esc_html__( 'Część kont nie ma rozpoznanej profesji albo ma niepoprawny numer. Sprawdź je przed zapisem: takie konta nie dostaną tych danych.', 'portal-users' ) . '</p></div>';
+		}
+
+		$samples = isset( $report['samples'] ) && is_array( $report['samples'] ) ? $report['samples'] : array();
+		echo '<h3>' . esc_html__( 'Zastrzeżenia', 'portal-users' ) . '</h3>';
+		echo '<table class="widefat striped"><thead><tr><th scope="col">' . esc_html__( 'Zastrzeżenie', 'portal-users' ) . '</th><th scope="col">' . esc_html__( 'Liczba kont', 'portal-users' ) . '</th><th scope="col">' . esc_html__( 'Przykładowe konta', 'portal-users' ) . '</th></tr></thead><tbody>';
+		foreach ( self::issue_labels() as $code => $label ) {
+			if ( ! isset( $counts[ $code ] ) ) {
+				continue;
+			}
+			$sample = isset( $samples[ $code ] ) && is_array( $samples[ $code ] ) ? $samples[ $code ] : array();
+			echo '<tr><td>' . esc_html( $label ) . '</td><td>' . esc_html( (string) $counts[ $code ] ) . '</td><td>';
+			self::render_account_links( $sample );
+			echo '</td></tr>';
+		}
+		echo '</tbody></table>';
+	}
+
+	/**
+	 * Identyfikatory kont jako linki do profilu. Przyjmowane są tylko dodatnie liczby całkowite; reszta odpada.
+	 *
+	 * @param array<mixed> $ids Identyfikatory z raportu.
+	 */
+	private static function render_account_links( array $ids ): void {
+		$links = array();
+		foreach ( $ids as $id ) {
+			if ( ! is_int( $id ) || $id < 1 ) {
+				continue;
+			}
+			$links[] = '<a href="' . esc_url( admin_url( 'user-edit.php?user_id=' . absint( $id ) ) ) . '">' . esc_html( (string) absint( $id ) ) . '</a>';
+		}
+		echo implode( ', ', $links ); // phpcs:ignore WordPress.Security.EscapeOutput.OutputNotEscaped -- każdy element złożony wyżej z esc_url() i esc_html().
+	}
+
+	/**
+	 * Etykiety zastrzeżeń raportu w kolejności wyświetlania.
+	 *
+	 * @return array<string, string>
+	 */
+	private static function issue_labels(): array {
+		return array(
+			AccountChange::ISSUE_PROFESSION_UNMAPPED => __( 'Wartość profesji bez przypisania w mapowaniu', 'portal-users' ),
+			AccountChange::ISSUE_PROFESSION_MISSING  => __( 'Konto bez profesji w danych źródłowych', 'portal-users' ),
+			AccountChange::ISSUE_CREDENTIAL_INVALID  => __( 'Niepoprawny numer uprawnień', 'portal-users' ),
+			AccountChange::ISSUE_STATUS_UNMAPPED     => __( 'Wartość stanu bez przypisania w mapowaniu', 'portal-users' ),
+			AccountChange::ISSUE_STATUS_MISSING      => __( 'Konto bez stanu w danych źródłowych', 'portal-users' ),
+			AccountChange::ISSUE_VALUE_UNUSABLE      => __( 'Wartość nie do użycia', 'portal-users' ),
+		);
+	}
+
+	/**
+	 * Liczba z zapisanego raportu albo zero.
+	 *
+	 * @param array<mixed> $report Raport z podglądu.
+	 * @param string       $key    Klucz liczby.
+	 */
+	private static function report_int( array $report, string $key ): int {
+		return isset( $report[ $key ] ) && is_int( $report[ $key ] ) && $report[ $key ] > 0 ? $report[ $key ] : 0;
 	}
 
 	/**
@@ -350,7 +618,8 @@ final class ImportScreen {
 	 */
 	private static function form_header( string $action ): void {
 		echo '<input type="hidden" name="action" value="' . esc_attr( $action ) . '" />';
-		wp_nonce_field( $action, Request::NONCE_FIELD );
+		// Bez wp_nonce_field(): ekran ma kilka formularzy, a ta funkcja nadaje każdemu to samo id.
+		echo '<input type="hidden" name="' . esc_attr( Request::NONCE_FIELD ) . '" value="' . esc_attr( wp_create_nonce( $action ) ) . '" />';
 	}
 
 	/**
