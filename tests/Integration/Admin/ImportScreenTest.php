@@ -833,6 +833,38 @@ final class ImportScreenTest extends WP_UnitTestCase {
 		$this->assertSame( 'lekarz|1234560', $this->importedMeta( $ids[0] ) );
 	}
 
+	public function test_raport_dokladnie_w_wieku_granicznym_jest_odrzucony(): void {
+		$ids = $this->seedImportable();
+		$this->preview();
+		$this->ageThePreview( ImportScreen::PREVIEW_MAX_AGE );
+
+		$this->apply();
+
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_STALE_PREVIEW, $this->redirected );
+		$this->assertSame( '|', $this->importedMeta( $ids[0] ) );
+	}
+
+	public function test_puste_mapowanie_nie_ma_przycisku_zapisu_a_zapis_jest_odrzucony_jawnie(): void {
+		global $wpdb;
+		$ids = $this->seedImportable();
+		ImportMappingRepository::save( ImportMapping::fromArray( array() ) );
+		$this->preview();
+		$this->assertNotNull( ImportMappingRepository::preview(), 'Warunek testu: podgląd pustego mapowania istnieje, więc bramka sama by się otworzyła.' );
+		$table  = Migrations::table( 'event_log' );
+		$before = (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tabela wtyczki, nazwa z Migrations::table().
+
+		$html = $this->renderAsAdmin();
+		$this->apply();
+
+		$this->assertStringNotContainsString( 'value="' . ImportScreen::ACTION_APPLY . '"', $html );
+		$this->assertStringContainsString( 'nie ma czego importować', $html );
+		$this->assertStringContainsString( 'pusers_notice=' . ImportScreen::NOTICE_NOTHING_TO_RUN, $this->redirected );
+		$this->assertSame( '|', $this->importedMeta( $ids[0] ) );
+		$this->assertSame( $before, (int) $wpdb->get_var( "SELECT COUNT(*) FROM {$table}" ), 'Odmowa nie zostawia wiersza w dzienniku.' ); // phpcs:ignore WordPress.DB.DirectDatabaseQuery,WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- tabela wtyczki, nazwa z Migrations::table().
+		$this->followRedirect();
+		$this->assertStringContainsString( 'notice-error', $this->renderAsAdmin() );
+	}
+
 	public function test_raport_z_przyszlosci_nie_otwiera_bramki(): void {
 		$ids = $this->seedImportable();
 		$this->preview();
@@ -1069,6 +1101,6 @@ final class ImportScreenTest extends WP_UnitTestCase {
 		$this->followRedirect();
 		$html = $this->renderAsAdmin();
 
-		$this->assertMatchesRegularExpression( '#notice-(?:warning|error)[^>]*>\s*<p>[^<]*częściowo[^<]*bezpieczne#u', $html );
+		$this->assertMatchesRegularExpression( '#notice-warning[^>]*>\s*<p>[^<]*częściowo[^<]*bezpieczne#u', $html );
 	}
 }

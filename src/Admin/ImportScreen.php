@@ -47,6 +47,7 @@ final class ImportScreen {
 	public const NOTICE_PREVIEW_READY  = 'import_preview_ready';
 	public const NOTICE_STALE_PREVIEW  = 'import_stale_preview';
 	public const NOTICE_APPLIED        = 'import_applied';
+	public const NOTICE_NOTHING_TO_RUN = 'import_nothing_to_run';
 
 	/**
 	 * Jak długo (w sekundach) raport z trybu próbnego może autoryzować zapis.
@@ -189,6 +190,11 @@ final class ImportScreen {
 		self::require_post();
 
 		$mapping = ImportMappingRepository::get();
+		// Puste mapowanie nie ma czego importować: odmowa jest jawna, a podgląd zostaje nietknięty.
+		if ( $mapping->isEmpty() ) {
+			Request::redirect( Menu::SLUG_IMPORT, self::NOTICE_NOTHING_TO_RUN );
+			return;
+		}
 		if ( null === self::valid_preview( $mapping ) ) {
 			Request::redirect( Menu::SLUG_IMPORT, self::NOTICE_STALE_PREVIEW );
 			return;
@@ -278,6 +284,9 @@ final class ImportScreen {
 		if ( self::NOTICE_STALE_PREVIEW === $notice ) {
 			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nic nie zapisano: brak aktualnego raportu z trybu próbnego dla tego mapowania. Uruchom tryb próbny ponownie.', 'portal-users' ) . '</p></div>';
 		}
+		if ( self::NOTICE_NOTHING_TO_RUN === $notice ) {
+			echo '<div class="notice notice-error"><p>' . esc_html__( 'Nic nie zapisano: żadne pole ani klucz nie jest zmapowane, więc nie ma czego importować.', 'portal-users' ) . '</p></div>';
+		}
 		if ( self::NOTICE_APPLIED === $notice ) {
 			self::render_applied_notices();
 		}
@@ -340,6 +349,10 @@ final class ImportScreen {
 	 */
 	private static function render_report(): void {
 		echo '<div class="pusers-import-report"><h2>' . esc_html__( 'Raport z trybu próbnego', 'portal-users' ) . '</h2>';
+		if ( ImportMappingRepository::get()->isEmpty() ) {
+			echo '<p>' . esc_html__( 'Nic nie jest zmapowane, więc nie ma czego importować. Zapisz mapowanie, żeby uruchomić tryb próbny.', 'portal-users' ) . '</p></div>';
+			return;
+		}
 		echo '<p>' . esc_html__( 'Tryb próbny liczy, co zmieniłby import dla zapisanego mapowania, i niczego nie zapisuje. Najpierw zapisz mapowanie, potem uruchom tryb próbny.', 'portal-users' ) . '</p>';
 
 		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
