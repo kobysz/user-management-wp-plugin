@@ -41,6 +41,13 @@ final class ImportReport {
 	private int $writeFailures = 0;
 
 	/**
+	 * Identyfikatory kont z nieudanym zapisem w kolejności dopisania, do SAMPLE_LIMIT.
+	 *
+	 * @var list<int>
+	 */
+	private array $writeFailureSample = array();
+
+	/**
 	 * Liczniki zastrzeżeń: kod => liczba kont.
 	 *
 	 * @var array<string, int>
@@ -91,12 +98,18 @@ final class ImportReport {
 	/**
 	 * Zwraca nowy raport z jedną porażką zapisu; konto nie przelicza się na zmienione.
 	 *
+	 * Identyfikator trafia do próbki, dopóki ta nie osiągnie SAMPLE_LIMIT; licznik rośnie zawsze.
+	 *
 	 * @param int $userId Identyfikator konta, którego zapis się nie udał.
 	 * @return self
 	 */
-	public function withWriteFailure( int $userId ): self { // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter.Found -- parametr zostaje w sygnaturze z planu; raport liczy tylko porażki.
+	public function withWriteFailure( int $userId ): self {
 		$next = clone $this;
 		++$next->writeFailures;
+
+		if ( count( $next->writeFailureSample ) < self::SAMPLE_LIMIT ) {
+			$next->writeFailureSample[] = $userId;
+		}
 
 		return $next;
 	}
@@ -149,12 +162,21 @@ final class ImportReport {
 	}
 
 	/**
+	 * Pierwsze identyfikatory kont z nieudanym zapisem, w kolejności dopisania do raportu.
+	 *
+	 * @return list<int>
+	 */
+	public function writeFailureSample(): array {
+		return $this->writeFailureSample;
+	}
+
+	/**
 	 * Raport w postaci tablicy, którą czyta późniejsze zapisywanie stanu.
 	 *
 	 * Zastrzeżenia i próbki pojawiają się tylko dla kodów z co najmniej jednym wystąpieniem,
-	 * oba w kolejności kluczy (ksort).
+	 * oba w kolejności kluczy (ksort). Próbka porażek jest pusta, gdy porażek nie było.
 	 *
-	 * @return array{scanned: int, changed: int, write_failures: int, issues: array<string, int>, samples: array<string, list<int>>}
+	 * @return array{scanned: int, changed: int, write_failures: int, issues: array<string, int>, samples: array<string, list<int>>, write_failure_sample: list<int>}
 	 */
 	public function toArray(): array {
 		$issues = $this->issues;
@@ -167,11 +189,12 @@ final class ImportReport {
 		}
 
 		return array(
-			'scanned'        => $this->scanned,
-			'changed'        => $this->changed,
-			'write_failures' => $this->writeFailures,
-			'issues'         => $issues,
-			'samples'        => $samples,
+			'scanned'              => $this->scanned,
+			'changed'              => $this->changed,
+			'write_failures'       => $this->writeFailures,
+			'issues'               => $issues,
+			'samples'              => $samples,
+			'write_failure_sample' => $this->writeFailureSample,
 		);
 	}
 }

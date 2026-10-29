@@ -64,8 +64,22 @@ final class ImportReportTest extends TestCase {
 		$failed = $report->withWriteFailure( 7 );
 
 		$this->assertSame( 1, $failed->writeFailures() );
+		$this->assertSame( array( 7 ), $failed->writeFailureSample() );
 		$this->assertSame( $report->changed(), $failed->changed() );
 		$this->assertSame( 0, $report->writeFailures() );
+		$this->assertSame( array(), $report->writeFailureSample() );
+	}
+
+	public function test_probka_porazek_urywa_sie_na_limicie_a_licznik_rosnie_dalej(): void {
+		$report = ImportReport::empty();
+
+		for ( $userId = 1; $userId <= 12; $userId++ ) {
+			$report = $report->withWriteFailure( $userId );
+		}
+
+		$this->assertSame( 12, $report->writeFailures() );
+		// Próbka to pierwsze identyfikatory w kolejności dopisania, ucięte do SAMPLE_LIMIT.
+		$this->assertSame( range( 1, ImportReport::SAMPLE_LIMIT ), $report->writeFailureSample() );
 	}
 
 	public function test_to_array_niesie_wszystkie_liczniki_i_probki(): void {
@@ -88,6 +102,7 @@ final class ImportReportTest extends TestCase {
 					AccountChange::ISSUE_CREDENTIAL_INVALID => array( 2 ),
 					AccountChange::ISSUE_VALUE_UNUSABLE     => array( 5, 9 ),
 				),
+				'write_failure_sample' => array( 9 ),
 			),
 			$report->toArray()
 		);
@@ -101,6 +116,7 @@ final class ImportReportTest extends TestCase {
 				'write_failures' => 0,
 				'issues'         => array(),
 				'samples'        => array(),
+				'write_failure_sample' => array(),
 			),
 			ImportReport::empty()->toArray()
 		);
