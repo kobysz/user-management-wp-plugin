@@ -93,20 +93,30 @@ final class MailQueueRepository {
 	}
 
 	/**
-	 * Moment utworzenia NAJSTARSZEGO wiersza czekającego na wysyłkę albo null, gdy żaden nie czeka.
+	 * NAJWCZEŚNIEJSZY termin wysyłki wśród wierszy czekających w kolejce albo null, gdy żaden nie czeka.
 	 *
 	 * Podkładka pod komunikat o kolejce, która przestała się opróżniać (patrz MailQueueNotice).
-	 * Jedno zapytanie po indeksie `dispatch (status, scheduled_at)`, bez odczytu wierszy: biegnie
-	 * przy wejściach do panelu, więc nie wolno mu rosnąć z rozmiarem logu wysyłek.
+	 * Zdrowa kolejka nie zostawia wiersza po terminie dłużej niż jeden przebieg crona, więc termin
+	 * sprzed kwadransa znaczy, że wysyłki nie ma.
+	 *
+	 * Mierzymy `scheduled_at`, nie `created_at`, i to z dwóch powodów. Pierwszy: `created_at` kłamie
+	 * o wierszu, który czeka na swój termin ZGODNIE z planem — wiersz wznowiony ręcznie z ekranu logu
+	 * (`requeue_failed()`) ma `created_at` sprzed tygodni i natychmiast podnosiłby alarm o zdrowej
+	 * kolejce, a komunikat, który raz skłamał, przestaje być czytany. Drugi: `MIN(scheduled_at)` przy
+	 * równości na `status` jest całym przedrostkiem indeksu `dispatch (status, scheduled_at)`, więc
+	 * baza oddaje go z indeksu BEZ CZYTANIA WIERSZY (sprawdzone na MariaDB w kontenerze: EXPLAIN daje
+	 * „Select tables optimized away", podczas gdy `MIN(created_at)` daje `ref` po wszystkich wierszach
+	 * `queued`). Przy zatkanej kolejce tych wierszy są tysiące, a zapytanie biegnie przy każdym wejściu
+	 * do panelu — czyli dokładnie tam, gdzie cena nie może rosnąć z rozmiarem kolejki.
 	 *
 	 * @return string|null Znacznik `Y-m-d H:i:s` w UTC.
 	 */
-	public static function oldest_queued_at(): ?string {
+	public static function oldest_due_at(): ?string {
 		global $wpdb;
 
 		$oldest = $wpdb->get_var(
 			$wpdb->prepare(
-				'SELECT MIN(created_at) FROM %i WHERE status = %s',
+				'SELECT MIN(scheduled_at) FROM %i WHERE status = %s',
 				Migrations::table( self::TABLE ),
 				QueueStatus::Queued->value
 			)

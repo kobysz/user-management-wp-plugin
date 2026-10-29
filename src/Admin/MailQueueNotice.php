@@ -30,7 +30,7 @@ use PortalUsers\Persistence\MailQueueRepository;
 final class MailQueueNotice {
 
 	/**
-	 * Po tylu sekundach zalegania najstarszego wiersza ostrzegamy. 15 minut, czyli piętnaście
+	 * Po tylu sekundach po terminie najstarszej wiadomości ostrzegamy. 15 minut, czyli piętnaście
 	 * nieodbytych przebiegów minutowych: tyle nie zbiera się z powodu chwilowego opóźnienia crona,
 	 * a jednocześnie jest krócej niż doba, po której lekarz dawno porzucił rejestrację.
 	 */
@@ -51,18 +51,18 @@ final class MailQueueNotice {
 			return;
 		}
 
-		$oldest = MailQueueRepository::oldest_queued_at();
+		$oldest = MailQueueRepository::oldest_due_at();
 		if ( null === $oldest ) {
 			return;
 		}
 
-		$queuedAt = strtotime( $oldest . ' UTC' );
-		if ( false === $queuedAt ) {
+		$dueAt = strtotime( $oldest . ' UTC' );
+		if ( false === $dueAt ) {
 			// Nieczytelny znacznik z bazy nie może udawać zalegania sprzed epoki.
 			return;
 		}
 
-		$waiting = time() - $queuedAt;
+		$waiting = time() - $dueAt;
 		if ( $waiting < self::WARN_AFTER ) {
 			return;
 		}
@@ -72,7 +72,7 @@ final class MailQueueNotice {
 			. ' ' . esc_html(
 				sprintf(
 					/* translators: %d: liczba minut. */
-					__( 'Najstarsza wiadomość czeka od minut: %d.', 'portal-users' ),
+					__( 'Termin najstarszej wiadomości minął przed tyloma minutami: %d.', 'portal-users' ),
 					(int) floor( $waiting / MINUTE_IN_SECONDS )
 				)
 			)

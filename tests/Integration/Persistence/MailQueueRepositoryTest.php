@@ -242,23 +242,27 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		return false !== strpos( (string) $query, 'INSERT IGNORE INTO' ) ? 'TO NIE JEST SQL' : (string) $query;
 	}
 
-	public function test_the_age_of_the_oldest_waiting_row_is_reported(): void {
+	public function test_the_earliest_due_moment_of_a_waiting_row_is_reported(): void {
 		// Podkładka pod komunikat o niedrenowanej kolejce: bez WP-Crona nic nigdy nie wyjdzie,
 		// a jedynym śladem jest licznik na ekranie, na który nikt nie zagląda.
-		$this->assertNull( MailQueueRepository::oldest_queued_at(), 'Pusta kolejka: nie ma o czym ostrzegać.' );
+		$this->assertNull( MailQueueRepository::oldest_due_at(), 'Pusta kolejka: nie ma o czym ostrzegać.' );
 
-		$old = gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS );
-		MailQueueRepository::insert( $this->row( 'klucz-oldest-1', null, $old ) );
-		MailQueueRepository::insert( $this->row( 'klucz-oldest-2' ) );
+		$overdue = gmdate( 'Y-m-d H:i:s', time() - HOUR_IN_SECONDS );
+		MailQueueRepository::insert( $this->row( 'klucz-due-1', $overdue ) );
+		MailQueueRepository::insert( $this->row( 'klucz-due-2' ) );
 
-		$this->assertSame( $old, MailQueueRepository::oldest_queued_at(), 'Liczy się NAJSTARSZY wiersz, nie dowolny.' );
+		$this->assertSame( $overdue, MailQueueRepository::oldest_due_at(), 'Liczy się NAJWCZEŚNIEJSZY termin, nie dowolny.' );
 
+		// Wiersz czekający na swój termin (ponowienie po porażce) NIE jest zaległym mailem, nawet
+		// gdy powstał dawno: terminem jest `scheduled_at`, nie `created_at`.
 		foreach ( MailQueueRepository::due( gmdate( 'Y-m-d H:i:s' ), 10 ) as $row ) {
 			$id      = (int) $row['id'];
 			$attempt = MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) );
-			MailQueueRepository::mark_sent( $id, gmdate( 'Y-m-d H:i:s' ), (int) $attempt );
+			MailQueueRepository::reschedule( $id, gmdate( 'Y-m-d H:i:s', time() + HOUR_IN_SECONDS ), 'SMTP nie odpowiada', (int) $attempt );
 		}
 
-		$this->assertNull( MailQueueRepository::oldest_queued_at(), 'Wiersz wysłany nie jest już mailem, który nie wyszedł.' );
+		$due = MailQueueRepository::oldest_due_at();
+		$this->assertNotNull( $due );
+		$this->assertGreaterThan( time(), (int) strtotime( $due . ' UTC' ), 'Termin leży w przyszłości, więc kolejka nie zalega.' );
 	}
 }

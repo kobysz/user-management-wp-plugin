@@ -103,6 +103,16 @@ final class MailQueueNoticeTest extends WP_UnitTestCase {
 		$this->assertSame( '', (string) ob_get_clean() );
 	}
 
+	public function test_a_manually_requeued_old_row_does_not_warn(): void {
+		// „Wznów" na wierszu sprzed tygodni zostawia jego `created_at` bez zmian i przestawia tylko
+		// termin. Komunikat liczony od `created_at` krzyczałby tu o zdrowej kolejce, a komunikat,
+		// który raz skłamał, administrator przestaje czytać.
+		$id = $this->seed( 30 * DAY_IN_SECONDS, 'wznowiony', QueueStatus::Failed );
+		$this->assertTrue( MailQueueRepository::requeue_failed( $id ) );
+
+		$this->assertSame( '', $this->renderAsAdmin() );
+	}
+
 	public function test_register_hooks_the_notice_on_admin_notices(): void {
 		MailQueueNotice::register();
 
