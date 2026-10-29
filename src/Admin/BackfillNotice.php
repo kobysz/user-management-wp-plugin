@@ -48,12 +48,7 @@ final class BackfillNotice {
 			. esc_html(
 				sprintf(
 					/* translators: %d: liczba kont bez stanu */
-					_n(
-						'%d konto sprzed wdrożenia wtyczki nie ma stanu, więc nie obowiązuje go żadna reguła bramy logowania: wchodzi na portal bez względu na to, czy zostało zatwierdzone.',
-						'%d kont sprzed wdrożenia wtyczki nie ma stanu, więc nie obowiązuje ich żadna reguła bramy logowania: wchodzą na portal bez względu na to, czy zostały zatwierdzone.',
-						$count,
-						'portal-users'
-					),
+					__( 'Konta sprzed wdrożenia wtyczki bez stanu: %d. Żadna reguła bramy logowania ich nie obejmuje, więc wchodzą na portal niezależnie od tego, czy ktoś je zatwierdził.', 'portal-users' ),
 					$count
 				)
 			)

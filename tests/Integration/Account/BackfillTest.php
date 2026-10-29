@@ -51,6 +51,15 @@ final class BackfillTest extends WP_UnitTestCase {
 	}
 
 	/**
+	 * Konto bez stanu zarejestrowane w podanej sekundzie.
+	 *
+	 * @param int $registered Znacznik czasu rejestracji.
+	 */
+	private function accountAt( int $registered ): int {
+		return (int) self::factory()->user->create( array( 'user_registered' => gmdate( 'Y-m-d H:i:s', $registered ) ) );
+	}
+
+	/**
 	 * Wiersze logu zdarzeń od najstarszego.
 	 *
 	 * @return list<object>
@@ -151,6 +160,48 @@ final class BackfillTest extends WP_UnitTestCase {
 		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $good ) );
 		$this->assertNull( AccountStatusRepository::get( $bad ) );
 		$this->assertSame( 1, Backfill::stateless_count(), 'Nieudane konto zostaje w zakresie.' );
+	}
+
+	public function test_konto_zarejestrowane_dokladnie_w_chwili_wdrozenia_jest_poza_zakresem(): void {
+		$this->deployedAt( $this->deployed );
+		$onCutoff = (int) self::factory()->user->create( array( 'user_registered' => gmdate( 'Y-m-d H:i:s', Backfill::deployed_at() ) ) );
+		$oneBefore = $this->accountAt( Backfill::deployed_at() - 1 );
+
+		$this->assertSame( 1, Backfill::stateless_count(), 'Tylko konto sekundę przed granicą.' );
+		$result = Backfill::grant_approved( 1 );
+
+		$this->assertSame( 1, $result['granted'] );
+		$this->assertSame( AccountStatus::Approved, AccountStatusRepository::get( $oneBefore ) );
+		$this->assertNull( AccountStatusRepository::get( $onCutoff ), 'Granica jest wyłączna.' );
+	}
+
+	public function test_nieudany_zapis_na_pierwszej_partii_nie_gubi_kont_z_nastepnych(): void {
+		$this->deployedAt( $this->deployed );
+		$total = Backfill::BATCH + 5;
+		$ids   = array();
+		for ( $i = 0; $i < $total; $i++ ) {
+			$ids[] = $this->account( true );
+		}
+		$bad   = $ids[0];
+		$block = static fn ( $check, int $id, string $key ) => ( UserMeta::STATUS === $key && $id === $bad ) ? false : $check;
+		add_filter( 'update_user_metadata', $block, 10, 3 );
+
+		try {
+			$result = Backfill::grant_approved( 1 );
+		} finally {
+			remove_filter( 'update_user_metadata', $block, 10 );
+		}
+
+		$approved = 0;
+		foreach ( $ids as $id ) {
+			if ( AccountStatus::Approved === AccountStatusRepository::get( $id ) ) {
+				++$approved;
+			}
+		}
+		$this->assertSame( $total - 1, $approved, 'Każde konto poza nieudanym dostało stan.' );
+		$this->assertSame( $total - 1, $result['granted'] );
+		$this->assertSame( 1, $result['not_granted'] );
+		$this->assertSame( $total, $result['granted'] + $result['not_granted'] );
 	}
 
 	public function test_nadanie_zostawia_jeden_wiersz_w_logu_z_aktorem_i_liczba(): void {

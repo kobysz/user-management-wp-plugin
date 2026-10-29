@@ -373,12 +373,7 @@ final class ImportScreen {
 		echo '<p>' . esc_html(
 			sprintf(
 				/* translators: %d: liczba kont bez stanu */
-				_n(
-					'%d konto sprzed wdrożenia wtyczki nie ma stanu.',
-					'%d kont sprzed wdrożenia wtyczki nie ma stanu.',
-					$count,
-					'portal-users'
-				),
+				__( 'Konta sprzed wdrożenia wtyczki bez stanu: %d.', 'portal-users' ),
 				$count
 			)
 		) . ' ' . esc_html__( 'Jeśli stara wtyczka trzymała stan w metadanych, nadaj go mapowaniem poniżej: odróżni konta zatwierdzone od niezatwierdzonych. Przycisk poniżej nadaje „zatwierdzone” WSZYSTKIM tym kontom, także tym, których stara wtyczka nie zatwierdziła; jest dla portalu, który stanu nie trzymał.', 'portal-users' ) . '</p>';
