@@ -198,7 +198,8 @@ final class ImportPlanner {
 	 * Czyta wartość źródłową jako tekst, jeśli nadaje się do użycia.
 	 *
 	 * Zwraca null dla braku klucza, wartości null, pustej po trim i nieskalarnej; ta ostatnia dodatkowo
-	 * dostaje zastrzeżenie. Rzutowanie na tekst dotyczy wyłącznie skalarów (true daje "1", false daje "").
+	 * dostaje zastrzeżenie. Pole, które macierz ukrywa dla rozpoznanej profesji, nigdy nie jest czytane, więc
+	 * nigdy nie jest zgłaszane. Rzutowanie na tekst dotyczy wyłącznie skalarów (true daje "1", false daje "").
 	 *
 	 * @param array<string, mixed> $sourceMeta Metadane źródłowe.
 	 * @param string               $sourceKey  Klucz źródłowy; pusty znaczy, że nic nie mapujemy.

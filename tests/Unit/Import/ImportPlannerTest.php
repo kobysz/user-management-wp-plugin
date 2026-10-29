@@ -40,6 +40,7 @@ final class ImportPlannerTest extends TestCase {
 					'student' => 'student',
 					'nurse'   => 'pielegniarka',
 					'ghost'   => 'nieistniejaca',
+					'hidden'  => 'lekarz_ukryty',
 				),
 				'statusKey'        => 'wpmem_status',
 				'statusValues'     => array(
@@ -55,6 +56,12 @@ final class ImportPlannerTest extends TestCase {
 				array(
 					'key'              => 'lekarz',
 					'label'            => 'Lekarz',
+					'credential_type'  => 'physician_pwz',
+					'credential_field' => 'pwz',
+				),
+				array(
+					'key'              => 'lekarz_ukryty',
+					'label'            => 'Lekarz z ukrytym numerem',
 					'credential_type'  => 'physician_pwz',
 					'credential_field' => 'pwz',
 				),
@@ -77,6 +84,10 @@ final class ImportPlannerTest extends TestCase {
 					'pwz'   => 'required',
 					'name'  => 'visible',
 					'phone' => 'visible',
+				),
+				'lekarz_ukryty' => array(
+					'pwz'  => 'hidden',
+					'name' => 'visible',
 				),
 				'student'      => array(
 					'pwz'   => 'hidden',
@@ -245,6 +256,21 @@ final class ImportPlannerTest extends TestCase {
 			)
 		);
 
+		$this->assertSame( array( 'name' => 'Ola' ), $change->fields );
+		$this->assertFalse( $change->hasIssue( AccountChange::ISSUE_CREDENTIAL_INVALID ) );
+	}
+
+	public function test_numer_ukryty_dla_profesji_wymagajacej_numeru_nie_jest_sprawdzany(): void {
+		$change = $this->planner()->plan(
+			7,
+			array(
+				'wpmem_role' => 'hidden',
+				'wpmem_pwz'  => '1234567',
+				'wpmem_name' => 'Ola',
+			)
+		);
+
+		$this->assertSame( 'lekarz_ukryty', $change->professionKey );
 		$this->assertSame( array( 'name' => 'Ola' ), $change->fields );
 		$this->assertFalse( $change->hasIssue( AccountChange::ISSUE_CREDENTIAL_INVALID ) );
 	}
