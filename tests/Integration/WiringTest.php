@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration;
 
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\ExportHandler;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
@@ -131,6 +132,17 @@ final class WiringTest extends WP_UnitTestCase {
 		Plugin::boot( Plugin::plugin_file() );
 		$this->assertFalse( has_action( 'pusers_register_features', array( ApplicationsScreen::class, 'register' ) ) );
 		$this->assertNotFalse( has_action( 'admin_menu', array( ApplicationsScreen::class, 'add_page' ) ) );
+	}
+
+	public function test_export_handler_hooks_its_action_outside_the_features_hook(): void {
+		// Eksport jest potrzebny także wtedy, gdy ACF Pro leży: ekran wniosków działa bez niego, więc jego przycisk musi mieć uchwyt.
+		ExportHandler::register();
+		$this->assertNotFalse( has_action( 'admin_post_' . ExportHandler::ACTION, array( ExportHandler::class, 'handle' ) ) );
+
+		remove_all_actions( 'admin_post_' . ExportHandler::ACTION );
+		Plugin::boot( Plugin::plugin_file() );
+		$this->assertFalse( has_action( 'pusers_register_features', array( ExportHandler::class, 'register' ) ) );
+		$this->assertNotFalse( has_action( 'admin_post_' . ExportHandler::ACTION, array( ExportHandler::class, 'handle' ) ) );
 	}
 
 	public function test_matrix_register_hooks_page_and_both_handlers(): void {

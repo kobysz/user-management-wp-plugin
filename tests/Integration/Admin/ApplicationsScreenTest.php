@@ -9,6 +9,7 @@ namespace PortalUsers\Tests\Integration\Admin;
 
 use PortalUsers\Account\Decision;
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\ExportHandler;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Domain\Account\AccountStatus;
 use PortalUsers\Domain\Config\Settings;
@@ -131,6 +132,19 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 	private function rows( string $html ): array {
 		preg_match_all( '/<tr class="pusers-application-row">.*?<\/tr>/s', $html, $m );
 		return $m[0];
+	}
+
+	public function test_przycisk_eksportu_niesie_zakladke_profesje_i_nonce(): void {
+		$this->account( 'approved', 'lekarz' );
+
+		$html = $this->render( array( ApplicationsScreen::ARG_STATUS => 'approved', ApplicationsScreen::ARG_PROFESSION => 'lekarz' ) );
+
+		$this->assertSame( 1, preg_match( '/<form method="post"[^>]*class="pusers-export-form">(.*?)<\/form>/s', $html, $m ), 'Formularz eksportu jest osobny od formularza rozstrzygania.' );
+		$this->assertStringContainsString( 'name="action" value="' . ExportHandler::ACTION . '"', $m[1] );
+		$this->assertStringContainsString( 'name="status" value="approved"', $m[1] );
+		$this->assertStringContainsString( 'name="profession" value="lekarz"', $m[1] );
+		$this->assertStringContainsString( 'name="pusers_nonce"', $m[1] );
+		$this->assertStringContainsString( 'Pobierz CSV', $m[1] );
 	}
 
 	public function test_zakladki_pokazuja_liczniki_wszystkich_stanow(): void {

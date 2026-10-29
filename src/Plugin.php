@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers;
 
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\ExportHandler;
 use PortalUsers\Admin\MailLogScreen;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MailTemplatesScreen;
@@ -112,6 +113,10 @@ final class Plugin {
 		// się bramkuje, a rozstrzyganie wniosków należy do egzekwowania. Jedynie panel szczegółów potrzebuje
 		// ACF i sam mówi, gdy go nie ma.
 		ApplicationsScreen::register();
+
+		// Eksport wniosków z tego samego powodu: jego przycisk stoi na ekranie, który działa bez ACF Pro.
+		// Przy leżącym ACF plik po prostu nie ma kolumn pól.
+		ExportHandler::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.

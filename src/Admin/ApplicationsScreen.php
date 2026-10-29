@@ -197,6 +197,7 @@ final class ApplicationsScreen {
 		self::render_notice();
 		self::render_tabs( $status, $profession );
 		self::render_filter( $status, $profession );
+		self::render_export_form();
 		self::render_decision_form( $rows, $status, $profession );
 
 		if ( $pages > 1 ) {
@@ -214,6 +215,19 @@ final class ApplicationsScreen {
 		}
 
 		echo '</div>';
+	}
+
+	/**
+	 * Przycisk pobrania CSV z bieżącą zakładką i profesją. Osobny formularz, bo zagnieżdżony w formularzu
+	 * rozstrzygnięcia wysłałby przy okazji zaznaczone konta; POST, bo plik niesie dane osobowe.
+	 */
+	private static function render_export_form(): void {
+		echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" class="pusers-export-form">';
+		echo '<input type="hidden" name="action" value="' . esc_attr( ExportHandler::ACTION ) . '" />';
+		wp_nonce_field( ExportHandler::ACTION, Request::NONCE_FIELD );
+		self::render_return_fields();
+		echo '<p><button type="submit" class="button">' . esc_html__( 'Pobierz CSV', 'portal-users' ) . '</button></p>';
+		echo '</form>';
 	}
 
 	/**
