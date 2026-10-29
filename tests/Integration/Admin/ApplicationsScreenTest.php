@@ -619,13 +619,13 @@ final class ApplicationsScreenTest extends WP_UnitTestCase {
 		$filter = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" )
 			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
 			: $query;
-		$wpdb->suppress_errors( true );
+		$previous_suppress = (bool) $wpdb->suppress_errors( true );
 		add_filter( 'query', $filter );
 		try {
 			$args = $this->decide( ApplicationsScreen::DECIDE_APPROVE, array( (string) $id ) );
 		} finally {
 			remove_filter( 'query', $filter );
-			$wpdb->suppress_errors( false );
+			$wpdb->suppress_errors( $previous_suppress );
 		}
 
 		$this->assertSame( AccountStatus::Approved, $this->status_of( $id ), 'Konto jest rozstrzygnięte mimo porażki logu.' );

@@ -27,6 +27,11 @@ final class DecisionTest extends WP_UnitTestCase {
 
 	private int $admin = 0;
 
+	/**
+	 * Stan tłumienia błędów $wpdb sprzed breakLogInserts(), żeby przywrócić dokładnie jego.
+	 */
+	private bool $previousSuppress = false;
+
 	public function set_up(): void {
 		parent::set_up();
 		$this->admin = (int) self::factory()->user->create( array( 'role' => 'administrator' ) );
@@ -79,7 +84,7 @@ final class DecisionTest extends WP_UnitTestCase {
 		$filter = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' ) && str_contains( $query, "`{$table}`" )
 			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
 			: $query;
-		$wpdb->suppress_errors( true );
+		$this->previousSuppress = (bool) $wpdb->suppress_errors( true );
 		add_filter( 'query', $filter );
 		return $filter;
 	}
@@ -87,7 +92,7 @@ final class DecisionTest extends WP_UnitTestCase {
 	private function restoreLogInserts( callable $filter ): void {
 		global $wpdb;
 		remove_filter( 'query', $filter );
-		$wpdb->suppress_errors( false );
+		$wpdb->suppress_errors( $this->previousSuppress );
 	}
 
 	public function test_porazka_zapisu_logu_daje_wlasny_kod_a_stan_i_mail_zostaja(): void {
@@ -158,6 +163,7 @@ final class DecisionTest extends WP_UnitTestCase {
 		$freeze = static fn() => '200001010000';
 		add_filter( 'pusers_internal_test_seam_minute_bucket', $freeze );
 		$this->assertTrue( Mailer::approved( $id ), 'Fixtura: pierwszy mail musi wejść do kolejki.' );
+		$this->assertFalse( Mailer::approved( $id ), 'Fixtura: w oknie zamrożonej minuty kolejka odmawia drugiego maila, więc porażka maila zachodzi.' );
 		$filter = $this->breakLogInserts();
 		try {
 			$result = Decision::approve( $id, $this->admin );
