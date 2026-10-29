@@ -339,6 +339,51 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertStringNotContainsString( RegistrationHandler::COOKIE, $location );
 	}
 
+	public function test_rejestracja_zapisuje_adres_ip_zgloszenia(): void {
+		$_SERVER['REMOTE_ADDR'] = '203.0.113.7';
+		$email                  = $this->email();
+		$this->post( array( RegistrationForm::EMAIL => $email, RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+		$this->submit();
+
+		$id = email_exists( $email );
+		$this->assertNotFalse( $id );
+		$this->assertSame( '203.0.113.7', get_user_meta( (int) $id, UserMeta::REGISTRATION_IP, true ) );
+	}
+
+	public function test_zapisany_adres_honoruje_naglowek_proxy_tylko_po_wlaczeniu(): void {
+		$_SERVER['REMOTE_ADDR']          = '10.0.0.7';
+		$_SERVER['HTTP_X_FORWARDED_FOR'] = '198.51.100.9';
+		try {
+			// Nagłówek obecny, ale administrator go nie wskazał: wolno wierzyć tylko adresowi połączenia.
+			$first = $this->email();
+			$this->post( array( RegistrationForm::EMAIL => $first, RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+			$this->submit();
+			$this->assertSame( '10.0.0.7', get_user_meta( (int) email_exists( $first ), UserMeta::REGISTRATION_IP, true ) );
+
+			$current = SettingsRepository::get()->toArray();
+			SettingsRepository::save( Settings::fromArray( array_merge( $current, array( 'trusted_proxy_header' => 'HTTP_X_FORWARDED_FOR' ) ) ) );
+
+			$second = $this->email();
+			$this->post( array( RegistrationForm::EMAIL => $second, RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+			$this->submit();
+			$this->assertSame( '198.51.100.9', get_user_meta( (int) email_exists( $second ), UserMeta::REGISTRATION_IP, true ) );
+		} finally {
+			unset( $_SERVER['HTTP_X_FORWARDED_FOR'] );
+		}
+	}
+
+	public function test_brak_adresu_nie_zostawia_metadanej(): void {
+		unset( $_SERVER['REMOTE_ADDR'] );
+		$email = $this->email();
+		$this->post( array( RegistrationForm::EMAIL => $email, RegistrationForm::PROFESSION => 'pielegniarka' ), array( 'pwz' => null ) );
+		$this->submit();
+
+		$id = email_exists( $email );
+		$this->assertNotFalse( $id );
+		// Pusty napis nie jest adresem, więc metadanej ma nie być wcale (get_user_meta zwraca '' także dla braku).
+		$this->assertFalse( metadata_exists( 'user', (int) $id, UserMeta::REGISTRATION_IP ) );
+	}
+
 	public function test_a_password_from_the_submission_never_opens_the_account(): void {
 		// Znalezisko I1: osoba trzecia zgłasza cudzy adres z WŁASNYM hasłem i czeka. Ofiara klika
 		// link potwierdzający, redakcja zatwierdza wniosek z prawdziwym adresem lekarza — i od tej

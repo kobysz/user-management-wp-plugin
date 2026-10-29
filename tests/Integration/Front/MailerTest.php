@@ -151,7 +151,7 @@ final class MailerTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( '- notatka: Pierwsza linia Druga linia', $body, 'Wartość w jednej linii.' );
 		$this->assertStringContainsString( 'Numer uprawnień: 5425740', $body );
 		$this->assertStringContainsString( 'Wynik walidacji: poprawny', $body );
-		$this->assertStringContainsString( 'user_id=' . $id, $body );
+		$this->assertStringContainsString( 'page=pusers-applications&user=' . $id, $body );
 		$this->assertSame( MailKind::Editorial->value, $this->mails()[0]['kind'] );
 	}
 

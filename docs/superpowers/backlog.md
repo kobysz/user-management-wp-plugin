@@ -83,7 +83,9 @@ Nie jest to mina — `Settings::fromArray()` dopełnia brakujące klucze domyśl
 
 ### Brama logowania NIE ISTNIEJE i do jej powstania wtyczka nie egzekwuje stanu konta
 
-**To najpoważniejsza otwarta pozycja po Planie 3.** `LoginGate::decide()` istnieje od Planu 1, ma testy i **nie ma ani jednego konsumenta** — w `src/` nie ma żadnego podpięcia pod `authenticate` ani `wp_authenticate`. Skutek: konto utworzone w stanie `email_unconfirmed` **loguje się normalnie**, czyli specyfikacja („logowanie wpuszcza wyłącznie `zatwierdzony`") nie jest po Planie 3 egzekwowana w ogóle.
+> **ZAMKNIĘTE w Planie 4** (scalonym do `main`). Bramę egzekwuje `src/Front/LoginGateway.php`, podpięta poza bramką zależności ACF; `src/Front/SessionGuard.php` gasi sesje przy przejściu w stan nie-zatwierdzony, a `src/Front/RestUsers.php` zamyka ujawnianie kont przez REST. Zapis niżej zostaje jako opis wymogów, z których Plan 4 był rozliczony — nie jako stan dzisiejszy.
+
+**To była najpoważniejsza otwarta pozycja po Planie 3.** `LoginGate::decide()` istnieje od Planu 1, ma testy i **nie ma ani jednego konsumenta** — w `src/` nie ma żadnego podpięcia pod `authenticate` ani `wp_authenticate`. Skutek: konto utworzone w stanie `email_unconfirmed` **loguje się normalnie**, czyli specyfikacja („logowanie wpuszcza wyłącznie `zatwierdzony`") nie jest po Planie 3 egzekwowana w ogóle.
 
 Drugi, poważniejszy skutek: **to przewraca całą pracę Planów 3 nad nieujawnianiem kont.** Plan 3 zamknął enumerację w formularzu rejestracji (zgłoszenie na istniejący adres zwraca dokładnie odpowiedź przyjętego), ale atakujący omija to dwoma żądaniami: wysyła zgłoszenie na adres kandydata z **własnym** hasłem, potem próbuje się zalogować. Wejście znaczy „adres był wolny", komunikat o błędnym haśle znaczy „adres jest zajęty". Dwa żądania, ustawienia domyślne, pewność całkowita.
 
@@ -121,6 +123,10 @@ Zachowanie domeny jest przypięte testem `LoginGateTest::test_unrecognised_store
 
 Istnieje od pierwszej migracji, mimo że nic jej jeszcze nie używa. Żądanie usunięcia danych osobowych ma **anonimizować** log zdarzeń, nie kasować go — log wykazuje, kto i kiedy zatwierdził konto. Nie usuwać jako „nieużywanej".
 
+### `EventLog::write()` połyka porażkę zapisu
+
+`src/Persistence/EventLog.php`, metoda `write()`, zwraca `void` i ignoruje wynik `$wpdb->insert()`. Gdy zapis logu zawiedzie po udanej zmianie stanu (`Decision::approve()` / `reject()` piszą log po zapisie stanu, a mail idzie po logu), rozstrzygnięcie jest już wysłane mailem i zgłoszone redaktorowi jako sukces, a po audycie nie ma śladu. Specyfikacja opiera na tym logu całe „kto zatwierdził i kiedy" i wymaga jego anonimizacji zamiast kasowania, więc brakujący wiersz to dziura w jedynym dowodzie decyzji. `write()` powinno zwracać `bool`, a `Decision` traktować porażkę jak `RESULT_STORAGE_FAILED` albo osobny wynik, który ekran policzy i pokaże; ta sama zmiana dotyczy pozostałych miejsc zapisu do logu (rejestracja, most ACF).
+
 ### Backfill stanów przy aktywacji
 
 Konta istniejące na portalu przed wdrożeniem nie mają stanu. Dziś nie powoduje to utraty dostępu, bo brama logowania nie jest podłączona (Plan 4), ale po jej podłączeniu backfill musi już działać.
@@ -136,6 +142,10 @@ Pytanie otwarte, na które eksporter musi odpowiedzieć **przed** napisaniem ano
 Snapshot rodzaju `confirmation` zawiera **token potwierdzenia adresu ważny 48 godzin**, a snapshot `password_reset` — **klucz resetu hasła wygenerowany przez rdzeń**. Oba leżą w tabeli z oknem retencji 90 dni i oba są czytelne w panelu na ekranie logu wysyłek. Jest to nieunikniona konsekwencja wzorca „render treści przy zapisie", którego żąda specyfikacja, i **nie jest** eskalacją uprawnień: każdy, kto widzi ten ekran, ma już `manage_options`. Nie została natomiast nigdzie zapisana decyzja o danych **w spoczynku**: kopia bazy zrobiona w okresie ważności tokenu daje działające linki do przejęcia konta.
 
 Do rozstrzygnięcia przez właściciela, nie przez wykonawcę: czy te dwa rodzaje maili mają mieć okno retencji liczone w **dniach** zamiast w 90 dniach — albo czy po wysyłce ma być czyszczona sama kolumna `body`? Pierwsze jest tańsze, drugie zostawia dłuższy ślad „czy ten mail wyszedł". Dopóki odpowiedzi nie ma, obowiązuje 90 dni dla wszystkich rodzajów.
+
+### Eraser musi czyścić dane osobowe powstałe w Planie 6
+
+Kasowanie danych osobowych (eraser WordPressa) musi usuwać `UserMeta::REGISTRATION_IP` i `UserMeta::REJECTION_REASON`: oba powstały w Planie 6 i oba są danymi osobowymi przy koncie. Wiersze `credential_changed` w logu zdarzeń (`ProfileSync::LOG_CREDENTIAL_CHANGED`) niosą numer uprawnień w `context` (klucze `old` i `new`) i podlegają anonimizacji logu (kolumna `anonymized`), nie usunięciu.
 
 ---
 
@@ -156,6 +166,18 @@ Testy jadą na najnowszym WordPressie z kontenera (7.1), a minimum wtyczki to 6.
 ### Pusta suita integracyjna i kod wyjścia
 
 Sprawdzić, czy PHPUnit kończy się kodem 0 przy pustej suicie — zanim CI zacznie na tym polegać.
+
+---
+
+## Zostawione przez Plan 6
+
+### Przycisk zdejmujący blokadę limitu prób
+
+Specyfikacja („Odporność na boty") go wymaga; Plan 4 przypisał go Planowi 6, a Plan 6 świadomie go nie robi. Potrzebny jest rejestr kubełków limitu: `LoginHandler::{BUCKET_IP, BUCKET_USER, BUCKET_IDENTITY}`, `PasswordReset::{BUCKET_IP, BUCKET_EMAIL, BUCKET_SET_IP, BUCKET_SET_USER, BUCKET_LOG_IP}`, `Confirmation::BUCKET_RESEND_IP` (stała prywatna), `PasswordSetup::{BUCKET_SETPASS_IP, BUCKET_SETPASS_USER}` (prywatne), `Mailer::BUCKET_MAIL_TO` (prywatna). Zdejmowanie blokady z adresu IP nie ma gdzie wisieć: żaden ekran nie ma wiersza na adres.
+
+### Data na liście wniosków to data rejestracji, nie zgłoszenia
+
+Moment przejścia konta w `pending` nie jest nigdzie zapisany. Gdyby redakcja potrzebowała kolejki po dacie złożenia wniosku, trzeba dodać metadaną ustawianą przy potwierdzeniu adresu (`Confirmation`). Zob. Zadanie 4 Planu 6.
 
 ---
 

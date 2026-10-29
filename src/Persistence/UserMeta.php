@@ -31,6 +31,8 @@ final class UserMeta {
 	public const PASSWORD_TICKET_EXPIRES = 'pusers_password_ticket_expires';
 	public const TERMS_VERSION           = 'pusers_terms_version';
 	public const CONSENT_AT              = 'pusers_consent_at';
+	public const REGISTRATION_IP         = 'pusers_registration_ip';
+	public const REJECTION_REASON        = 'pusers_rejection_reason';
 
 	/**
 	 * Przedrostek metadanych z wartościami pól ACF ze zgłoszenia: nazwa metadanej to przedrostek
@@ -67,6 +69,8 @@ final class UserMeta {
 			self::PASSWORD_TICKET_EXPIRES,
 			self::TERMS_VERSION,
 			self::CONSENT_AT,
+			self::REGISTRATION_IP,
+			self::REJECTION_REASON,
 		);
 	}
 }

@@ -9,12 +9,14 @@ declare( strict_types=1 );
 
 namespace PortalUsers;
 
+use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\MailLogScreen;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MailTemplatesScreen;
 use PortalUsers\Admin\MatrixScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\ProfessionsScreen;
+use PortalUsers\Admin\ProfileSync;
 use PortalUsers\Admin\SettingsScreen;
 use PortalUsers\Cron\DispatchMail;
 use PortalUsers\Cron\PurgeMailLog;
@@ -103,6 +105,14 @@ final class Plugin {
 		// z `PasswordReset`, który sam jedzie już za sprawdzeniem zależności.
 		CoreCapture::register();
 
+		// Ekran wniosków też stoi poza hookiem zależnym od ACF Pro, choć reszta ekranów panelu jedzie za nim.
+		// Brama logowania działa bez ACF Pro i dalej trzyma ludzi na zewnątrz, maile do redakcji już wyszły,
+		// a konta czekają w stanie `pending`: gdyby ekran znikał razem z ACF, awaria ACF zamykałaby portal
+		// dla każdego oczekującego lekarza bez żadnej drogi ratunku z panelu. Egzekwowanie zostaje, funkcje
+		// się bramkuje, a rozstrzyganie wniosków należy do egzekwowania. Jedynie panel szczegółów potrzebuje
+		// ACF i sam mówi, gdy go nie ma.
+		ApplicationsScreen::register();
+
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.
 		add_action( 'plugins_loaded', array( self::class, 'load_features' ) );
@@ -128,6 +138,9 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( PasswordReset::class, 'register' ) );
 		add_action( 'pusers_register_features', array( TermsBinding::class, 'register' ) );
 		add_action( 'pusers_register_features', array( PurgeUnconfirmed::class, 'register' ) );
+		// Most ACF do metadanych wtyczki stoi ZA bramką (w przeciwieństwie do ekranu wniosków): bez ACF Pro
+		// nie ma czego synchronizować, a hook `acf/save_post` i tak by nie odpalił.
+		add_action( 'pusers_register_features', array( ProfileSync::class, 'register' ) );
 	}
 
 	/**

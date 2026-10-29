@@ -25,6 +25,7 @@ final class Menu {
 	public const SLUG_MATRIX         = 'pusers-matrix';
 	public const SLUG_MAIL_TEMPLATES = 'pusers-mail-templates';
 	public const SLUG_MAIL_LOG       = 'pusers-mail-log';
+	public const SLUG_APPLICATIONS   = 'pusers-applications';
 
 	/**
 	 * Podpina rejestrację podstrony ustawień pod `admin_menu`.
