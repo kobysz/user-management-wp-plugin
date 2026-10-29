@@ -258,4 +258,61 @@ final class ProfileSyncTest extends WP_UnitTestCase {
 		$this->assertSame( '', $context['old'] );
 		$this->assertSame( '5425740', $context['new'] );
 	}
+
+	public function test_pusta_wartosc_z_acf_nie_nadpisuje_wartosci_z_rejestracji_i_nie_loguje(): void {
+		$id = $this->account();
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', '5425740' );
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'miejsca', 'Szpital' );
+		update_user_meta( $id, 'pwz', '' );
+		update_user_meta( $id, 'miejsca', '' );
+
+		do_action( 'acf/save_post', 'user_' . $id );
+
+		$this->assertSame( '5425740', get_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', true ) );
+		$this->assertSame( 'Szpital', get_user_meta( $id, UserMeta::ACF_PREFIX . 'miejsca', true ) );
+		$this->assertSame( 0, $this->logCount( $id ) );
+	}
+
+	public function test_filtr_odczytu_zasila_acf_wartoscia_z_rejestracji(): void {
+		$id = $this->account();
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', '5425740' );
+
+		$this->assertSame( '5425740', apply_filters( 'acf/load_value', '', 'user_' . $id, array( 'name' => 'pwz' ) ) );
+	}
+
+	public function test_filtr_odczytu_nie_rusza_pola_ukrytego_obcego_identyfikatora_ani_wlasnej_wartosci_acf(): void {
+		$id = $this->account();
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'tajne', 'sekret' );
+		update_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', '5425740' );
+
+		$this->assertSame( '', apply_filters( 'acf/load_value', '', 'user_' . $id, array( 'name' => 'tajne' ) ) );
+		$this->assertSame( 'x', apply_filters( 'acf/load_value', 'x', 'post_' . $id, array( 'name' => 'pwz' ) ) );
+		$this->assertSame( 'x', apply_filters( 'acf/load_value', 'x', 'options', array( 'name' => 'pwz' ) ) );
+		$this->assertSame( 'x', apply_filters( 'acf/load_value', 'x', 'user_' . $id, array( 'label' => 'brak nazwy' ) ) );
+
+		update_user_meta( $id, 'pwz', '1111111' );
+		$this->assertSame( '1111111', apply_filters( 'acf/load_value', '1111111', 'user_' . $id, array( 'name' => 'pwz' ) ) );
+	}
+
+	public function test_profesja_usunieta_z_ustawien_przenosi_pola_ale_nie_loguje(): void {
+		ProfessionRepository::save( ProfessionCollection::fromArray( array() ) );
+		$id = $this->account();
+		update_user_meta( $id, 'pwz', '5425740' );
+
+		do_action( 'acf/save_post', 'user_' . $id );
+
+		$this->assertSame( '5425740', get_user_meta( $id, UserMeta::ACF_PREFIX . 'pwz', true ) );
+		$this->assertSame( 0, $this->logCount( $id ) );
+	}
+
+	public function test_niedostepna_grupa_acf_nic_nie_przenosi(): void {
+		remove_all_filters( 'pusers_acf_groups' );
+		$id = $this->account();
+		update_user_meta( $id, 'pwz', '5425740' );
+
+		do_action( 'acf/save_post', 'user_' . $id );
+
+		$this->assertFalse( metadata_exists( 'user', $id, UserMeta::ACF_PREFIX . 'pwz' ) );
+		$this->assertSame( 0, $this->logCount( $id ) );
+	}
 }
