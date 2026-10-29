@@ -49,6 +49,12 @@ final class MailQueueRepository {
 	public const ANONYMIZED_PLACEHOLDER = '(dane usunięte na żądanie)';
 
 	/**
+	 * Wpis w `last_error` wiersza, który nie wyszedł i już nie wyjdzie, bo anonimizacja odebrała mu adresata i treść.
+	 * Stały i bezosobowy, żeby log wysyłek mówił, dlaczego wiersz stoi w `failed`, nie niosąc żadnych danych.
+	 */
+	public const CANCELLED_BY_ERASURE = 'Wysyłkę anulowało żądanie usunięcia danych.';
+
+	/**
 	 * Wstawia wiersz w stanie queued. Duplikat `dedupe_key` jest po cichu pomijany.
 	 *
 	 * Klucz `dedupe_key` ma co najwyżej DEDUPE_KEY_MAX znaków. wpdb zdejmuje tryby ścisłe SQL, więc dłuższy
@@ -463,7 +469,10 @@ final class MailQueueRepository {
 	 *
 	 * Sama flaga nie anonimizowałaby niczego, bo dane zostają w wierszu. Wiersz musi przeżyć, bo tabela
 	 * jest logiem wysyłek: wartością jest to, że mail wyszedł (`kind`, `created_at`, `sent_at`, `status`,
-	 * `attempts` zostają). `dedupe_key` też zostaje: jego nadpisanie pozwoliłoby wysłać ten sam mail
+	 * `attempts` zostają). Wyjątek: wiersz, który NIE wyszedł (status inny niż `sent`), dostaje `failed`
+	 * i `CANCELLED_BY_ERASURE`. Wiersz, który nie wyszedł i już nie wyjdzie, ma to mówić, zamiast udawać,
+	 * że czeka: `queued` trafiałby do `due()` i dispatcher słałby na nie-adres, a ostrzeżenie o zaległej
+	 * kolejce paliłoby się w panelu na zawsze. `dedupe_key` też zostaje: jego nadpisanie pozwoliłoby wysłać ten sam mail
 	 * drugi raz, a unikalny indeks jest jedyną odpornością kolejki na duplikaty.
 	 * Operacja jest idempotentna: rusza tylko wiersze z `anonymized = 0`, bo rdzeń woła eraser w pętli.
 	 *
@@ -483,11 +492,16 @@ final class MailQueueRepository {
 			// Warunek anonymized = 0 powtórzony przy zapisie: równoległe wywołanie nie policzy wiersza drugi raz.
 			$updated = $wpdb->query(
 				$wpdb->prepare(
-					'UPDATE %i SET recipient = %s, subject = %s, body = %s, anonymized = 1 WHERE id = %d AND anonymized = 0',
+					// Kolejność przypisań ma znaczenie: MySQL liczy je od lewej i `status` czytany po zmianie dałby już `failed`.
+					'UPDATE %i SET recipient = %s, subject = %s, body = %s, last_error = IF(status = %s, last_error, %s), status = IF(status = %s, status, %s), anonymized = 1 WHERE id = %d AND anonymized = 0',
 					$table,
 					self::ANONYMIZED_PLACEHOLDER,
 					self::ANONYMIZED_PLACEHOLDER,
 					self::ANONYMIZED_PLACEHOLDER,
+					QueueStatus::Sent->value,
+					self::CANCELLED_BY_ERASURE,
+					QueueStatus::Sent->value,
+					QueueStatus::Failed->value,
 					(int) $id
 				)
 			);

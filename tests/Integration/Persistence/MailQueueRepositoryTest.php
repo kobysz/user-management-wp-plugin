@@ -346,7 +346,7 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 			$this->assertStringNotContainsString( 'TAJNY-TOKEN', (string) $after[ $column ] );
 		}
 		$this->assertSame( '1', (string) $after['anonymized'] );
-		foreach ( array( 'kind', 'created_at', 'sent_at', 'status', 'attempts' ) as $column ) {
+		foreach ( array( 'kind', 'created_at', 'sent_at', 'attempts' ) as $column ) {
 			$this->assertSame( $before[ $column ], $after[ $column ], $column );
 		}
 
@@ -378,5 +378,36 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 
 		$this->assertSame( $before, $this->raw_row( $id )['dedupe_key'] );
 		$this->assertFalse( MailQueueRepository::insert( $this->row( 'd-klucz' ) ), 'Ten sam klucz nadal jest duplikatem.' );
+	}
+
+	public function test_anonymize_user_zatrzymuje_wiersz_ktory_nie_wyszedl(): void {
+		// Wiersz queued z napisem zamiast adresu trafiałby do dispatchera, a ostrzeżenie o zaległej kolejce paliłoby się na zawsze.
+		$id = $this->insert_for( 'c-1', 29 );
+
+		$this->assertSame( 1, MailQueueRepository::anonymize_user( 29 ) );
+
+		$after = $this->raw_row( $id );
+		$this->assertSame( QueueStatus::Failed->value, $after['status'] );
+		$this->assertSame( MailQueueRepository::CANCELLED_BY_ERASURE, $after['last_error'] );
+		$ids = array_column( MailQueueRepository::due( gmdate( 'Y-m-d H:i:s', time() + DAY_IN_SECONDS ), 100 ), 'id' );
+		$this->assertNotContains( (string) $id, array_map( 'strval', $ids ), 'Anulowany wiersz nie jest już do wysłania.' );
+		$this->assertNull( MailQueueRepository::oldest_due_at() );
+	}
+
+	public function test_anonymize_user_zachowuje_status_i_date_wyslanego_wiersza(): void {
+		$id = $this->insert_for( 'c-2', 30 );
+		$this->assertSame( 1, MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
+		$this->assertTrue( MailQueueRepository::mark_sent( $id, '2026-01-02 03:04:05', 1 ) );
+		$before = $this->raw_row( $id );
+		$this->assertSame( QueueStatus::Sent->value, $before['status'] );
+		$this->assertNotNull( $before['sent_at'] );
+
+		$this->assertSame( 1, MailQueueRepository::anonymize_user( 30 ) );
+
+		$after = $this->raw_row( $id );
+		$this->assertSame( $before['status'], $after['status'] );
+		$this->assertSame( $before['sent_at'], $after['sent_at'] );
+		$this->assertSame( $before['last_error'], $after['last_error'], 'Wysłany wiersz nie dostaje znacznika anulowania.' );
+		$this->assertSame( MailQueueRepository::ANONYMIZED_PLACEHOLDER, $after['body'] );
 	}
 }
