@@ -410,4 +410,26 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		$this->assertSame( $before['last_error'], $after['last_error'], 'Wysłany wiersz nie dostaje znacznika anulowania.' );
 		$this->assertSame( MailQueueRepository::ANONYMIZED_PLACEHOLDER, $after['body'] );
 	}
+
+	public function test_requeue_failed_odmawia_wiersza_zanonimizowanego(): void {
+		// Zanonimizowany wiersz nie ma adresata ani treści; wznowienie wysłałoby na napis zastępczy i odwróciłoby skutek żądania usunięcia danych.
+		$id = $this->insert_for( 'r-1', 31 );
+		MailQueueRepository::anonymize_user( 31 );
+		$this->assertSame( QueueStatus::Failed->value, $this->raw_row( $id )['status'] );
+
+		$this->assertFalse( MailQueueRepository::requeue_failed( $id ) );
+
+		$after = $this->raw_row( $id );
+		$this->assertSame( QueueStatus::Failed->value, $after['status'] );
+		$this->assertSame( '1', (string) $after['anonymized'] );
+	}
+
+	public function test_requeue_failed_nadal_wznawia_wiersz_nieanonimizowany(): void {
+		$id = $this->insert_for( 'r-2', 32 );
+		$this->assertSame( 1, MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
+		$this->assertTrue( MailQueueRepository::mark_failed( $id, 'SMTP', 1 ) );
+
+		$this->assertTrue( MailQueueRepository::requeue_failed( $id ) );
+		$this->assertSame( QueueStatus::Queued->value, $this->raw_row( $id )['status'] );
+	}
 }

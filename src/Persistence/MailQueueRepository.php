@@ -399,7 +399,7 @@ final class MailQueueRepository {
 	}
 
 	/**
-	 * Wznawia nieudany wiersz: zeruje próby i wraca do kolejki; `last_error` zostaje jako ślad poprzedniej próby. Wiersz w innym stanie zostaje nietknięty.
+	 * Wznawia nieudany wiersz: zeruje próby i wraca do kolejki; `last_error` zostaje jako ślad poprzedniej próby. Wiersz w innym stanie zostaje nietknięty, a zanonimizowany też: żądanie usunięcia danych jest nieodwracalne, a taki wiersz nie ma już adresata ani treści, więc wysyłka nie miałaby komu i czego dostarczyć.
 	 *
 	 * @param int $id Identyfikator wiersza.
 	 * @return bool True, gdy wiersz był failed i wrócił do kolejki.
@@ -409,7 +409,7 @@ final class MailQueueRepository {
 
 		$wpdb->query(
 			$wpdb->prepare(
-				'UPDATE %i SET status = %s, attempts = 0, scheduled_at = %s WHERE id = %d AND status = %s',
+				'UPDATE %i SET status = %s, attempts = 0, scheduled_at = %s WHERE id = %d AND status = %s AND anonymized = 0',
 				Migrations::table( self::TABLE ),
 				QueueStatus::Queued->value,
 				gmdate( 'Y-m-d H:i:s' ),
