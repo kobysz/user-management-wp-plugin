@@ -469,8 +469,7 @@ final class MailQueueRepository {
 	 *
 	 * Sama flaga nie anonimizowałaby niczego, bo dane zostają w wierszu. Wiersz musi przeżyć, bo tabela
 	 * jest logiem wysyłek: wartością jest to, że mail wyszedł (`kind`, `created_at`, `sent_at`, `status`,
-	 * `attempts` zostają). Wyjątek: wiersz, który NIE wyszedł (status inny niż `sent`), dostaje `failed`
-	 * i `CANCELLED_BY_ERASURE`. Wiersz, który nie wyszedł i już nie wyjdzie, ma to mówić, zamiast udawać,
+	 * `attempts` zostają). `last_error` jest zerowany (wysłany) albo ustawiany na `CANCELLED_BY_ERASURE`. Wiersz, który NIE wyszedł (status inny niż `sent`), dostaje też `failed`. Wiersz, który nie wyszedł i już nie wyjdzie, ma to mówić, zamiast udawać,
 	 * że czeka: `queued` trafiałby do `due()` i dispatcher słałby na nie-adres, a ostrzeżenie o zaległej
 	 * kolejce paliłoby się w panelu na zawsze. `dedupe_key` też zostaje: jego nadpisanie pozwoliłoby wysłać ten sam mail
 	 * drugi raz, a unikalny indeks jest jedyną odpornością kolejki na duplikaty.
@@ -493,7 +492,8 @@ final class MailQueueRepository {
 			$updated = $wpdb->query(
 				$wpdb->prepare(
 					// Kolejność przypisań ma znaczenie: MySQL liczy je od lewej i `status` czytany po zmianie dałby już `failed`.
-					'UPDATE %i SET recipient = %s, subject = %s, body = %s, last_error = IF(status = %s, last_error, %s), status = IF(status = %s, status, %s), anonymized = 1 WHERE id = %d AND anonymized = 0',
+					// `last_error` czyścimy też wysłanym wierszom: komunikat serwera pocztowego z wcześniejszej próby potrafi nieść adres odbiorcy.
+					'UPDATE %i SET recipient = %s, subject = %s, body = %s, last_error = IF(status = %s, NULL, %s), status = IF(status = %s, status, %s), anonymized = 1 WHERE id = %d AND anonymized = 0',
 					$table,
 					self::ANONYMIZED_PLACEHOLDER,
 					self::ANONYMIZED_PLACEHOLDER,

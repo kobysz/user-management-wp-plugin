@@ -394,21 +394,27 @@ final class MailQueueRepositoryTest extends WP_UnitTestCase {
 		$this->assertNull( MailQueueRepository::oldest_due_at() );
 	}
 
-	public function test_anonymize_user_zachowuje_status_i_date_wyslanego_wiersza(): void {
-		$id = $this->insert_for( 'c-2', 30 );
-		$this->assertSame( 1, MailQueueRepository::claim( $id, gmdate( 'Y-m-d H:i:s' ) ) );
-		$this->assertTrue( MailQueueRepository::mark_sent( $id, '2026-01-02 03:04:05', 1 ) );
+	public function test_anonymize_user_zachowuje_status_i_date_wyslanego_wiersza_a_czysci_blad_z_adresem(): void {
+		// Komunikat serwera pocztowego z nieudanej próby niesie adres odbiorcy; po udanej drugiej próbie zostaje w wierszu `sent`.
+		$id  = $this->insert_for( 'c-2', 30 );
+		$now = gmdate( 'Y-m-d H:i:s' );
+		$this->assertSame( 1, MailQueueRepository::claim( $id, $now ) );
+		$this->assertTrue( MailQueueRepository::reschedule( $id, gmdate( 'Y-m-d H:i:s', time() - 60 ), '550 5.1.1 <jan.kowalski@example.com>: Recipient address rejected', 1 ) );
+		$this->assertSame( 2, MailQueueRepository::claim( $id, $now ) );
+		$this->assertTrue( MailQueueRepository::mark_sent( $id, '2026-01-02 03:04:05', 2 ) );
 		$before = $this->raw_row( $id );
 		$this->assertSame( QueueStatus::Sent->value, $before['status'] );
 		$this->assertNotNull( $before['sent_at'] );
+		$this->assertStringContainsString( 'jan.kowalski@example.com', (string) $before['last_error'], 'Warunek wstępny: błąd z adresem przeżył wysyłkę.' );
 
 		$this->assertSame( 1, MailQueueRepository::anonymize_user( 30 ) );
 
 		$after = $this->raw_row( $id );
 		$this->assertSame( $before['status'], $after['status'] );
 		$this->assertSame( $before['sent_at'], $after['sent_at'] );
-		$this->assertSame( $before['last_error'], $after['last_error'], 'Wysłany wiersz nie dostaje znacznika anulowania.' );
+		$this->assertNull( $after['last_error'], 'Wysłany wiersz nie dostaje znacznika anulowania, a błąd znika.' );
 		$this->assertSame( MailQueueRepository::ANONYMIZED_PLACEHOLDER, $after['body'] );
+		$this->assertStringNotContainsString( 'jan.kowalski@example.com', (string) wp_json_encode( $after ), 'Adresu nie ma w żadnej kolumnie.' );
 	}
 
 	public function test_requeue_failed_odmawia_wiersza_zanonimizowanego(): void {
