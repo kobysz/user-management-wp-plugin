@@ -159,6 +159,34 @@ final class ImportMappingTest extends TestCase {
 
 		$this->assertSame( $one->hash(), $two->hash() );
 		$this->assertNotSame( $one->hash(), $changed->hash() );
+
+		// Każda sekcja z osobna: zmiana tylko jej musi zmienić odcisk.
+		$base = array(
+			'fields'           => array( 'field_a' => 'wpmem_a' ),
+			'professionKey'    => 'wpmem_prof',
+			'professionValues' => array( 'lekarz' => 'lekarz' ),
+			'statusKey'        => 'wpmem_status',
+			'statusValues'     => array( 'a' => 'approved' ),
+			'fallback'         => 'pending',
+		);
+		$hash = ImportMapping::fromArray( $base )->hash();
+
+		$variants = array(
+			'fields'           => array( 'field_a' => 'wpmem_inne' ),
+			'professionKey'    => 'wpmem_inna_prof',
+			'professionValues' => array( 'lekarz' => 'ratownik' ),
+			'statusKey'        => 'wpmem_inny_status',
+			'statusValues'     => array( 'a' => 'rejected' ),
+			'fallback'         => 'approved',
+		);
+
+		foreach ( $variants as $section => $value ) {
+			$this->assertNotSame(
+				$hash,
+				ImportMapping::fromArray( array_merge( $base, array( $section => $value ) ) )->hash(),
+				'Zmiana sekcji ' . $section . ' nie zmienia odcisku.'
+			);
+		}
 	}
 
 	public function test_pruned_to_usuwa_pola_i_profesje_ktorych_nie_ma(): void {
@@ -280,6 +308,14 @@ final class ImportMappingTest extends TestCase {
 		$this->assertSame( AccountStatus::Approved, $copy->statusFor( '1' ) );
 		$this->assertSame( AccountStatus::Rejected, $copy->statusFor( '0' ) );
 		$this->assertSame( $mapping->hash(), $copy->hash() );
+	}
+
+	public function test_liczbowe_kody_profesji_nie_gina_przy_wczytaniu(): void {
+		$mapping = ImportMapping::fromArray( array( 'professionValues' => array( '1' => 'lekarz' ) ) );
+		$copy    = ImportMapping::fromArray( $mapping->toArray() );
+
+		$this->assertSame( 'lekarz', $mapping->professionFor( '1' ) );
+		$this->assertSame( 'lekarz', $copy->professionFor( '1' ) );
 	}
 
 	public function test_zle_ksztaltowane_wejscie_nie_wywala_wczytania(): void {
