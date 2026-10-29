@@ -255,7 +255,8 @@ final class ImportRunner {
 	 * @return bool Prawda, gdy po zapisie odczyt daje dokładnie tę wartość.
 	 */
 	private function storeMeta( int $userId, string $key, string $value ): bool {
-		update_user_meta( $userId, $key, $value );
+		// update_user_meta() odcina ukośniki (wp_unslash), więc bez wp_slash() wartość z ukośnikiem nie zgadzałaby się z odczytem na stałe.
+		update_user_meta( $userId, $key, wp_slash( $value ) );
 
 		return get_user_meta( $userId, $key, true ) === $value;
 	}

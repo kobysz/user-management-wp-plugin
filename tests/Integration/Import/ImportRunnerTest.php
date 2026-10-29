@@ -110,14 +110,15 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 	/**
 	 * Uruchamia zapis z zepsutym wstawianiem numeru dla jednego konta; filtr i tryb błędów wracają w finally.
 	 *
-	 * @param int $victim Konto, któremu INSERT numeru ma się nie udać.
+	 * @param int    $victim Konto, któremu INSERT metadanej ma się nie udać.
+	 * @param string $key    Klucz metadanej, której zapis ma paść.
 	 * @return \PortalUsers\Domain\Import\ImportReport
 	 */
-	private function apply_with_broken_insert( int $victim ): \PortalUsers\Domain\Import\ImportReport {
+	private function apply_with_broken_insert( int $victim, string $key = self::PWZ_FIELD ): \PortalUsers\Domain\Import\ImportReport {
 		global $wpdb;
 		$filter = static fn( string $query ): string => str_starts_with( ltrim( $query ), 'INSERT' )
 			&& str_contains( $query, "`{$wpdb->usermeta}`" )
-			&& str_contains( $query, "({$victim}, '" . self::PWZ_FIELD . "'" )
+			&& str_contains( $query, "({$victim}, '" . $key . "'" )
 			? 'SELECT * FROM pusers_tabela_ktora_nie_istnieje'
 			: $query;
 
@@ -275,9 +276,44 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 		$this->assertSame( 1, $report->changed(), 'Zmienione jest tylko konto, któremu zapis się udał.' );
 		$this->assertSame( '', get_user_meta( $victim, self::PWZ_FIELD, true ) );
 		$this->assertSame( '1234567', get_user_meta( $fine, self::PWZ_FIELD, true ) );
+		$this->assertSame( 'lekarz', get_user_meta( $victim, UserMeta::PROFESSION, true ), 'Po porażce jednej pozycji pozostałe są nadal zapisywane.' );
 
 		$actions = array_map( static fn( object $row ): string => (string) $row->action, $this->log_rows() );
 		$this->assertSame( array( ImportRunner::LOG_APPLIED, ImportRunner::LOG_WRITE_FAILED ), $actions );
+	}
+
+	public function test_padniety_zapis_stanu_jest_zgloszony_a_pozostale_pozycje_zapisane(): void {
+		$victim = $this->source_account();
+
+		$report = $this->apply_with_broken_insert( $victim, UserMeta::STATUS );
+
+		$this->assertSame( 1, $report->writeFailures() );
+		$this->assertSame( array( $victim ), $report->writeFailureSample() );
+		$this->assertSame( 0, $report->changed() );
+		$this->assertNull( AccountStatusRepository::get( $victim ) );
+		$this->assertSame( '1234567', get_user_meta( $victim, self::PWZ_FIELD, true ) );
+		$this->assertSame( 'lekarz', get_user_meta( $victim, UserMeta::PROFESSION, true ) );
+	}
+
+	public function test_wartosc_z_ukosnikiem_zapisuje_sie_dokladnie_i_drugi_przebieg_nic_nie_zmienia(): void {
+		$id = (int) self::factory()->user->create();
+		update_user_meta( $id, 'wpmem_name', wp_slash( 'a\b' ) );
+		$this->assertSame( 'a\b', get_user_meta( $id, 'wpmem_name', true ) );
+		$mapping = ImportMapping::fromArray( array( 'fields' => array( 'name' => 'wpmem_name' ) ) );
+		$actor   = $this->actor();
+		$runner  = new ImportRunner();
+
+		$dry     = $runner->dry_run( $mapping );
+		$applied = $runner->apply( $mapping, $actor );
+
+		$this->assertSame( 'a\b', get_user_meta( $id, UserMeta::ACF_PREFIX . 'name', true ) );
+		$this->assertSame( 1, $applied->changed() );
+		$this->assertSame( 0, $applied->writeFailures() );
+		$this->assertSame( $dry->toArray(), $applied->toArray(), 'Podgląd zgadza się z zapisem.' );
+
+		$again = $runner->apply( $mapping, $actor );
+		$this->assertSame( 0, $again->changed() );
+		$this->assertSame( 0, $again->writeFailures() );
 	}
 
 	public function test_zapis_zostawia_jeden_wiersz_w_logu_z_aktorem_i_licznikami(): void {
@@ -318,6 +354,13 @@ final class ImportRunnerTest extends WP_UnitTestCase {
 		$this->assertArrayNotHasKey( 'write_failure_sample', $context );
 		$this->assertArrayNotHasKey( 'samples', $context );
 		$this->assertStringNotContainsString( (string) $victim, (string) $rows[1]->context );
+
+		$applied = json_decode( (string) $rows[0]->context, true );
+		$this->assertIsArray( $applied );
+		$keys = array_keys( $applied );
+		sort( $keys );
+		$this->assertSame( array( 'changed', 'issues', 'scanned', 'source_keys', 'write_failures' ), $keys );
+		$this->assertSame( 1, $applied['write_failures'] );
 	}
 
 	public function test_przebieg_obchodzi_wszystkie_konta_ponad_jedna_partie(): void {
