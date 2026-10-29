@@ -11,6 +11,7 @@ namespace PortalUsers;
 
 use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\ExportHandler;
+use PortalUsers\Admin\ImportScreen;
 use PortalUsers\Admin\MailLogScreen;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MailTemplatesScreen;
@@ -133,6 +134,7 @@ final class Plugin {
 		add_action( 'pusers_register_features', array( SettingsScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( ProfessionsScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MatrixScreen::class, 'register' ) );
+		add_action( 'pusers_register_features', array( ImportScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MailTemplatesScreen::class, 'register' ) );
 		add_action( 'pusers_register_features', array( MailLogScreen::class, 'register' ) );
 		// Komunikat o niedrenowanej kolejce stoi po stronie ekranów panelu, a nie przy dispatcherze:

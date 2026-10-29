@@ -11,6 +11,7 @@ namespace PortalUsers\Tests\Integration;
 
 use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\ExportHandler;
+use PortalUsers\Admin\ImportScreen;
 use PortalUsers\Privacy\PrivacyProvider;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MatrixScreen;
@@ -65,6 +66,7 @@ final class WiringTest extends WP_UnitTestCase {
 			ProfessionsScreen::ACTION_DELETE,
 			MatrixScreen::ACTION_SAVE,
 			MatrixScreen::ACTION_DELETE_FIELD,
+			ImportScreen::ACTION_SAVE,
 			RegistrationHandler::ACTION,
 			LoginHandler::ACTION,
 			Confirmation::ACTION_RESEND,
@@ -83,6 +85,7 @@ final class WiringTest extends WP_UnitTestCase {
 			'settings'    => array( SettingsScreen::class ),
 			'professions' => array( ProfessionsScreen::class ),
 			'matrix'      => array( MatrixScreen::class ),
+			'import'      => array( ImportScreen::class ),
 			'mail queue notice' => array( MailQueueNotice::class ),
 			'registration' => array( RegistrationForm::class ),
 			'registration handler' => array( RegistrationHandler::class ),
@@ -288,6 +291,18 @@ final class WiringTest extends WP_UnitTestCase {
 		);
 		$this->assertSame( LoginGateway::PRIORITY, has_filter( 'authenticate', array( LoginGateway::class, 'gate' ) ) );
 		$this->assertSame( LoginGateway::REST_PRIORITY, has_filter( 'rest_authentication_errors', array( LoginGateway::class, 'gate_rest' ) ) );
+	}
+
+	public function test_load_features_hooks_the_import_screen_save_action(): void {
+		add_filter( 'pusers_acf_pro_loaded', '__return_true' );
+		$this->assertTrue( Dependencies::satisfied(), 'Test ma działać przy spełnionych zależnościach.' );
+		$this->assertFalse( has_action( 'admin_post_' . ImportScreen::ACTION_SAVE ), 'Uchwyt miał być zdjęty przed próbą.' );
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		$this->assertNotFalse( has_action( 'admin_post_' . ImportScreen::ACTION_SAVE, array( ImportScreen::class, 'handle_save' ) ) );
+		$this->assertNotFalse( has_action( 'admin_menu', array( ImportScreen::class, 'add_page' ) ) );
 	}
 
 	public function test_boot_registers_the_session_guard_even_when_acf_pro_is_missing(): void {
