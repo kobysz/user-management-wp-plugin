@@ -58,7 +58,7 @@ final class MailLogScreenTest extends WP_UnitTestCase {
 	 * @param string      $key    Przedrostek klucza odporności.
 	 * @param string      $body   Treść maila.
 	 */
-	private function seed( QueueStatus $status, string $error = '', string $key = 'k', string $body = 'Treść maila' ): int {
+	private function seed( QueueStatus $status, string $error = '', string $key = 'k', string $body = 'Treść maila', string $subject = 'Potwierdź konto', string $recipient = 'lekarz@example.com' ): int {
 		global $wpdb;
 		$now = gmdate( 'Y-m-d H:i:s' );
 		MailQueueRepository::insert(
@@ -68,8 +68,8 @@ final class MailLogScreenTest extends WP_UnitTestCase {
 				'kind'         => 'confirmation',
 				'dedupe_key'   => $key . wp_generate_password( 6, false ),
 				'user_id'      => 7,
-				'recipient'    => 'lekarz@example.com',
-				'subject'      => 'Potwierdź konto',
+				'recipient'    => $recipient,
+				'subject'      => $subject,
 				'body'         => $body,
 			)
 		);
@@ -109,7 +109,53 @@ final class MailLogScreenTest extends WP_UnitTestCase {
 
 		$html = $this->render_screen();
 
-		$this->assertStringNotContainsString( str_repeat( 'x', 200 ), $html );
+		$this->assertStringContainsString( '>' . str_repeat( 'x', 80 ) . '…<', $html );
+		$this->assertStringNotContainsString( str_repeat( 'x', 81 ), $html );
+	}
+
+	public function test_page_two_shows_the_remaining_row(): void {
+		for ( $i = 0; $i < 21; $i++ ) {
+			$this->seed( QueueStatus::Sent, '', 'p' . $i );
+		}
+		$_GET['paged'] = '2';
+
+		$this->assertSame( 1, substr_count( $this->render_screen(), 'class="pusers-mail-row"' ) );
+	}
+
+	public function test_a_page_beyond_the_last_clamps_to_the_last_page(): void {
+		for ( $i = 0; $i < 21; $i++ ) {
+			$this->seed( QueueStatus::Sent, '', 'p' . $i );
+		}
+		$_GET['paged'] = '99';
+
+		$this->assertSame( 1, substr_count( $this->render_screen(), 'class="pusers-mail-row"' ) );
+	}
+
+	public function test_a_non_numeric_page_falls_back_to_the_first(): void {
+		for ( $i = 0; $i < 21; $i++ ) {
+			$this->seed( QueueStatus::Sent, '', 'p' . $i );
+		}
+		$_GET['paged'] = 'abc';
+
+		$this->assertSame( 20, substr_count( $this->render_screen(), 'class="pusers-mail-row"' ) );
+	}
+
+	public function test_subject_recipient_and_error_are_escaped_in_the_list_and_the_detail(): void {
+		$id = $this->seed( QueueStatus::Failed, '<em>boom</em>', 'a', 'Treść', '<img src=x onerror=alert(1)>', '<u>rcpt</u>@example.com' );
+
+		$list           = $this->render_screen();
+		$_GET['action'] = 'view';
+		$_GET['id']     = (string) $id;
+		$detail         = $this->render_screen();
+
+		foreach ( array( $list, $detail ) as $html ) {
+			$this->assertStringNotContainsString( '<img', $html );
+			$this->assertStringNotContainsString( '<u>', $html );
+			$this->assertStringNotContainsString( '<em>', $html );
+			$this->assertStringContainsString( '&lt;img src=x', $html );
+			$this->assertStringContainsString( '&lt;u&gt;rcpt', $html );
+			$this->assertStringContainsString( '&lt;em&gt;boom', $html );
+		}
 	}
 
 	public function test_a_queued_row_with_an_old_error_is_not_presented_as_failing_now(): void {
