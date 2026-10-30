@@ -85,6 +85,12 @@ Druga rzecz do potwierdzenia: **repozytorium musi być publiczne.** `browser_dow
 
 Trzecia: dopóki repozytorium nie ma zdalnego na GitHubie, **oba workflowy są bezczynne** — to pliki w drzewie, które nigdy się nie odpalą. Plan dostarcza mechanizm; pierwsze wydanie jest czynnością właściciela.
 
+> **Rozstrzygnięte po wykonaniu planu (2026-10-30).** Właściciel podał adres:
+> `https://github.com/kobysz/user-management-wp-plugin.git`. Nazwa zgadnięta wyżej przez analogię
+> była **błędna** — repozytorium nie nazywa się jak katalog wtyczki. Kod i procedura wydania
+> trzymają już prawdziwą nazwę; ta sekcja zostaje w pierwotnym brzmieniu jako zapis tego, co
+> było założeniem w chwili pisania planu. Szczegóły: `docs/superpowers/decyzje-plan-9.md`, sekcja 1.
+
 ---
 
 ## Global Constraints
