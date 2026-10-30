@@ -25,3 +25,4 @@ composer.json
 composer.lock
 junit-*.xml
 *.zip
+RELEASE_BODY.md

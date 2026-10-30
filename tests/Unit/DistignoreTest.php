@@ -29,6 +29,19 @@ final class DistignoreTest extends TestCase {
 		'CHANGELOG.md',
 	);
 
+	/**
+	 * Pliki, które workflow wydania tworzy w katalogu głównym PRZED montażem paczki.
+	 *
+	 * Testu pokrycia pierwszego poziomu one nie dotyczą: na maszynie deweloperskiej nie
+	 * istnieją, więc `scandir()` ich nie widzi. Bez tej listy `RELEASE_BODY.md` jechał
+	 * w każdej wydanej paczce — dokładnie ta klasa wycieku, przed którą postawiono ten test.
+	 */
+	private const RELEASE_ARTIFACTS = array(
+		'RELEASE_BODY.md',
+		'junit-unit.xml',
+		'portal-users.zip',
+	);
+
 	private function root(): string {
 		return dirname( __DIR__, 2 );
 	}
@@ -92,6 +105,15 @@ final class DistignoreTest extends TestCase {
 			$this->assertTrue(
 				$this->isExcluded( $entry ),
 				sprintf( '„%s" nie jedzie do portalu, więc musi być w .distignore albo na białej liście tego testu.', $entry )
+			);
+		}
+	}
+
+	public function test_distignore_covers_files_created_by_the_release_workflow(): void {
+		foreach ( self::RELEASE_ARTIFACTS as $artifact ) {
+			$this->assertTrue(
+				$this->isExcluded( $artifact ),
+				sprintf( '„%s" powstaje w trakcie wydania i nie może wyjechać w paczce.', $artifact )
 			);
 		}
 	}

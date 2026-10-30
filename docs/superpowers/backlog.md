@@ -191,11 +191,15 @@ Nie jest to już ciche: `status_missing` trafił na listę poważnych zastrzeże
 
 Numer zmieniony: dawniej Plan 8; import i backfill stanów zajęły Plan 8 (zob. wyżej).
 
-### CI woła `composer analyse`, nie gołe `phpstan analyse`
+### ~~CI woła `composer analyse`, nie gołe `phpstan analyse`~~
+
+*Zrobione w Planie 9: job `static-analysis` w `.github/workflows/ci.yml` woła `composer analyse`, z komentarzem zakazującym „upraszczania" polecenia.*
 
 PHPStan na domyślnym limicie 128 MB pada na równoległym workerze. Limit nie istnieje jako parametr neona w PHPStanie 1.x — sprawdzone, `parameters.memoryLimit` daje `Invalid configuration`. Działa wyłącznie jako flaga CLI; `composer.json` ma skrypt `analyse` z `--memory-limit=2G`.
 
-### Żadna bramka nie pilnuje wersji minimalnej PHP, a `testVersion` w `phpcs.xml.dist` jest martwe
+### ~~Żadna bramka nie pilnuje wersji minimalnej PHP, a `testVersion` w `phpcs.xml.dist` jest martwe~~
+
+*Zrobione w Planie 9, ale inaczej, niż zapowiadała ta pozycja: `testVersion` usunięte, PHPCompatibility odrzucone pomiarem, bramką jest `composer lint:syntax` (php -l w kontenerze 8.1) plus test zgodności podłogi w `composer.json`. Jedna klasa błędu zostaje nieobjęta — zob. nową pozycję niżej i `docs/superpowers/decyzje-plan-9.md`, sekcja 2.*
 
 `phpcs.xml.dist` ma `<config name="testVersion" value="8.1-"/>`, co ma znaczenie **wyłącznie** wtedy, gdy zainstalowany jest standard PHPCompatibility. Nie jest: nie ma go w `vendor/`, nie wymienia go `vendor/bin/phpcs -i`, nie ma go w `require-dev`. Ta linia czyta się więc jak straż wersji minimalnej i nie strzeże niczego.
 
@@ -208,17 +212,49 @@ Zmierzone domknięcie to dwie bramki, obie potrzebne:
 - `phpVersion: 80100` w `phpstan.neon.dist` — łapie **API** powyżej podłogi (sonda z `ini_parse_quantity()`: bez tej linii `[OK] No errors`, z nią `Function ini_parse_quantity not found.`). To bramka na klasę błędu `mb_scrub()` z Planu 8.
 - `php -l` po `src/`, `portal-users.php` i `uninstall.php` **w kontenerze 8.1** — łapie **składnię** powyżej podłogi. PHPStan z `phpVersion` tego nie łapie: na dokładnej konstrukcji z Planu 8 (`const` czytający `AccountStatus::Pending->value`) kończy `[OK] No errors`, bo host parsuje plik PHP 8.2.
 
-### Zgodność formatu wersji w trzech miejscach
+### ~~Zgodność formatu wersji w trzech miejscach~~
+
+*Zrobione w Planie 9: format to dokładnie `x.y.z` bez prereleasów, a `ReleaseWorkflowTest` sprawdza obecność tego wzorca w pliku workflow, więc rozluźnienie bramki bez ruszenia testów zapala test.*
 
 `PluginTest::test_real_header_has_semver`, regex w `Plugin::parse_version()` i guard wersji w workflow wydania muszą mówić to samo o prereleasach. Dziś regex to `^\d+\.\d+\.\d+$`, więc `0.2.0-beta1` w nagłówku zrobi test czerwonym. Rozstrzygnąć przed pierwszym wydaniem prerelease.
 
-### Macierz wersji WordPressa w CI
+### ~~Macierz wersji WordPressa w CI~~
+
+*Zrobione w Planie 9: job `integration-wp-floor` przestawia rdzeń na minimum wtyczki zmienną `WP_ENV_CORE: WordPress/WordPress#6.5`.*
 
 Testy jadą na najnowszym WordPressie z kontenera (7.1), a minimum wtyczki to 6.5. Bez macierzy wersji albo przypięcia 6.5 nie dowiemy się, że coś wymaga nowszego API.
 
-### Pusta suita integracyjna i kod wyjścia
+### ~~Pusta suita integracyjna i kod wyjścia~~
 
-Sprawdzić, czy PHPUnit kończy się kodem 0 przy pustej suicie — zanim CI zacznie na tym polegać.
+Sprawdzone w Planie 9: **kończy się kodem 0.** `vendor/bin/phpunit --filter 'NieIstniejacaNazwaTestu'` wypisuje `No tests executed!`, zapisuje raport `<testsuites/>` i wychodzi z zerem, a `phpunit --help` nie wymienia żadnej flagi o pustej suicie (`--fail-on-*` obejmuje incomplete, risky, skipped i warning). Dlatego każdy krok CI z PHPUnit ma własne sprawdzenie liczby wykonanych testów z raportu JUnit, sprawdzone w obie strony.
+
+---
+
+## Zostawione przez Plan 9
+
+### Funkcja istniejąca w PHP, ale nie na podłodze, przechodzi wszystkie bramki
+
+Zmierzone na `mb_scrub()` (PHP 8.3) przy podłodze 8.1: zielono w PHPStanie (w dowolnej konfiguracji `phpVersion`), zielono pod `php -l` (gramatyka jest poprawna) i zielono w PHPCompatibility 9.3.5 (nie zna funkcji nowszych niż 7.4, a nieznana ≠ zgłoszona). Wyłapie to wyłącznie **wykonanie tej linii** na 8.1, czyli suita integracyjna w kontenerze — pokrycie `src/` jest wysokie, ale nie pełne.
+
+To dokładnie ta klasa błędu, którą odrzucono w Planie 8 (`mb_scrub` zamiast `mb_convert_encoding`), tylko wtedy wyłapał ją człowiek, nie bramka.
+
+Domknięcie: PHPStan 2.x ma własne sprawdzanie dostępności symboli wobec `phpVersion`. Projekt pinuje `phpstan/phpstan: ^1.11`, a sam PHPStan przy każdym przebiegu przypomina o 2.x; podniesienie to osobna zmiana o własnym ryzyku (nowe reguły na poziomie max na 1500 liniach kodu domeny), więc nie weszło do planu o wydaniach. Wtedy warto też sprawdzić, czy `phpVersion: 80100` przestaje być powtórzeniem `config.platform.php`.
+
+### Wzorce w `.distignore` nie są umocowane do pierwszego poziomu
+
+`rsync` dopasowuje wzorzec bez ukośnika do **nazwy bazowej na każdej głębokości**, więc `tests`, `docs`, `scripts`, `composer.json` i `*.dist` wycinają te nazwy także z wnętrza `src/` i `assets/`. Dziś nie trafia nic — sprawdzone w recenzji gałęzi Planu 9 — ale przyszłe `src/Admin/scripts/` albo `assets/docs/` zniknęłoby z paczki po cichu, a `DistignoreTest` zostałby zielony, bo sprawdza tylko pierwszy poziom.
+
+Domknięcie: umocować wpisy pierwszego poziomu wiodącym ukośnikiem (`/tests`, `/docs`, `/scripts`, `/composer.json`) i odwzorować to w `DistignoreTest::isExcluded()`. Nie weszło do Planu 9, bo zmienia semantykę wykluczeń tuż przed pierwszym wydaniem i źle umocowany wzorzec mógłby wyciąć coś potrzebnego — a tego nie da się sprawdzić lokalnie bez `rsync`.
+
+### Akcje GitHuba przypięte do ruchomych tagów
+
+`actions/checkout@v4`, `actions/setup-node@v4`, `shivammathur/setup-php@v2`, `softprops/action-gh-release@v2`. Workflow wydania ma `contents: write`, więc podmieniona akcja mogłaby publikować wydania. Czy to jest w modelu zagrożeń tego projektu — decyzja właściciela; domknięcie to przypięcie do SHA.
+
+### `vendor/bin` nie ma nakładek `.bat`, więc skrypty Composera nie działają na hoście
+
+`composer lint`, `composer analyse` i `composer test:unit` kończą się na Windowsie `'phpcs' is not recognized as an internal or external command` — zależności zainstalowano z kontenera, więc Composer wygenerował tylko proxy unixowe. `composer install` na hoście nie naprawia tego („Nothing to install"); potrzebne byłoby usunięcie `vendor/bin` i reinstalacja, albo `composer install` na hoście od zera.
+
+Dopóki tego nie ma, lokalne bramki uruchamia się przez `vendor/bin/*` — wypisuje to `docs/wydanie.md`. W CI (Linux) skrypty Composera działają i tam są interfejsem.
 
 ---
 

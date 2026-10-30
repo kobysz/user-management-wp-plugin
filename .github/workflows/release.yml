@@ -57,7 +57,30 @@ jobs:
           fi
           echo "---- tresc wydania ----"; cat RELEASE_BODY.md
 
-      # Portal nie ma Composera, więc zależności produkcyjne jadą w paczce.
+      # Bramki jakości PRZED zbudowaniem paczki. Bez nich tag wypchnięty z brudnej gałęzi
+      # publikuje paczkę, którą wszystkie portale zobaczą jako aktualizację — a przy włączonym
+      # przełączniku automatycznych aktualizacji zainstalują ją same. CI na push leci tylko
+      # po `main` i bez jobów integracyjnych, więc między tagiem a portalem nie może stać
+      # wyłącznie człowiek. PHP i Composer już tu są, koszt to niecała minuta.
+      #
+      # Suity integracyjnej tu nie ma: wymaga Dockera i wp-env, co podwoiłoby czas wydania.
+      # Jej miejscem jest CI na pull requeście; procedura wydania każe mieć ją zieloną.
+      - name: Zaleznosci deweloperskie do bramek
+        run: composer install --prefer-dist --no-progress
+
+      - name: PHPCS
+        run: composer lint
+
+      - name: PHPStan
+        run: composer analyse
+
+      - name: Testy jednostkowe
+        run: |
+          composer test:unit -- --log-junit junit-unit.xml
+          php -r '$x = simplexml_load_file( "junit-unit.xml" ); $n = (int) $x->testsuite["tests"]; if ( $n < 1 ) { fwrite( STDERR, "Suita jednostkowa nie wykonala zadnego testu\n" ); exit( 1 ); } echo "Wykonanych testow: $n\n";'
+
+      # Portal nie ma Composera, więc zależności produkcyjne jadą w paczce. To wywołanie
+      # ZASTĘPUJE instalację deweloperską powyżej: po nim w vendor/ nie ma pakietów dev.
       - run: composer install --no-dev --optimize-autoloader --prefer-dist --no-progress
 
       # Katalog montażowy nazywa się dokładnie jak katalog wtyczki: korzeń archiwum decyduje
@@ -72,6 +95,12 @@ jobs:
           test -f "$STAGE/portal-users.php" || { echo "::error::Paczka nie zawiera pliku glownego wtyczki"; exit 1; }
           test -f "$STAGE/vendor/autoload.php" || { echo "::error::Paczka nie zawiera autoloadera - bez niego wtyczka nie startuje"; exit 1; }
           zip -rq portal-users.zip "$STAGE"
+          # Korzeń archiwum decyduje o katalogu instalacji i jest jedynym ogniwem montażu,
+          # którego nie dało się sprawdzić przed tagiem. Zły korzeń każe WordPressowi
+          # rozpakować aktualizację do NOWEGO katalogu i zostawić starą wtyczkę obok,
+          # nieaktywną — portal traci zarządzanie kontami w trakcie aktualizacji.
+          ROOT=$( unzip -Z1 portal-users.zip | head -1 )
+          test "$ROOT" = "$STAGE/" || { echo "::error::Korzen archiwum to '$ROOT', a musi byc '$STAGE/'"; exit 1; }
 
       - name: Utworz wydanie i zalacz asset
         uses: softprops/action-gh-release@v2

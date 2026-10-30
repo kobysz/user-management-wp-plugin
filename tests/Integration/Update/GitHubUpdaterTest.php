@@ -191,23 +191,46 @@ final class GitHubUpdaterTest extends WP_UnitTestCase {
 		$this->assertArrayHasKey( plugin_basename( $this->fixture ), (array) ( $result->no_update ?? array() ) );
 	}
 
+	/**
+	 * Sprawdzenie bez wyniku: żadnej aktualizacji do pobrania, ale wtyczka nadal zgłoszona
+	 * rdzeniowi jako obsługująca aktualizacje.
+	 */
+	private function assertNoUpdateOffered( object $result, string $why ): void {
+		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->response ?? array() ), $why );
+
+		$entry = $result->no_update[ $this->basename() ] ?? null;
+		$this->assertIsObject( $entry, 'Brak wpisu w `no_update` gasi w panelu przełącznik automatycznych aktualizacji.' );
+		$this->assertSame( $this->installed(), $entry->new_version );
+		$this->assertSame( '', $entry->package, 'Nie ma czego pobierać, więc adres paczki musi być pusty.' );
+	}
+
 	public function test_non_semver_tag_is_ignored(): void {
-		// `version_compare( 'release-2', '0.1.0', '>' )` jest prawdą, więc tag pomyłkowy
-		// skierowałby wszystkie portale na przypadkowy asset.
+		// Tag w obcym formacie nie może dojść do `version_compare()`: „0.2" i „2" są dla niego
+		// nowsze od „0.1.0", więc tag pomyłkowy skierowałby portale na przypadkowy asset.
 		$this->respond( $this->release( 'release-2' ) );
 
 		$result = ( new GitHubUpdater() )->inject_update( new \stdClass() );
 
-		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->response ?? array() ) );
-		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->no_update ?? array() ) );
+		$this->assertNoUpdateOffered( $result, 'Tag w obcym formacie nie może zostać zgłoszony jako aktualizacja.' );
 	}
 
 	public function test_two_segment_tag_is_ignored(): void {
+		// `version_compare( '0.2', '0.1.0', '>' )` JEST prawdą (zmierzone), więc to ten kształt
+		// tagu naprawdę kieruje portale na przypadkowy plik.
 		$this->respond( $this->release( 'v0.2' ) );
 
 		$result = ( new GitHubUpdater() )->inject_update( new \stdClass() );
 
-		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->response ?? array() ) );
+		$this->assertNoUpdateOffered( $result, 'Tag dwuczłonowy nie może zostać zgłoszony jako aktualizacja.' );
+	}
+
+	public function test_single_segment_tag_is_ignored(): void {
+		// `version_compare( '2', '0.1.0', '>' )` też jest prawdą.
+		$this->respond( $this->release( 'v2' ) );
+
+		$result = ( new GitHubUpdater() )->inject_update( new \stdClass() );
+
+		$this->assertNoUpdateOffered( $result, 'Tag jednoczłonowy nie może zostać zgłoszony jako aktualizacja.' );
 	}
 
 	public function test_cached_payload_of_unknown_shape_is_ignored(): void {
@@ -228,25 +251,50 @@ final class GitHubUpdaterTest extends WP_UnitTestCase {
 
 		$result = ( new GitHubUpdater() )->inject_update( new \stdClass() );
 
-		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->response ?? array() ) );
-		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->no_update ?? array() ) );
+		$this->assertNoUpdateOffered( $result, 'Wydanie bez naszego assetu nie daje czego pobrać.' );
 	}
 
-	public function test_http_error_status_leaves_the_transient_untouched(): void {
+	public function test_http_error_keeps_the_plugin_update_supported(): void {
+		// Rdzeń ustawia `update-supported` na true tylko dla wtyczki obecnej w `response`
+		// albo `no_update` (class-wp-plugins-list-table.php:215-219), a na tej wartości wisi
+		// przełącznik „Włącz automatyczne aktualizacje" (tamże:294). Bez wpisu przy porażce
+		// 403 z limitem zapytań gasiłby ten przełącznik, a przy pomyłce w nazwie repozytorium
+		// gasiłby go trwale i bez żadnego komunikatu.
 		$this->respond( 'rate limit exceeded', 403 );
 
 		$result = ( new GitHubUpdater() )->inject_update( new \stdClass() );
 
-		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->response ?? array() ) );
-		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->no_update ?? array() ) );
+		$this->assertNoUpdateOffered( $result, 'Porażka sprawdzenia nie może udawać dostępnej aktualizacji.' );
 	}
 
-	public function test_wp_error_leaves_the_transient_untouched(): void {
+	public function test_wp_error_keeps_the_plugin_update_supported(): void {
 		$this->respond_with_error();
 
 		$result = ( new GitHubUpdater() )->inject_update( new \stdClass() );
 
-		$this->assertArrayNotHasKey( $this->basename(), (array) ( $result->response ?? array() ) );
+		$this->assertNoUpdateOffered( $result, 'Brak połączenia nie może gasić przełącznika aktualizacji.' );
+	}
+
+	public function test_failed_check_does_not_erase_a_known_update(): void {
+		// Wpis o dostępnej aktualizacji mógł powstać z udanego sprawdzenia. Porażka następnego
+		// nie może go zdjąć: administrator straciłby widok aktualizacji, o której wtyczka wie.
+		$this->respond_with_error();
+		$known               = (object) array(
+			'plugin'      => $this->basename(),
+			'new_version' => '9.9.9',
+			'package'     => 'https://example.test/portal-users.zip',
+		);
+		$transient           = new \stdClass();
+		$transient->response = array( $this->basename() => $known );
+
+		$result = ( new GitHubUpdater() )->inject_update( $transient );
+
+		$this->assertSame( $known, $result->response[ $this->basename() ] ?? null, 'Znana aktualizacja ma przeżyć nieudane sprawdzenie.' );
+		$this->assertArrayNotHasKey(
+			$this->basename(),
+			(array) ( $result->no_update ?? array() ),
+			'Wtyczka nie może stać w obu tablicach naraz.'
+		);
 	}
 
 	public function test_negative_cache_prevents_second_http_call(): void {

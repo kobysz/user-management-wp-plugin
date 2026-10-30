@@ -102,8 +102,14 @@ final class GitHubUpdater {
 
 		$latest = $this->fetch_latest();
 		if ( null === $latest ) {
-			// Brak wiarygodnej odpowiedzi — stanu wtyczki nie zgadujemy.
-			return $transient;
+			// Brak wiarygodnej odpowiedzi: nie zgadujemy, czy jest nowsza wersja, ale wtyczka
+			// MUSI zostać zgłoszona rdzeniowi jako obsługująca aktualizacje. Rdzeń ustawia
+			// `update-supported` na true tylko dla wtyczki obecnej w `response` albo `no_update`
+			// (`class-wp-plugins-list-table.php`), a na tej wartości wisi przełącznik „Włącz
+			// automatyczne aktualizacje". Milczenie przy porażce gasiłoby ten przełącznik —
+			// przy 403 z limitem zapytań na godzinę, a przy pomyłce w nazwie repozytorium
+			// trwale i bez żadnego komunikatu.
+			return $this->mark_supported( $transient );
 		}
 
 		// Świeży odczyt: w żądaniu przeliczającym aktualizacje pliki na dysku mogą być już nowe,
@@ -133,6 +139,35 @@ final class GitHubUpdater {
 		if ( isset( $transient->{$stale} ) && is_array( $transient->{$stale} ) ) {
 			unset( $transient->{$stale}[ $this->basename ] );
 		}
+
+		return $transient;
+	}
+
+	/**
+	 * Zgłasza wtyczkę jako obsługującą aktualizacje, nie podając żadnej do pobrania.
+	 *
+	 * Wpis o już znanej aktualizacji zostaje nietknięty: mógł powstać z udanego sprawdzenia,
+	 * a porażka następnego nie może zabrać administratorowi widoku aktualizacji, o której
+	 * wtyczka wie.
+	 *
+	 * @param \stdClass $transient Transient `update_plugins`.
+	 */
+	private function mark_supported( \stdClass $transient ): \stdClass {
+		if ( isset( $transient->response ) && is_array( $transient->response ) && isset( $transient->response[ $this->basename ] ) ) {
+			return $transient;
+		}
+
+		if ( ! isset( $transient->no_update ) || ! is_array( $transient->no_update ) ) {
+			$transient->no_update = array();
+		}
+
+		$transient->no_update[ $this->basename ] = (object) array(
+			'slug'        => $this->slug,
+			'plugin'      => $this->basename,
+			'new_version' => Plugin::version( true ),
+			'package'     => '',
+			'url'         => 'https://github.com/' . self::REPO,
+		);
 
 		return $transient;
 	}
@@ -221,8 +256,10 @@ final class GitHubUpdater {
 
 		if ( null === $parsed ) {
 			// Tag w obcym formacie albo wydanie bez naszego assetu. `version_compare()` uznaje
-			// „release-2" za nowsze od „0.1.0", więc tag pomyłkowy skierowałby wszystkie portale
-			// na przypadkowy plik; wydanie bez assetu dałoby pobranie pod pustym adresem.
+			// „0.2" i „2" za NOWSZE od „0.1.0" (zmierzone; „release-2" wypada odwrotnie, bo
+			// człon mieszany sortuje się poniżej liczbowego), więc tag pomyłkowy skierowałby
+			// wszystkie portale na przypadkowy plik. Wydanie bez assetu dałoby pobranie pod
+			// pustym adresem.
 			set_transient( self::CACHE_KEY, '', self::CACHE_TTL_FAILURE );
 			return null;
 		}

@@ -49,6 +49,34 @@ final class ReleaseWorkflowTest extends WP_UnitTestCase {
 		);
 	}
 
+	public function test_workflow_runs_the_quality_gates_before_building(): void {
+		// Tag wypchnięty z brudnej gałęzi publikuje paczkę, którą wszystkie portale zobaczą
+		// jako aktualizację — a przy włączonym przełączniku automatycznych aktualizacji
+		// zainstalują ją same. CI na push leci tylko po `main` i bez jobów integracyjnych,
+		// więc między tagiem a portalem nie może stać wyłącznie człowiek.
+		$workflow = $this->workflow();
+
+		foreach ( array( 'composer lint', 'composer analyse', 'composer test:unit' ) as $gate ) {
+			$this->assertStringContainsString(
+				$gate,
+				$workflow,
+				sprintf( 'Wydanie musi przejść bramkę „%s" przed zbudowaniem paczki.', $gate )
+			);
+		}
+	}
+
+	public function test_workflow_asserts_the_archive_root_after_zipping(): void {
+		// Jedyne ogniwo montażu paczki, którego nie da się sprawdzić przed tagiem: korzeń
+		// archiwum. Test nazwy katalogu montażowego pinuje literał w pliku, więc nie złapie
+		// zmiany sposobu pakowania (np. `cd "$STAGE" && zip ../x.zip .`). Asercja po `zip`
+		// zatrzymuje wtedy wydanie, zamiast wysłać je na portale.
+		$this->assertStringContainsString(
+			'unzip -Z1',
+			$this->workflow(),
+			'Po zapakowaniu korzeń archiwum musi być sprawdzony, nie założony.'
+		);
+	}
+
 	public function test_workflow_version_guard_uses_the_agreed_version_pattern(): void {
 		// Ten sam format pilnuje PluginTest::test_real_header_has_semver i ChangelogTest.
 		// Rozluźnienie bramki w workflow bez ruszania testów przepuściłoby prerelease,
