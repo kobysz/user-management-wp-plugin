@@ -197,6 +197,47 @@ final class MigrationsTest extends WP_UnitTestCase {
 		$this->assertSame( 'daily', wp_get_schedule( PurgeMailLog::HOOK ) );
 	}
 
+	/**
+	 * Klasy crona odkryte z katalogu, nie wypisane z pamięci.
+	 *
+	 * Lista wypisana ręcznie przepuściłaby nową klasę crona dokładnie tak, jak przepuszcza ją
+	 * aktualizacja w miejscu: hook aktywacji się nie odpala, a harmonogram zakłada wyłącznie
+	 * `run()`. Odkrywanie sprawia, że nowa klasa bez dopisania do `run()` zapala ten test.
+	 *
+	 * @return array<class-string, string>
+	 */
+	private function cron_hooks(): array {
+		$out = array();
+		foreach ( (array) glob( dirname( __DIR__, 2 ) . '/src/Cron/*.php' ) as $file ) {
+			$class = 'PortalUsers\\Cron\\' . basename( (string) $file, '.php' );
+			if ( ! class_exists( $class ) || ! defined( $class . '::HOOK' ) || ! method_exists( $class, 'schedule' ) ) {
+				continue;
+			}
+			$out[ $class ] = (string) constant( $class . '::HOOK' );
+		}
+
+		return $out;
+	}
+
+	public function test_every_cron_class_is_scheduled_by_run(): void {
+		$hooks = $this->cron_hooks();
+		$this->assertNotEmpty( $hooks, 'Nie odkryto żadnej klasy crona — zmiana układu katalogów wyłączyłaby tę bramkę po cichu.' );
+
+		$this->fresh_install();
+		foreach ( $hooks as $hook ) {
+			wp_clear_scheduled_hook( $hook );
+		}
+
+		Migrations::run();
+
+		foreach ( $hooks as $class => $hook ) {
+			$this->assertNotFalse(
+				wp_next_scheduled( $hook ),
+				sprintf( '%s nie jest planowana przez Migrations::run(), więc hook „%s” nie powstanie na portalu zaktualizowanym w miejscu — dopisz wywołanie schedule() i podnieś DB_VERSION.', $class, $hook )
+			);
+		}
+	}
+
 	public function test_terms_version_hash_is_unique(): void {
 		global $wpdb;
 		Migrations::run();
