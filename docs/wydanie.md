@@ -98,6 +98,34 @@ uruchomić lokalnie (montaż paczki `rsync` + `zip`).
    wp transient delete pusers_update_latest
    ```
 
+## Gdy padnie sam krok publikacji
+
+Zdarzyło się przy wydaniu 0.2.0 i jest awarią GitHuba, nie wtyczki. Objaw w logu:
+
+```
+GitHub release failed with status: 502
+{"message":"Server Error"}
+Release <id> is not yet discoverable by tag v0.2.0, retrying...
+Error: Error updating policy
+```
+
+Frazy „Error updating policy" **nie ma w kodzie akcji** (sprawdzone w bundlu
+`softprops/action-gh-release@v2`; jest tam za to „not yet discoverable by tag"). Przychodzi
+więc z API GitHuba i akcja tylko ją przepisuje. Dokumentacja GitHuba opisuje 502 przy
+wydaniach jako awarię po ich stronie, która potrafi zostawić po sobie wydanie-widmo.
+
+Lekarstwo: **Actions → przebieg „Release" → „Re-run failed jobs"**. Bramki lecą od nowa,
+ale są tanie, a akcja ma jawną obsługę śmieci: przy 422 z kodem `already_exists` odnajduje
+i aktualizuje istniejące wydanie zamiast padać. Przy 0.2.0 druga próba wyszła czysto i
+utworzyła wydanie o **innym** identyfikatorze niż to z komunikatu 502 — widmo nigdy nie
+powstało.
+
+Czego NIE robić: kasować i wypychać tagu ponownie. Nowy przebieg owszem ruszy, ale tag
+wskazujący na wydanie, które może już istnieć, to droga do dwóch wydań tej samej wersji.
+
+Dopóki wydania nie ma, portale nic nie widzą: bez wydania nie ma aktualizacji, a
+`GitHubUpdater` buforuje nieudane sprawdzenie na godzinę i milczy.
+
 ## Czego ta wtyczka nie wydaje
 
 - **`readme.txt`** — dystrybucja nie idzie przez wordpress.org, więc plik w formacie katalogu

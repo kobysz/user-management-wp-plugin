@@ -246,6 +246,8 @@ Domknięcie: PHPStan 2.x ma własne sprawdzanie dostępności symboli wobec `php
 
 Domknięcie: umocować wpisy pierwszego poziomu wiodącym ukośnikiem (`/tests`, `/docs`, `/scripts`, `/composer.json`) i odwzorować to w `DistignoreTest::isExcluded()`. Nie weszło do Planu 9, bo zmienia semantykę wykluczeń tuż przed pierwszym wydaniem i źle umocowany wzorzec mógłby wyciąć coś potrzebnego — a tego nie da się sprawdzić lokalnie bez `rsync`.
 
+Zmierzone na paczce wydania 0.2.0 (30.10.2026): rozpakowany asset ma 133 pliki — 117 klas z `src/`, plik główny, `uninstall.php`, `CHANGELOG.md`, `assets/js/registration.js` i 12 plików autoloadera Composera. Classmapa wymienia 118 klas (117 własnych plus `InstalledVersions` Composera) i **żaden** jej wpis nie wskazuje na nieistniejący plik, więc dziś żaden wzorzec nie wycina niczego potrzebnego. Ryzyko zostaje teoretyczne tym bardziej, że `require` w `composer.json` nie ma ani jednej zależności produkcyjnej — `vendor/` to sam autoloader, więc nie ma w nim katalogów `tests`/`docs` do przypadkowego trafienia. Zmieni się to z pierwszą zależnością produkcyjną i wtedy domknięcie staje się pilne.
+
 ### Akcje GitHuba przypięte do ruchomych tagów
 
 `actions/checkout@v4`, `actions/setup-node@v4`, `shivammathur/setup-php@v2`, `softprops/action-gh-release@v2`. Workflow wydania ma `contents: write`, więc podmieniona akcja mogłaby publikować wydania. Czy to jest w modelu zagrożeń tego projektu — decyzja właściciela; domknięcie to przypięcie do SHA.
