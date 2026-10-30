@@ -44,6 +44,7 @@ use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Plugin;
+use PortalUsers\Update\GitHubUpdater;
 use WP_UnitTestCase;
 
 final class WiringTest extends WP_UnitTestCase {
@@ -393,6 +394,65 @@ final class WiringTest extends WP_UnitTestCase {
 		);
 		$this->assertNotFalse( has_action( DispatchMail::HOOK, array( Dispatcher::class, 'run' ) ) );
 		$this->assertNotFalse( has_action( MailQueue::DISPATCH_HOOK, array( Dispatcher::class, 'run' ) ) );
+	}
+
+	/**
+	 * Czy pod hookiem wisi wywołanie zwrotne na instancji danej klasy.
+	 *
+	 * `register()` podpina metody instancji, więc `has_filter()` z tablicą nie dopasuje
+	 * innej instancji niż ta zapisana w rejestrze.
+	 */
+	private function filter_has_instance_of( string $hook, string $class ): bool {
+		global $wp_filter;
+		if ( ! isset( $wp_filter[ $hook ] ) ) {
+			return false;
+		}
+		foreach ( $wp_filter[ $hook ] as $callbacks ) {
+			foreach ( (array) $callbacks as $callback ) {
+				$fn = $callback['function'] ?? null;
+				if ( is_array( $fn ) && isset( $fn[0] ) && is_object( $fn[0] ) && $fn[0] instanceof $class ) {
+					return true;
+				}
+			}
+		}
+
+		return false;
+	}
+
+	public function test_boot_registers_the_updater_on_init_even_when_acf_pro_is_missing(): void {
+		// Aktualizacja jest drogą naprawy portalu, więc nie może zależeć od wtyczki, której
+		// zepsute wydanie właśnie naprawiamy. Na `init`, nie `admin_init`: inaczej cron
+		// i WP-CLI nie widzą aktualizacji.
+		add_filter( 'pusers_acf_pro_loaded', '__return_false' );
+		remove_action( 'init', array( GitHubUpdater::class, 'register' ) );
+		$this->assertFalse( Dependencies::satisfied(), 'Test ma działać przy NIEspełnionych zależnościach.' );
+		$this->assertFalse( has_action( 'init', array( GitHubUpdater::class, 'register' ) ), 'Aktualizator miał być zdjęty przed próbą.' );
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		$this->assertFalse(
+			has_action( 'pusers_register_features', array( GitHubUpdater::class, 'register' ) ),
+			'Aktualizator nie może jechać przez hook zależny od ACF Pro.'
+		);
+		$this->assertNotFalse( has_action( 'init', array( GitHubUpdater::class, 'register' ) ) );
+		$this->assertFalse(
+			has_action( 'admin_init', array( GitHubUpdater::class, 'register' ) ),
+			'Rejestracja na admin_init ukryłaby aktualizacje przed cronem i WP-CLI.'
+		);
+	}
+
+	public function test_updater_register_hooks_the_update_transient_and_the_details_window(): void {
+		GitHubUpdater::register();
+
+		$this->assertTrue(
+			$this->filter_has_instance_of( 'pre_set_site_transient_update_plugins', GitHubUpdater::class ),
+			'Bez tego filtra wtyczka nigdy nie zgłosi się do mechanizmu aktualizacji.'
+		);
+		$this->assertTrue(
+			$this->filter_has_instance_of( 'plugins_api', GitHubUpdater::class ),
+			'Bez tego filtra okno „Szczegóły wtyczki" nie pokaże opisu wydania.'
+		);
 	}
 
 	public function test_the_resend_form_posts_to_the_registered_action(): void {
