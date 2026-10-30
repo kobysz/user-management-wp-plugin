@@ -201,7 +201,12 @@ PHPStan na domyślnym limicie 128 MB pada na równoległym workerze. Limit nie i
 
 Koszt nie jest hipotetyczny. W Planie 8 `ImportMapping::ALLOWED_STATUSES` budowało wyrażenie stałe z `AccountStatus::Pending->value`, co wymaga PHP 8.2, i przeszło przez **cztery zadania** zielonych bramek: suita jednostkowa i PHPStan chodzą na hoście z PHP 8.2, a jedynym środowiskiem 8.1 jest kontener integracyjny, który tej klasy nie wczytywał, dopóki nie powstał pierwszy test integracyjny jej dotyczący. Na portalu z PHP 8.1 wtyczka byłaby martwa w chwili wczytania pliku.
 
-Dwa domknięcia, nie wykluczają się: dodać `phpcompatibility/phpcompatibility-wp` do `require-dev` i wskazać go w zestawie reguł, albo dołożyć do bramek przebieg `php -l` po `src/` **w kontenerze 8.1** (jedno polecenie, kilka sekund na 111 plików). Drugie łapie wyłącznie błędy parsowania, pierwsze także wywołania funkcji nieistniejących w 8.1.
+Pierwotnie zapisane tu domknięcie przez `phpcompatibility/phpcompatibility-wp` **zostało odrzucone pomiarem** przy pisaniu Planu 9 (zob. `docs/superpowers/plans/2026-10-30-portal-users-aktualizacje-release.md`, rozstrzygnięcia P1–P3). Powód: najnowsze stabilne `php-compatibility` to **9.3.5 z 27 grudnia 2019**, żaden z jego 117 sniffów nie wymienia `'8.1'` ani `'8.2'`, więc składni powyżej podłogi nie widzi z definicji, a na obecnym kodzie daje jedno znalezisko i jest ono fałszywe (`$this` w metodzie enuma — sniff powstał przed enumami).
+
+Zmierzone domknięcie to dwie bramki, obie potrzebne:
+
+- `phpVersion: 80100` w `phpstan.neon.dist` — łapie **API** powyżej podłogi (sonda z `ini_parse_quantity()`: bez tej linii `[OK] No errors`, z nią `Function ini_parse_quantity not found.`). To bramka na klasę błędu `mb_scrub()` z Planu 8.
+- `php -l` po `src/`, `portal-users.php` i `uninstall.php` **w kontenerze 8.1** — łapie **składnię** powyżej podłogi. PHPStan z `phpVersion` tego nie łapie: na dokładnej konstrukcji z Planu 8 (`const` czytający `AccountStatus::Pending->value`) kończy `[OK] No errors`, bo host parsuje plik PHP 8.2.
 
 ### Zgodność formatu wersji w trzech miejscach
 
