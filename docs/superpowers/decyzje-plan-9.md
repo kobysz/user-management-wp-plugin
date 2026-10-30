@@ -6,25 +6,39 @@ czytania historii gita i bez odtwarzania pomiarów.
 
 ## 1. Co czeka na decyzję właściciela
 
-Trzy rzeczy, bez których pierwsze wydanie nie ma sensu, i jedna luka, której zadania nie zamknęły.
+Jedna luka, której zadania nie zamknęły, i jedna czynność właściciela. Dwie pozostałe pozycje
+tej sekcji zostały rozstrzygnięte zaraz po wykonaniu planu i są poniżej opisane jako zamknięte.
 
-### Nazwa repozytorium na GitHubie
+### ~~Nazwa repozytorium na GitHubie~~ — rozstrzygnięte, 2026-10-30
 
-`GitHubUpdater::REPO` i nagłówek `Update URI:` wskazują `kobysz/portal-users-wp-plugin` —
-przyjęte przez analogię do `kobysz/event-registration-wp-plugin`, bo repozytorium nie ma
-skonfigurowanego zdalnego i prawdziwej nazwy nie było skąd wziąć.
+Właściciel podał adres: **`https://github.com/kobysz/user-management-wp-plugin.git`**.
+Nazwa zgadnięta w planie (`kobysz/portal-users-wp-plugin`, przez analogię do
+`kobysz/event-registration-wp-plugin`) była **błędna**: repozytorium nie nazywa się jak katalog
+wtyczki. `GitHubUpdater::REPO` i nagłówek `Update URI:` trzymają prawdziwą nazwę, a test
+spójności wydania pilnuje, że mówią to samo.
 
-Test spójności pilnuje, że oba miejsca mówią **to samo**, a nie że mówią **prawdę**. Nazwa
-wskazująca nieistniejące repozytorium daje 404, bufor negatywny i ciszę: administrator widzi
-„brak aktualizacji", bez ostrzeżenia, a poprawka nie dojeżdża na żaden portal.
+Dwa skutki tej rozbieżności, warte zapamiętania:
 
-### Repozytorium musi być publiczne
+- **Katalog wtyczki (`portal-users`) ≠ nazwa repozytorium (`user-management-wp-plugin`).**
+  Dlatego „Source code (zip)" z GitHuba rozpakowuje się do `user-management-wp-plugin-<wersja>/`
+  i jest złym źródłem instalacji — instalować wyłącznie z assetu `portal-users.zip`, co mówi
+  procedura wydania. Asset nazywa się od katalogu wtyczki, nie od repozytorium, i tak musi
+  zostać: jego nazwa decyduje o katalogu instalacji.
+- **Nagłówek `Update URI` dalej robi swoje.** Chroni generyczny slug `portal-users` przed
+  podstawieniem aktualizacji obcej wtyczki o tej samej nazwie katalogu z wordpress.org — i jest
+  to teraz tym ważniejsze, że nazwa repozytorium nie zdradza nazwy katalogu.
 
-`browser_download_url` assetu w repozytorium prywatnym wymaga uwierzytelnienia, którego
-mechanizm aktualizacji WordPressa nie ma. Wtyczka ogłosiłaby dostępną aktualizację, a pobranie
-skończyłoby się błędem — stan gorszy od braku aktualizatora, bo administrator widzi obietnicę,
-której system nie dowozi. Prywatne repozytorium wymaga osobnego mechanizmu tokenu i nie jest
-zbudowane.
+### ~~Repozytorium musi być publiczne~~ — sprawdzone, 2026-10-30
+
+`GIT_TERMINAL_PROMPT=0 git ls-remote --heads <adres>` kończy się kodem 0 i **zerem gałęzi**:
+repozytorium jest czytelne bez uwierzytelnienia (czyli publiczne) i jeszcze puste. To zamyka
+ryzyko opisane niżej.
+
+Dlaczego to było ryzyko: `browser_download_url` assetu w repozytorium prywatnym wymaga
+uwierzytelnienia, którego mechanizm aktualizacji WordPressa nie ma. Wtyczka ogłosiłaby dostępną
+aktualizację, a pobranie skończyłoby się błędem — stan gorszy od braku aktualizatora, bo
+administrator widzi obietnicę, której system nie dowozi. Jeżeli repozytorium kiedyś stanie się
+prywatne, aktualizacje przestaną działać i będą wymagały osobnego mechanizmu tokenu.
 
 ### Oba workflowy nie odpaliły się ani razu
 

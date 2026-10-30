@@ -9,7 +9,7 @@
  * License:           GPL-2.0-or-later
  * Text Domain:       portal-users
  * Domain Path:       /languages
- * Update URI:        https://github.com/kobysz/portal-users-wp-plugin
+ * Update URI:        https://github.com/kobysz/user-management-wp-plugin
  *
  * Nagłówek „Update URI" nie jest ozdobą: od WordPressa 5.8 powstrzymuje rdzeń od podstawiania
  * pod nasz katalog aktualizacji wtyczki o tym samym slugu z wordpress.org. Slug „portal-users"

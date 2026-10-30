@@ -13,21 +13,24 @@ o brakującym autoloaderze, a późniejsze aktualizacje wylądowałyby w drugim 
 
 ## Zanim powstanie pierwsze wydanie
 
-Trzy rzeczy do potwierdzenia. Żadnej nie sprawdzi za Ciebie test: testy pilnują tylko tego,
-żeby wszystkie miejsca w kodzie mówiły **to samo**, a nie żeby mówiły **prawdę**.
+Repozytorium: **`https://github.com/kobysz/user-management-wp-plugin.git`** — publiczne,
+sprawdzone `git ls-remote` (czyta się bez uwierzytelnienia). Tę nazwę trzymają `GitHubUpdater::REPO`
+i nagłówek `Update URI:` w `portal-users.php`; test spójności wydania zapali, gdy się rozjadą.
+Test pilnuje jednak tylko tego, żeby oba miejsca mówiły **to samo**, a nie żeby mówiły **prawdę**.
 
-1. **Nazwa repozytorium.** `GitHubUpdater::REPO` i nagłówek `Update URI:` w `portal-users.php`
-   wskazują dziś `kobysz/portal-users-wp-plugin`. Jeżeli repozytorium nazywa się inaczej,
-   trzeba zmienić oba miejsca (test spójności wydania zapali, gdy się rozjadą). Nazwa
-   wskazująca nieistniejące repozytorium daje 404, bufor negatywny i **ciszę**: administrator
-   widzi „brak aktualizacji", a poprawka nie dojeżdża na żaden portal.
-2. **Repozytorium musi być publiczne.** Adres `browser_download_url` assetu w repozytorium
-   prywatnym wymaga uwierzytelnienia, którego mechanizm aktualizacji WordPressa nie ma —
-   wtyczka ogłosiłaby dostępną aktualizację, a pobranie skończyłoby się błędem. Prywatne
-   repozytorium wymaga osobnego mechanizmu tokenu i nie jest zbudowane.
-3. **Repozytorium zdalne.** Dopóki projekt nie ma zdalnego na GitHubie, oba workflowy są
-   plikami, które nigdy się nie odpaliły. Pierwszy przebieg będzie też pierwszym sprawdzeniem
-   tych kroków, których nie dało się uruchomić lokalnie (montaż paczki `rsync` + `zip`).
+Dwie rzeczy do zapamiętania przed pierwszym wydaniem:
+
+1. **Katalog wtyczki to `portal-users`, a repozytorium nazywa się inaczej.** Dlatego „Source code
+   (zip)" z GitHuba rozpakowuje się do `user-management-wp-plugin-<wersja>/` i jest złym źródłem
+   instalacji. Instalować wyłącznie z assetu `portal-users.zip` — jego nazwa idzie od katalogu
+   wtyczki i tak musi zostać, bo decyduje o katalogu instalacji.
+2. **Repozytorium musi zostać publiczne.** Adres `browser_download_url` assetu w repozytorium
+   prywatnym wymaga uwierzytelnienia, którego mechanizm aktualizacji WordPressa nie ma — wtyczka
+   ogłosiłaby dostępną aktualizację, a pobranie skończyłoby się błędem. Przejście na prywatne
+   wymagałoby osobnego mechanizmu tokenu, który nie jest zbudowany.
+
+Pierwszy przebieg workflow będzie też pierwszym sprawdzeniem tych kroków, których nie dało się
+uruchomić lokalnie (montaż paczki `rsync` + `zip`).
 
 ## Kroki wydania
 

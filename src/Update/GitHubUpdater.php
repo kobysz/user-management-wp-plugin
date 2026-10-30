@@ -23,7 +23,7 @@ final class GitHubUpdater {
 	 * trzyma test, bo nazwa wskazująca nieistniejące repozytorium kończy się 404, buforem
 	 * negatywnym i ciszą: administrator widzi „brak aktualizacji" bez żadnego ostrzeżenia.
 	 */
-	private const REPO = 'kobysz/portal-users-wp-plugin';
+	private const REPO = 'kobysz/user-management-wp-plugin';
 
 	/**
 	 * Nazwa assetu wydania. Workflow wydania buduje archiwum o dokładnie tej nazwie.
