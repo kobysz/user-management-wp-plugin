@@ -23,4 +23,5 @@ package.json
 package-lock.json
 composer.json
 composer.lock
+junit-*.xml
 *.zip
