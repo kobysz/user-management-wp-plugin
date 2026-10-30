@@ -56,6 +56,13 @@
         <exclude-pattern>src/Domain/Export/*</exclude-pattern>
     </rule>
 
+    <!-- Odcisk mapowania importu wymaga kanonicznego kodowania, a warstwa domeny nie może sięgać po opakowanie
+         platformy. Nazwy reguły nie da się wpisać w komentarzu w src/Domain/**, bo strażnik czystości domeny
+         wyłapuje w niej obce słowo, więc wyjątek siedzi tutaj. Zawężenie do src/Domain/Import/* jest celowe. -->
+    <rule ref="WordPress.WP.AlternativeFunctions.json_encode_json_encode">
+        <exclude-pattern>src/Domain/Import/*</exclude-pattern>
+    </rule>
+
     <config name="minimum_wp_version" value="6.5"/>
     <config name="testVersion" value="8.1-"/>
 </ruleset>

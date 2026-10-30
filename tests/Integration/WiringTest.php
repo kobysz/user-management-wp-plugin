@@ -9,8 +9,11 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Integration;
 
+use PortalUsers\Account\Backfill;
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\BackfillNotice;
 use PortalUsers\Admin\ExportHandler;
+use PortalUsers\Admin\ImportScreen;
 use PortalUsers\Privacy\PrivacyProvider;
 use PortalUsers\Admin\MailQueueNotice;
 use PortalUsers\Admin\MatrixScreen;
@@ -37,6 +40,7 @@ use PortalUsers\Front\TermsBinding;
 use PortalUsers\Mail\Dispatcher;
 use PortalUsers\Mail\MailQueue;
 use PortalUsers\Domain\Profession\ProfessionCollection;
+use PortalUsers\Persistence\Migrations;
 use PortalUsers\Persistence\ProfessionRepository;
 use PortalUsers\Persistence\SettingsRepository;
 use PortalUsers\Plugin;
@@ -65,6 +69,10 @@ final class WiringTest extends WP_UnitTestCase {
 			ProfessionsScreen::ACTION_DELETE,
 			MatrixScreen::ACTION_SAVE,
 			MatrixScreen::ACTION_DELETE_FIELD,
+			ImportScreen::ACTION_SAVE,
+			ImportScreen::ACTION_PREVIEW,
+			ImportScreen::ACTION_APPLY,
+			ImportScreen::ACTION_BACKFILL,
 			RegistrationHandler::ACTION,
 			LoginHandler::ACTION,
 			Confirmation::ACTION_RESEND,
@@ -83,7 +91,9 @@ final class WiringTest extends WP_UnitTestCase {
 			'settings'    => array( SettingsScreen::class ),
 			'professions' => array( ProfessionsScreen::class ),
 			'matrix'      => array( MatrixScreen::class ),
+			'import'      => array( ImportScreen::class ),
 			'mail queue notice' => array( MailQueueNotice::class ),
+			'backfill notice' => array( BackfillNotice::class ),
 			'registration' => array( RegistrationForm::class ),
 			'registration handler' => array( RegistrationHandler::class ),
 			'login form' => array( LoginForm::class ),
@@ -109,6 +119,12 @@ final class WiringTest extends WP_UnitTestCase {
 			has_action( 'pusers_register_features', array( $screen, 'register' ) ),
 			$screen . '::register() nie jest podpięte pod pusers_register_features.'
 		);
+	}
+
+	public function test_znacznik_wdrozenia_jest_zapisywany_takze_przy_aktualizacji_w_miejscu(): void {
+		// Aktualizacja nie odpala hooka aktywacji, więc znacznik musi wejść przez plugins_loaded.
+		$this->assertNotFalse( has_action( 'plugins_loaded', array( Backfill::class, 'record_activation' ) ) );
+		$this->assertNotFalse( has_action( 'plugins_loaded', array( Migrations::class, 'maybe_upgrade' ) ) );
 	}
 
 	public function test_settings_register_hooks_its_save_handler(): void {
@@ -288,6 +304,38 @@ final class WiringTest extends WP_UnitTestCase {
 		);
 		$this->assertSame( LoginGateway::PRIORITY, has_filter( 'authenticate', array( LoginGateway::class, 'gate' ) ) );
 		$this->assertSame( LoginGateway::REST_PRIORITY, has_filter( 'rest_authentication_errors', array( LoginGateway::class, 'gate_rest' ) ) );
+	}
+
+	public function test_load_features_hooks_the_import_screen_save_action(): void {
+		add_filter( 'pusers_acf_pro_loaded', '__return_true' );
+		$this->assertTrue( Dependencies::satisfied(), 'Test ma działać przy spełnionych zależnościach.' );
+		$this->assertFalse( has_action( 'admin_post_' . ImportScreen::ACTION_SAVE ), 'Uchwyt miał być zdjęty przed próbą.' );
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		$this->assertNotFalse( has_action( 'admin_post_' . ImportScreen::ACTION_SAVE, array( ImportScreen::class, 'handle_save' ) ) );
+		$this->assertNotFalse( has_action( 'admin_menu', array( ImportScreen::class, 'add_page' ) ) );
+	}
+
+	public function test_ekran_importu_jest_podpiety(): void {
+		add_filter( 'pusers_acf_pro_loaded', '__return_true' );
+		$this->assertTrue( Dependencies::satisfied(), 'Test ma działać przy spełnionych zależnościach.' );
+		$handlers = array(
+			ImportScreen::ACTION_SAVE    => 'handle_save',
+			ImportScreen::ACTION_PREVIEW => 'handle_preview',
+			ImportScreen::ACTION_APPLY   => 'handle_apply',
+		);
+		foreach ( array_keys( $handlers ) as $action ) {
+			$this->assertFalse( has_action( 'admin_post_' . $action ), 'Uchwyt miał być zdjęty przed próbą.' );
+		}
+
+		Plugin::boot( Plugin::plugin_file() );
+		Plugin::load_features();
+
+		foreach ( $handlers as $action => $method ) {
+			$this->assertNotFalse( has_action( 'admin_post_' . $action, array( ImportScreen::class, $method ) ), $action );
+		}
 	}
 
 	public function test_boot_registers_the_session_guard_even_when_acf_pro_is_missing(): void {

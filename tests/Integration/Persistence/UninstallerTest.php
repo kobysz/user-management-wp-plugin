@@ -111,6 +111,26 @@ final class UninstallerTest extends WP_UnitTestCase {
 		}
 	}
 
+	public function test_odinstalowanie_usuwa_opcje_importu(): void {
+		$this->install_with_data();
+		$names = array(
+			OptionStore::OPTION_IMPORT_MAPPING,
+			OptionStore::OPTION_IMPORT_PREVIEW,
+			OptionStore::OPTION_DEPLOYED_AT,
+		);
+		foreach ( $names as $name ) {
+			update_option( $name, array( 'x' => 1 ), false );
+			$this->assertNotFalse( get_option( $name ), $name . ': stan wyjściowy, opcja ustawiona.' );
+		}
+		$this->save_gate( true );
+
+		Uninstaller::run();
+
+		foreach ( $names as $name ) {
+			$this->assertFalse( get_option( $name ), $name . ' powinna zniknąć' );
+		}
+	}
+
 	public function test_deletion_removes_the_throttling_timestamps_written_outside_option_store(): void {
 		// Dwa znaczniki throttlingu wpisów do logu są zapisywane bezpośrednio przez `update_option()`
 		// (nie są tablicami), więc łatwo było je pominąć w spisie. Po usunięciu wtyczki z otwartą

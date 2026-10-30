@@ -147,13 +147,43 @@ Anonimizacja wiersza kolejki nadpisuje adresata, temat, treść i `last_error`, 
 
 Ta sekcja jest nowa: import z poprzedniej wtyczki i backfill stanów przy aktywacji wydzielono z Planu 7 (decyzja właściciela z 2026-10-29), a dawny Plan 8 (Aktualizacje i release) stał się Planem 9.
 
-### Backfill stanów przy aktywacji
+### ~~Backfill stanów przy aktywacji~~
+
+Zrobione: aktywacja zapisuje tylko znacznik wdrożenia (`Backfill::record_activation()`), a stan nadaje import (mapowanie stanów starej wtyczki) albo przycisk na ekranie importu, zgodnie z rozstrzygnięciem z nagłówka tego planu.
 
 Konta istniejące na portalu przed wdrożeniem nie mają stanu. Nie powoduje to utraty dostępu: brama logowania jest podłączona (Plan 4) i celowo wpuszcza konta bez zapisanego stanu (`LoginGate::decide( null )`), żeby nie zamknąć poza portalem administratora dodanego ręcznie. Konto bez stanu nie podlega jednak żadnej regule bramy (ani odmowom dla `rejected` i `pending`), więc backfill jest warunkiem, żeby istniejące konta objęły stany.
 
-### Eksport CSV i eksporter danych osobowych widzą tylko pola z grupy ACF
+### ~~Eksport CSV i eksporter danych osobowych widzą tylko pola z grupy ACF~~
+
+Zrobione: import zapisuje pod `UserMeta::ACF_PREFIX . <klucz pola z grupy>`, więc eksport, eksporter i eraser je widzą.
 
 Oba czytają pola przez grupę ACF wskazaną w ustawieniach (`AcfFieldSource`) i metadane z przedrostkiem `UserMeta::ACF_PREFIX`. Import, który wpisze wartości pod metadane spoza grupy albo bez przedrostka, będzie dla obu **niewidoczny**: eksport CSV nie da ich w kolumnach, a eksporter i eraser danych osobowych ich nie wydadzą ani nie skasują. Import musi zapisywać wartości pod `UserMeta::ACF_PREFIX . <nazwa pola z grupy>` albo rozszerzyć oba narzędzia razem z importem.
+
+### Przycisk backfillu nie ma terminu ważności
+
+Przycisk „Zatwierdź wszystkie konta bez stanu” stoi na ekranie importu bezterminowo, dopóki są konta sprzed wdrożenia bez stanu, i jest jedną decyzją dla wszystkich naraz. Do rozstrzygnięcia przez właściciela: czy zostaje na stałe, czy znika po zamknięciu okna wdrożenia (np. po ustalonym czasie od `Backfill::deployed_at()` albo po pierwszym użyciu importu), żeby nikt nie zatwierdził go przez pomyłkę miesiące po starcie.
+
+### Klucz źródłowy da się wybrać tylko ze skanu
+
+Skan pokazuje pięćdziesiąt najczęstszych kluczy `user_meta`, a formularz mapowania oferuje wyłącznie klucze ze skanu (i już zapisane). Na portalu z większą liczbą kluczy rzadszego klucza nie da się zmapować z panelu. Dwa prawdopodobne domknięcia: pole tekstowe na dowolny klucz albo wyższy limit skanu. Decyzja należy do właściciela.
+
+### Import nie ma budżetu czasu i nie umie wznowić przerwanego przebiegu
+
+Cały obchód idzie w jednym żądaniu POST. `WP_User_Query` z `fields => 'ID'` nie zapełnia pamięci podręcznej metadanych, więc na każde konto przypada jedno `get_user_meta()`; przy kilku tysiącach kont domyślny limit czasu PHP przerywa obchód w połowie. Podgląd jest celowo zużywany **przed** zapisem, więc po przerwaniu administrator ma część kont zapisaną, bramka jest zamknięta, a raportu i komunikatu nie ma. Po tej fali przerwanie zostawia przynajmniej wiersz `import_started` (aktor i klucze źródłowe), ale nie wznawia pracy. Dwa prawdopodobne domknięcia: obchód z limitem czasu, który po przekroczeniu zapisuje ostatnią stronę i kontynuuje od niej w następnym żądaniu POST, albo pojedyncze zdarzenie z harmonogramu (WP-Cron), które robi to samo w tle i raportuje na ekranie. Ponowne uruchomienie jest dziś bezpieczne, bo porównanie przed zapisem pomija to, co już się zgadza; brakuje tylko podpowiedzi, że trzeba je uruchomić. Decyzja należy do właściciela.
+
+### Komunikat o kontach bez stanu pojawia się tylko na ekranach wtyczki
+
+Ostrzeżenie `BackfillNotice` jest ograniczone do podstron wtyczki, bo tak ustalał plan. Administrator, który po instalacji trafia na Pulpit albo na ekran Wtyczek, go nie zobaczy, dopóki sam nie otworzy menu wtyczki. Czy komunikat ma pojawiać się także na Pulpicie (koszt: zapytanie liczące, już zapamiętane w transiencie na pięć minut), należy do właściciela.
+
+### Import nie usuwa kont, choć specyfikacja je do tego dopuszcza
+
+Specyfikacja opisuje import tak, że konta, których poprzednia wtyczka nie zatwierdziła, „trafiają na listę wniosków albo zostają usunięte, zależnie od decyzji administratora przy imporcie”. Plan świadomie zbudował tylko pierwszą połowę: import nigdy nie usuwa konta, a stany, które mapowanie może nadać, to `pending`, `approved` i `rejected`. Droga przypadkowa (stan `email_unconfirmed`, który zadanie czyszczące kasuje po okresie karencji) jest zamknięta celowo. Jeśli kasowanie ma istnieć, to osobne zadanie z własnym potwierdzeniem, własnym wierszem w logu i liczbą kont w oknie potwierdzenia, a nie kolejna wartość mapowania.
+
+### Zmapowanie klucza rdzenia WordPressa poszerza „członkostwo" na cały portal
+
+Import rusza stan tylko kontom, które noszą co najmniej jeden zmapowany klucz źródłowy z użyteczną wartością skalarną — konto bez żadnego z nich nigdy nie było w starej wtyczce, więc import nie ma o jego stanie nic do powiedzenia. Skan jednak **celowo** pokazuje też klucze rdzenia (`first_name`, `last_name`, `description`), żeby administrator widział, co na portalu faktycznie jest. Administrator, który zmapuje pole ACF na `first_name`, czyni więc „członkiem" każde konto z imieniem, a przy zapasie innym niż „zostaw bez stanu" nadaje stan całemu portalowi — w tym kontom zatwierdzonym przez samą wtyczkę.
+
+Nie jest to już ciche: `status_missing` trafił na listę poważnych zastrzeżeń, więc tryb próbny pokazuje w takim układzie licznik w tysiącach i ostrzeżenie **przed** zapisem, a bramka odcisku nie wpuści zapisu bez raportu. Trzeba zatem świadomie zmapować klucz rdzenia, wybrać zapas i przejść obok głośnego ostrzeżenia. Trzy prawdopodobne domknięcia, nie wykluczają się: skan przestaje pokazywać klucze rdzenia (kosztem widoczności tego, co na portalu jest), formularz nie przyjmuje ich jako źródła, albo ekran ostrzega wprost, że zapas obowiązuje każde konto noszące dowolny zmapowany klucz. Czwarta droga — uzależnienie członkostwa wyłącznie od klucza statusu i profesji — psuje zamierzoną populację, bo konto z numerem uprawnień starej wtyczki i bez wartości statusu ma dostać zapas. Decyzja należy do właściciela.
 
 ---
 
@@ -164,6 +194,14 @@ Numer zmieniony: dawniej Plan 8; import i backfill stanów zajęły Plan 8 (zob.
 ### CI woła `composer analyse`, nie gołe `phpstan analyse`
 
 PHPStan na domyślnym limicie 128 MB pada na równoległym workerze. Limit nie istnieje jako parametr neona w PHPStanie 1.x — sprawdzone, `parameters.memoryLimit` daje `Invalid configuration`. Działa wyłącznie jako flaga CLI; `composer.json` ma skrypt `analyse` z `--memory-limit=2G`.
+
+### Żadna bramka nie pilnuje wersji minimalnej PHP, a `testVersion` w `phpcs.xml.dist` jest martwe
+
+`phpcs.xml.dist` ma `<config name="testVersion" value="8.1-"/>`, co ma znaczenie **wyłącznie** wtedy, gdy zainstalowany jest standard PHPCompatibility. Nie jest: nie ma go w `vendor/`, nie wymienia go `vendor/bin/phpcs -i`, nie ma go w `require-dev`. Ta linia czyta się więc jak straż wersji minimalnej i nie strzeże niczego.
+
+Koszt nie jest hipotetyczny. W Planie 8 `ImportMapping::ALLOWED_STATUSES` budowało wyrażenie stałe z `AccountStatus::Pending->value`, co wymaga PHP 8.2, i przeszło przez **cztery zadania** zielonych bramek: suita jednostkowa i PHPStan chodzą na hoście z PHP 8.2, a jedynym środowiskiem 8.1 jest kontener integracyjny, który tej klasy nie wczytywał, dopóki nie powstał pierwszy test integracyjny jej dotyczący. Na portalu z PHP 8.1 wtyczka byłaby martwa w chwili wczytania pliku.
+
+Dwa domknięcia, nie wykluczają się: dodać `phpcompatibility/phpcompatibility-wp` do `require-dev` i wskazać go w zestawie reguł, albo dołożyć do bramek przebieg `php -l` po `src/` **w kontenerze 8.1** (jedno polecenie, kilka sekund na 111 plików). Drugie łapie wyłącznie błędy parsowania, pierwsze także wywołania funkcji nieistniejących w 8.1.
 
 ### Zgodność formatu wersji w trzech miejscach
 
