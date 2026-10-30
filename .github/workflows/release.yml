@@ -1,0 +1,109 @@
+name: Release
+
+# Wydanie powstaje z tagu `vX.Y.Z`. Procedura i warunki wstępne: docs/wydanie.md.
+#
+# Trzy wartości muszą zgadzać się z kodem wtyczki i pilnują ich testy
+# (tests/Integration/Update/ReleaseWorkflowTest.php): nazwa assetu, nazwa katalogu
+# montażowego i trzycyfrowy format wersji w bramce.
+#
+# Tu NIE ma krokow `npm ci` i `npm run build`, które są we wzorcu z `event-registration`:
+# ta wtyczka nie buduje frontu, `assets/js/registration.js` jedzie do paczki tak, jak leży.
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          tools: composer:v2
+          coverage: none
+
+      # Format sprawdzamy na obu wartościach OSOBNO, zanim je porównamy: wyciągnięcie samych
+      # cyfr z nagłówka przepuściłoby „0.2.0-beta1" jako „0.2.0" i wydało prerelease, na którym
+      # test nagłówka wtyczki i tak jest czerwony.
+      #
+      # Wartość wyciąga POSIX-owy `sed`, nie `grep -oP ... \K`: PCRE jest w GNU grep, ale nie
+      # w busyboksie, a na busyboksie `grep -oP` oddaje pustą wartość i wypisuje pomoc. Tak
+      # samo działa na runnerze i w kontenerze testowym, więc da się to sprawdzić przed tagiem.
+      - name: Sprawdz zgodnosc wersji z tagiem
+        run: |
+          HEADER=$(sed -n 's/^[[:space:]]*\*\{0,1\}[[:space:]]*Version:[[:space:]]*\([^[:space:]]\{1,\}\).*/\1/p' portal-users.php | head -1)
+          TAG="${GITHUB_REF_NAME#v}"
+          echo "header=$HEADER tag=$TAG"
+          echo "$HEADER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::Wersja w naglowku ($HEADER) nie ma formatu x.y.z"; exit 1; }
+          echo "$TAG" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::Tag ($TAG) nie ma formatu vx.y.z"; exit 1; }
+          test "$HEADER" = "$TAG" || { echo "::error::Wersja naglowka ($HEADER) != tag ($TAG)"; exit 1; }
+
+      - name: Wytnij sekcje CHANGELOG dla tagu
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          awk -v tag="$TAG" '
+            BEGIN { needle = "## [" tag "]" }
+            index($0, needle) == 1 { flag=1; next }
+            /^## \[/ && flag { flag=0 }
+            flag { print }
+          ' CHANGELOG.md | sed '/./,$!d' > RELEASE_BODY.md
+          if [ ! -s RELEASE_BODY.md ]; then
+            echo "::error::Brak sekcji ## [$TAG] w CHANGELOG.md - dopisz wpis przed tagowaniem."; exit 1
+          fi
+          echo "---- tresc wydania ----"; cat RELEASE_BODY.md
+
+      # Bramki jakości PRZED zbudowaniem paczki. Bez nich tag wypchnięty z brudnej gałęzi
+      # publikuje paczkę, którą wszystkie portale zobaczą jako aktualizację — a przy włączonym
+      # przełączniku automatycznych aktualizacji zainstalują ją same. CI na push leci tylko
+      # po `main` i bez jobów integracyjnych, więc między tagiem a portalem nie może stać
+      # wyłącznie człowiek. PHP i Composer już tu są, koszt to niecała minuta.
+      #
+      # Suity integracyjnej tu nie ma: wymaga Dockera i wp-env, co podwoiłoby czas wydania.
+      # Jej miejscem jest CI na pull requeście; procedura wydania każe mieć ją zieloną.
+      - name: Zaleznosci deweloperskie do bramek
+        run: composer install --prefer-dist --no-progress
+
+      - name: PHPCS
+        run: composer lint
+
+      - name: PHPStan
+        run: composer analyse
+
+      - name: Testy jednostkowe
+        run: |
+          composer test:unit -- --log-junit junit-unit.xml
+          php -r '$x = simplexml_load_file( "junit-unit.xml" ); $n = (int) $x->testsuite["tests"]; if ( $n < 1 ) { fwrite( STDERR, "Suita jednostkowa nie wykonala zadnego testu\n" ); exit( 1 ); } echo "Wykonanych testow: $n\n";'
+
+      # Portal nie ma Composera, więc zależności produkcyjne jadą w paczce. To wywołanie
+      # ZASTĘPUJE instalację deweloperską powyżej: po nim w vendor/ nie ma pakietów dev.
+      - run: composer install --no-dev --optimize-autoloader --prefer-dist --no-progress
+
+      # Katalog montażowy nazywa się dokładnie jak katalog wtyczki: korzeń archiwum decyduje
+      # o katalogu instalacji, a inna nazwa każe WordPressowi rozpakować aktualizację do nowego
+      # katalogu i zostawić starą wtyczkę obok, nieaktywną.
+      - name: Zbuduj paczke
+        run: |
+          STAGE="portal-users"
+          rm -rf "$STAGE"
+          mkdir "$STAGE"
+          rsync -a --exclude-from=.distignore --exclude "$STAGE" ./ "$STAGE/"
+          test -f "$STAGE/portal-users.php" || { echo "::error::Paczka nie zawiera pliku glownego wtyczki"; exit 1; }
+          test -f "$STAGE/vendor/autoload.php" || { echo "::error::Paczka nie zawiera autoloadera - bez niego wtyczka nie startuje"; exit 1; }
+          zip -rq portal-users.zip "$STAGE"
+          # Korzeń archiwum decyduje o katalogu instalacji i jest jedynym ogniwem montażu,
+          # którego nie dało się sprawdzić przed tagiem. Zły korzeń każe WordPressowi
+          # rozpakować aktualizację do NOWEGO katalogu i zostawić starą wtyczkę obok,
+          # nieaktywną — portal traci zarządzanie kontami w trakcie aktualizacji.
+          ROOT=$( unzip -Z1 portal-users.zip | head -1 )
+          test "$ROOT" = "$STAGE/" || { echo "::error::Korzen archiwum to '$ROOT', a musi byc '$STAGE/'"; exit 1; }
+
+      - name: Utworz wydanie i zalacz asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: portal-users.zip
+          body_path: RELEASE_BODY.md

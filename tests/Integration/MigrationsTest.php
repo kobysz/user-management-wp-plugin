@@ -20,6 +20,15 @@ final class MigrationsTest extends WP_UnitTestCase {
 
 	private const TABLES = array( 'event_log', 'terms_versions', 'mail_queue' );
 
+	/**
+	 * Odcisk powierzchni schematu na wersję schematu. Patrz test niżej.
+	 *
+	 * @var array<int, string>
+	 */
+	private const SCHEMA_SURFACE = array(
+		5 => '36672407ad64c246d2710a491ba1a93e5649ffb0',
+	);
+
 	public function tear_down(): void {
 		// DDL nie cofa się z transakcją testu: baza musi zostać z tabelami dla innych testów.
 		try {
@@ -195,6 +204,91 @@ final class MigrationsTest extends WP_UnitTestCase {
 		$this->assertSame( 5, (int) get_option( 'pusers_db_version' ) );
 		$this->assertNotFalse( wp_next_scheduled( PurgeMailLog::HOOK ) );
 		$this->assertSame( 'daily', wp_get_schedule( PurgeMailLog::HOOK ) );
+	}
+
+	/**
+	 * Klasy crona odkryte z katalogu, nie wypisane z pamięci.
+	 *
+	 * Lista wypisana ręcznie przepuściłaby nową klasę crona dokładnie tak, jak przepuszcza ją
+	 * aktualizacja w miejscu: hook aktywacji się nie odpala, a harmonogram zakłada wyłącznie
+	 * `run()`. Odkrywanie sprawia, że nowa klasa bez dopisania do `run()` zapala ten test.
+	 *
+	 * @return array<class-string, string>
+	 */
+	private function cron_hooks(): array {
+		$out = array();
+		foreach ( (array) glob( dirname( __DIR__, 2 ) . '/src/Cron/*.php' ) as $file ) {
+			$class = 'PortalUsers\\Cron\\' . basename( (string) $file, '.php' );
+			if ( ! class_exists( $class ) || ! defined( $class . '::HOOK' ) || ! method_exists( $class, 'schedule' ) ) {
+				continue;
+			}
+			$out[ $class ] = (string) constant( $class . '::HOOK' );
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Odcisk powierzchni schematu: definicje tabel z `Migrations::run()` plus hooki cronów.
+	 *
+	 * Liczony ze ŹRÓDŁA, nie z bazy — wynik `SHOW CREATE TABLE` zależy od wersji MySQL-a
+	 * i od zestawu znaków, więc byłby chwiejny między środowiskami.
+	 */
+	private function schema_surface_hash(): string {
+		$source = (string) file_get_contents( dirname( __DIR__, 2 ) . '/src/Persistence/Migrations.php' );
+		preg_match_all( '/CREATE TABLE .*?;/s', $source, $matches );
+		$tables = array_map(
+			static fn( $sql ) => trim( (string) preg_replace( '/\s+/', ' ', (string) $sql ) ),
+			$matches[0]
+		);
+		sort( $tables );
+
+		$hooks = array_values( $this->cron_hooks() );
+		sort( $hooks );
+
+		return sha1( (string) wp_json_encode( array( 'tables' => $tables, 'crons' => $hooks ) ) );
+	}
+
+	public function test_schema_surface_is_pinned_to_db_version(): void {
+		// Aktualizacja w miejscu NIE odpala hooka aktywacji: tabele i harmonogramy zakłada
+		// `run()`, wołane przez `maybe_upgrade()` tylko wtedy, gdy zapisana wersja schematu
+		// jest niższa od stałej. Zmiana schematu bez podniesienia `DB_VERSION` jest cicha
+		// i nie pokaże się w testach ręcznych, bo na nowych instalacjach wszystko działa.
+		//
+		// Ten test wiąże jedno z drugim: odcisk powierzchni schematu jest przypisany do numeru
+		// wersji. Zmiana tabeli albo dołożenie crona bez podniesienia stałej daje niezgodny
+		// odcisk, a podniesienie stałej bez dopisania odcisku — brak klucza.
+		$this->assertArrayHasKey(
+			Migrations::DB_VERSION,
+			self::SCHEMA_SURFACE,
+			sprintf( 'Podniesiono DB_VERSION do %d — dopisz odcisk powierzchni schematu dla tej wersji w SCHEMA_SURFACE.', Migrations::DB_VERSION )
+		);
+
+		$this->assertSame(
+			self::SCHEMA_SURFACE[ Migrations::DB_VERSION ],
+			$this->schema_surface_hash(),
+			'Powierzchnia schematu (definicje tabel lub zestaw cronów) zmieniła się bez podniesienia Migrations::DB_VERSION. '
+				. 'Podnieś stałą i dopisz nowy odcisk; jeżeli zmiana była wyłącznie formatowaniem, podmień odcisk dla obecnej wersji.'
+		);
+	}
+
+	public function test_every_cron_class_is_scheduled_by_run(): void {
+		$hooks = $this->cron_hooks();
+		$this->assertNotEmpty( $hooks, 'Nie odkryto żadnej klasy crona — zmiana układu katalogów wyłączyłaby tę bramkę po cichu.' );
+
+		$this->fresh_install();
+		foreach ( $hooks as $hook ) {
+			wp_clear_scheduled_hook( $hook );
+		}
+
+		Migrations::run();
+
+		foreach ( $hooks as $class => $hook ) {
+			$this->assertNotFalse(
+				wp_next_scheduled( $hook ),
+				sprintf( '%s nie jest planowana przez Migrations::run(), więc hook „%s” nie powstanie na portalu zaktualizowanym w miejscu — dopisz wywołanie schedule() i podnieś DB_VERSION.', $class, $hook )
+			);
+		}
 	}
 
 	public function test_terms_version_hash_is_unique(): void {

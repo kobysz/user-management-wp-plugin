@@ -28,17 +28,43 @@ Backlog proponował dwa domknięcia bramki wersji minimalnej, pierwsze przez `ph
 
 Dodanie tej zależności oznaczałoby więc: martwy pakiet, zero pokrycia podłogi, która nas interesuje, i rosnąca lista wyciszeń fałszywych trafień. **Nie dodajemy.** Zamiast tego Zadanie 1 stawia dwie bramki opisane w P2 i P3, a martwą linię `testVersion` z `phpcs.xml.dist` usuwa — dziś czyta się jak straż wersji minimalnej i nie strzeże niczego.
 
-### P2. `phpVersion: 80100` w PHPStanie łapie API powyżej podłogi
+### P2. `phpVersion: 80100` w PHPStanie przestawia **gramatykę parsera**, a nie wersję API
 
-Pomiar: sonda `src/Probe82.php` z wywołaniem `ini_parse_quantity()` (funkcja dodana w PHP 8.2). Bez zmiany konfiguracji PHPStan na poziomie max kończy `[OK] No errors`. Po dopisaniu `phpVersion: 80100` do `phpstan.neon.dist` ten sam przebieg zwraca `Function ini_parse_quantity not found.` i kod wyjścia 1.
+Pierwsza wersja tego rozstrzygnięcia mówiła, że `phpVersion` łapie funkcje nieistniejące na podłodze, i **była błędna**: sondę i linię konfiguracji dopisałem jednym poleceniem, więc przypadku „bez `phpVersion`" nigdy nie uruchomiłem. Powtórzony pomiar, cztery przebiegi:
 
-To jest brakująca bramka na klasę błędu „funkcja nieistniejąca w 8.1", czyli na `mb_scrub()` odrzucone w Planie 8 — jedna linia konfiguracji, zero nowych zależności.
+| Sonda | Bez `phpVersion` | Z `phpVersion: 80100` |
+|---|---|---|
+| `ini_parse_quantity()` (8.2) | `Function ini_parse_quantity not found.` | to samo |
+| `array_is_list()` (8.1) z `phpVersion: 80000` | — | `[OK] No errors` |
+| `mb_scrub()` (8.3) | `[OK] No errors` | **`[OK] No errors`** |
+| enumy i `readonly` w całym `src/` z `phpVersion: 80000` | — | 21 błędów, wszystkie `Syntax error, unexpected T_CASE` / `expecting T_VARIABLE` |
 
-### P3. `phpVersion: 80100` NIE łapie składni powyżej podłogi — na to idzie `php -l` w kontenerze 8.1
+Piąty przebieg przewrócił i to. Sonda `final readonly class` (gramatyka 8.2) **bez** żadnej zmiany konfiguracji daje:
 
-Pomiar na dokładnej konstrukcji z Planu 8: sonda z `public const ALLOWED = array( AccountStatus::Pending->value );`. PHPStan z `phpVersion: 80100` kończy **`[OK] No errors`** — host parsuje plik PHP 8.2, a reguła o wyrażeniach stałych czytających enum nie istnieje w 1.x.
+```
+17     Readonly classes are supported only on PHP 8.2 and later.
+```
 
-Dlatego potrzebne są **dwie** bramki, nie jedna: `phpVersion` na API i przebieg `php -l` po `src/`, `portal-users.php` i `uninstall.php` **w kontenerze 8.1**, bo tylko tam parser jest tym parserem, na którym stoi portal. Kilka sekund na 111 plików.
+Host ma PHP 8.2, więc jedyne wyjaśnienie jest takie, że PHPStan **już** analizuje kod jako 8.1 — bierze wersję z `composer.json`, z `config.platform.php` (`"php": "8.1"`), tak jak dokumentuje to dla wersji 1.x. Bramka gramatyczna istnieje więc od początku i działa; dopisanie `phpVersion: 80100` niczego nie dodaje.
+
+Czyta się to razem tak: PHPStan sprawdza **gramatykę** wobec wersji z `composer.json` (przy 80000 enumy i `readonly` przestają się parsować, przy 8.1 klasa `readonly` jest zgłaszana), ale **nie sprawdza dostępności funkcji** — `array_is_list()` przechodzi przy podłodze 8.0, a `mb_scrub()` przy 8.1. `ini_parse_quantity()` świeci na czerwono niezależnie od konfiguracji, bo tej funkcji nie ma w tablicy sygnatur PHPStana 1.11 — to przypadek, nie bramka.
+
+Dwa wnioski dla Zadania 1:
+
+1. **Linii `phpVersion: 80100` nie dopisujemy.** Byłaby drugim `testVersion`: wyglądałaby na straż wersji minimalnej, a powtarzałaby tylko to, co i tak obowiązuje. Zamiast niej zadanie **pinuje testem prawdziwy mechanizm** — zgodność `Requires PHP` w nagłówku wtyczki z `require.php` i `config.platform.php` w `composer.json`. Usunięcie albo podniesienie `config.platform.php` przenosi bramkę PHPStana na wersję hosta po cichu; test to zatrzymuje.
+2. **Żadna konfiguracja PHPStana 1.11 nie łapie klasy błędu `mb_scrub()` z Planu 8** — zob. P3a.
+
+### P3. Jedyną pełną bramką podłogi jest `php -l` w kontenerze 8.1
+
+Pomiar na dokładnej konstrukcji z Planu 8: sonda z `public const ALLOWED = array( AccountStatus::Pending->value );`. PHPStan z `phpVersion: 80100` kończy `[OK] No errors`, bo ograniczenie zniesione w 8.2 jest **semantyczne**, nie gramatyczne: parser 8.1 przyjmuje tę linię, a PHP odrzuca ją dopiero przy kompilacji, komunikatem `Constant expression contains invalid operations`. `nikic/php-parser`, na którym stoi PHPStan, sprawdza tylko gramatykę.
+
+`php -l` w kontenerze 8.1 łapie **jedno i drugie** — gramatykę i błędy kompilacji — bo to ten sam parser i ten sam kompilator, na którym stoi portal. Dlatego bramka składni jest w tym zadaniu bramką główną, a nie dodatkiem: kilka sekund na 111 plików.
+
+### P3a. Luka, której nie zamyka nic automatycznego
+
+Wywołanie funkcji **istniejącej w PHP, ale nie na podłodze** (`mb_scrub()` na 8.1) nie jest łapane ani przez PHPStana (zmierzone wyżej, w dowolnej konfiguracji `phpVersion`), ani przez `php -l` (składnia jest poprawna), ani przez PHPCompatibility 9.3.5 (nie wie o funkcjach nowszych niż PHP 7.4, więc `mb_scrub` jest dla niego nieznany, a nieznany ≠ zgłoszony). Wyłapie ją tylko **wykonanie tej linii** na 8.1, czyli suita integracyjna w kontenerze — a pokrycie `src/` testami integracyjnymi jest wysokie, ale nie pełne.
+
+Luka zostaje otwarta i nazwana: zadania tego planu jej nie zamykają. Do backlogu idzie pozycja o PHPStanie 2.x, który ma własne sprawdzanie dostępności symboli wobec `phpVersion` — podniesienie `phpstan/phpstan` z `^1.11` jest osobną zmianą o własnym ryzyku i nie wchodzi do planu o wydaniach.
 
 ### P4. Pusta suita PHPUnit kończy się kodem 0, a PHPUnit 9.6 nie ma flagi, która to zmienia
 
@@ -70,7 +96,8 @@ Trzecia: dopóki repozytorium nie ma zdalnego na GitHubie, **oba workflowy są b
 - Aktualizator rejestruje się na `init`, nie na `admin_init` — inaczej cron i WP-CLI nie widzą aktualizacji.
 - `src/Domain/**` nie zna WordPressa (pilnuje tego `tests/Unit/Architecture/DomainPurityTest.php`). Aktualizator trafia do `src/Update`, nie do domeny.
 - Wszystkie napisy dla człowieka przez `__()` / `esc_html__()` z domeną `portal-users`; językiem bazowym jest polski.
-- Bramki, zielone po każdym zadaniu: `composer test:unit`, suita integracyjna w kontenerze, `composer analyse`, `composer lint`, a od Zadania 1 także `composer lint:syntax`.
+- Bramki, zielone po każdym zadaniu: suita jednostkowa, suita integracyjna w kontenerze, PHPStan, PHPCS, a od Zadania 1 także bramka składni na 8.1.
+- **Na maszynie deweloperskiej bramki uruchamia się przez `vendor/bin/*`, nie przez skrypty Composera.** `vendor/bin` nie ma windowsowych nakładek `.bat` (zależności zainstalowano z kontenera), więc `composer lint` i `composer analyse` kończą się `'phpcs' is not recognized as an internal or external command`. Skrypty Composera zostają interfejsem CI, gdzie biegną na Linuksie i gdzie backlog ich wyraźnie wymaga (`composer analyse` trzyma `--memory-limit=2G`). Lokalne odpowiedniki: `vendor/bin/phpcs -q`, `vendor/bin/phpstan analyse --memory-limit=2G`, `vendor/bin/phpunit --testsuite unit`.
 - Komunikaty commitów kończą się linią `Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>`.
 - Każdy przebieg suity użytkowników ma jawny limit; `'number' => 0` jest w tym projekcie zabronione.
 
@@ -79,7 +106,7 @@ Trzecia: dopóki repozytorium nie ma zdalnego na GitHubie, **oba workflowy są b
 Pięć klas wejścia i trybów porażki, których specyfikacja dotyka, a które same z siebie nie trafiłyby do żadnego testu. Każda ma przypisany test w zadaniu, które jest właścicielem kodu.
 
 1. **Nazwa katalogu wewnątrz paczki ZIP decyduje o katalogu instalacji.** Jeśli korzeń archiwum nazywa się inaczej niż katalog wtyczki (`portal-users`), WordPress rozpakuje aktualizację do **nowego** katalogu, a stara wtyczka zostanie w swoim — nieaktywna. Portal straci wtyczkę w trakcie aktualizacji. Test: Zadanie 6 sprawdza, że katalog montażowy w workflow jest dosłownie slugiem wtyczki.
-2. **Tag niebędący `x.y.z` nie może zostać zgłoszony jako aktualizacja.** `version_compare( 'release-2', '0.1.0', '>' )` jest prawdą, więc tag pomyłkowy skierowałby wszystkie portale na przypadkowy asset. Test: Zadanie 3 odrzuca tag niepasujący do wzorca, zanim cokolwiek porówna.
+2. **Tag niebędący `x.y.z` nie może zostać zgłoszony jako aktualizacja.** `version_compare( '0.2', '0.1.0', '>' )` i `version_compare( '2', '0.1.0', '>' )` są prawdą, więc tag pomyłkowy skierowałby wszystkie portale na przypadkowy asset. (Pierwsza wersja tej linii podawała przykład `release-2` — **błędnie**: człon mieszany sortuje się u `version_compare()` poniżej liczbowego i to porównanie zwraca `false`. Bramka jest potrzebna, tylko uzasadnia ją inny kształt tagu.) Test: Zadanie 3 odrzuca tag niepasujący do wzorca, zanim cokolwiek porówna.
 3. **Wpis w buforze przeżywa aktualizację wtyczki.** Transient zapisany starszą wersją ma kształt tablicy sprzed zmiany; nowy kod czytający brakujący klucz kończy ostrzeżeniem albo błędem w żądaniu panelu. Test: Zadanie 3 odrzuca wpis buforowy o nieznanym kształcie i traktuje go jak brak bufora.
 4. **Wydanie dokładające zdarzenie crona albo tabelę musi podnieść `Migrations::DB_VERSION`.** Aktualizacja w miejscu **nie odpala hooka aktywacji**; harmonogramy zakłada `Migrations::run()`, wołane z `maybe_upgrade()` na `plugins_loaded`. Nowa klasa crona bez podniesienia wersji schematu nigdy się nie zaplanuje na portalu, który już działał. Test: Zadanie 2 odkrywa klasy w `src/Cron/` i żąda, by każda była zaplanowana po `Migrations::run()`.
 5. **Job CI, którego suita nie wykonała ani jednego testu, musi być czerwony.** Zmierzone w P4: pusty przebieg kończy się kodem 0. Test: Zadanie 5 czyta liczbę testów z raportu JUnit i przerywa job przy zerze.
@@ -91,34 +118,39 @@ Pięć klas wejścia i trybów porażki, których specyfikacja dotyka, a które 
 Zamyka pozycję backlogu „Żadna bramka nie pilnuje wersji minimalnej PHP, a `testVersion` w `phpcs.xml.dist` jest martwe", w wariancie rozstrzygniętym w P1–P3.
 
 **Files:**
-- Modify: `phpstan.neon.dist` (dopisanie `phpVersion`)
 - Modify: `phpcs.xml.dist` (usunięcie martwej linii `testVersion`)
 - Modify: `composer.json` (skrypt `lint:syntax`)
 - Create: `scripts/lint-syntax.sh`
+- Create: `tests/Unit/PhpFloorTest.php`
 
 **Interfaces:**
 - Consumes: nic.
 - Produces: polecenie `composer lint:syntax` — bramka składni na PHP 8.1, używana przez Zadanie 5 w CI.
 
-- [ ] **Krok 1: Sonda API — udowodnij, że bramki dziś nie ma**
+- [ ] **Krok 1: Sonda A — udowodnij, że bramka gramatyczna już działa**
 
-Utwórz tymczasowy plik `src/Probe82.php` z klasą `PortalUsers\Probe82` i metodą, która woła `ini_parse_quantity( '1M' )` (funkcja dodana w PHP 8.2). Plik ma mieć docblock zgodny z WPCS, żeby nie mieszać znaleziskom.
+Utwórz tymczasowy plik `src/Probe82.php` z `final readonly class Probe82` (klasy `readonly` to gramatyka PHP 8.2) i jedną właściwością. Docblocki zgodne z WPCS, żeby nie mieszać znaleziskom.
 
-Uruchom: `composer analyse`
-Oczekiwane: `[OK] No errors` — bramki nie ma.
+Uruchom: `vendor/bin/phpstan analyse --memory-limit=2G --no-progress`
+Oczekiwane: `Readonly classes are supported only on PHP 8.2 and later.` — na hoście z PHP 8.2, bo PHPStan bierze wersję z `config.platform.php`. Bramka gramatyczna istnieje, a `phpVersion` w konfiguracji byłby jej powtórzeniem (P2).
 
-- [ ] **Krok 2: Dopisz `phpVersion` i zobacz czerwono**
+- [ ] **Krok 2: Pinuj testem prawdziwy mechanizm bramki**
 
-W `phpstan.neon.dist`, w bloku `parameters`, dopisz:
+W `tests/Unit/PhpFloorTest.php` (zwykły `TestCase`, czyta pliki):
 
-```neon
-    phpVersion: 80100
+```php
+public function test_plugin_header_php_floor_matches_composer(): void
+public function test_composer_platform_pins_the_same_floor(): void
 ```
 
-Uruchom: `composer analyse`
-Oczekiwane: `Function ini_parse_quantity not found.` w `src/Probe82.php`, kod wyjścia 1.
+Pierwszy: wyciągnij `Requires PHP:` z nagłówka `portal-users.php` i żądaj, by `composer.json` miał `require.php` postaci `>=<ta sama wersja>`. Drugi: żądaj, by `config.platform.php` równało się dokładnie tej wersji — to ta wartość decyduje, jaką gramatyką PHPStan sprawdza kod, więc jej zniknięcie przenosi bramkę na wersję hosta po cichu.
 
-- [ ] **Krok 3: Druga sonda — składnia, której PHPStan nie złapie**
+Żeby zobaczyć czerwono, zmień tymczasowo `config.platform.php` na `8.2`, uruchom test, przywróć `8.1`.
+
+Uruchom: `vendor/bin/phpunit --testsuite unit --filter PhpFloorTest`
+Oczekiwane: najpierw FAIL z komunikatem o niezgodnej podłodze, po przywróceniu PASS, 2 testy.
+
+- [ ] **Krok 3: Sonda B — semantyka 8.2, której PHPStan nie złapie**
 
 Zamień treść `src/Probe82.php` na klasę z wyrażeniem stałym czytającym przypadek enuma:
 
@@ -126,10 +158,10 @@ Zamień treść `src/Probe82.php` na klasę z wyrażeniem stałym czytającym pr
 public const ALLOWED = array( AccountStatus::Pending->value );
 ```
 
-(z `use PortalUsers\Domain\Account\AccountStatus;`). To dokładna konstrukcja, która w Planie 8 przeszła przez cztery zadania.
+(z `use PortalUsers\Domain\Account\AccountStatus;`). To dokładna konstrukcja, która w Planie 8 przeszła przez cztery zadania zielonych bramek.
 
-Uruchom: `composer analyse`
-Oczekiwane: `[OK] No errors` — potwierdzenie P3, że sama bramka PHPStana nie wystarcza. Sondy **nie usuwaj**, posłuży w Kroku 5.
+Uruchom: `vendor/bin/phpstan analyse --memory-limit=2G --no-progress`
+Oczekiwane: `[OK] No errors` — potwierdzenie P3: ograniczenie jest semantyczne, a parser widzi poprawną gramatykę 8.1. Sondy **nie usuwaj**, posłuży w Kroku 5.
 
 - [ ] **Krok 4: Napisz skrypt bramki składni**
 
@@ -155,17 +187,24 @@ W `composer.json`, w `scripts`, dopisz:
 "lint:syntax": "node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- sh scripts/lint-syntax.sh"
 ```
 
-- [ ] **Krok 5: Uruchom bramkę składni na sondzie**
+- [ ] **Krok 5: Uruchom bramkę składni na sondzie B**
 
-Uruchom: `composer lint:syntax`
-Oczekiwane: `PHP Parse error` wskazujący `src/Probe82.php` i `Constant expression contains invalid operations`, kod wyjścia niezerowy.
+Uruchom: `node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- sh scripts/lint-syntax.sh`
+Oczekiwane: komunikat wskazujący `src/Probe82.php` i `Constant expression contains invalid operations`, kod wyjścia niezerowy. To jedyna bramka, która tę konstrukcję widzi.
+
+- [ ] **Krok 5a: Sonda C — nazwij lukę, której nie zamyka nic**
+
+Zamień treść `src/Probe82.php` na metodę wołającą `mb_scrub( $s )` (funkcja dodana w PHP 8.3) — dokładny przypadek odrzucony w Planie 8.
+
+Uruchom obie bramki: PHPStana i bramkę składni.
+Oczekiwane: **obie zielone.** To P3a: wywołania funkcji istniejącej w PHP, ale nie na podłodze, nie łapie żadna z nich. Zapisz wynik w dzienniku i w trwałym zapisie decyzji; zadanie tej luki nie zamyka.
 
 - [ ] **Krok 6: Usuń sondę i potwierdź zielone**
 
 Usuń `src/Probe82.php`.
 
-Uruchom: `composer lint:syntax`
-Oczekiwane: brak wyjścia, kod wyjścia 0.
+Uruchom obie bramki.
+Oczekiwane: PHPStan `[OK] No errors`; bramka składni bez wyjścia, kod wyjścia 0.
 
 - [ ] **Krok 7: Usuń martwą linię `testVersion`**
 

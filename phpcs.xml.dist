@@ -64,5 +64,18 @@
     </rule>
 
     <config name="minimum_wp_version" value="6.5"/>
-    <config name="testVersion" value="8.1-"/>
+
+    <!-- Wpis „testVersion" stał tu i nie strzegł niczego: ma znaczenie wyłącznie przy zainstalowanym
+         standardzie PHPCompatibility, którego nie ma w vendor/ ani w require-dev. Usunięta w Planie 9,
+         bo czytała się jak straż wersji minimalnej PHP. PHPCompatibility nie wraca: jego najnowsze stabilne
+         wydanie (php-compatibility 9.3.5) jest z grudnia 2019, żaden z jego 117 sniffów nie zna PHP 8.1
+         ani 8.2, a na metodzie enuma używającej $this daje fałszywe trafienie.
+
+         Podłogi PHP pilnują dziś dwie rzeczy, obie poza tym plikiem:
+         - PHPStan analizuje kod jako PHP 8.1, bo bierze wersję z config.platform.php w composer.json
+           (zgodność trzech miejsc trzyma tests/Unit/PhpFloorTest.php) — łapie gramatykę ponad podłogą;
+         - `composer lint:syntax` uruchamia php -l w kontenerze 8.1 — łapie też błędy kompilacji,
+           których PHPStan nie widzi (wyrażenie stałe czytające enum przechodzi u niego zielono).
+         Nie łapie ich nic: wywołanie funkcji istniejącej w PHP, ale nie na podłodze (mb_scrub() na 8.1)
+         przechodzi obie bramki — zob. Plan 9, rozstrzygnięcie P3a. -->
 </ruleset>

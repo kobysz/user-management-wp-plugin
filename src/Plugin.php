@@ -38,6 +38,7 @@ use PortalUsers\Front\SessionGuard;
 use PortalUsers\Front\TermsBinding;
 use PortalUsers\Mail\CoreCapture;
 use PortalUsers\Privacy\PrivacyProvider;
+use PortalUsers\Update\GitHubUpdater;
 
 defined( 'ABSPATH' ) || exit;
 
@@ -125,6 +126,17 @@ final class Plugin {
 		// ustawowy i nie może czekać na naprawę wtyczki pól. Przy leżącym ACF grupa pól zgłoszenia
 		// renderuje się z nazwami metadanych zamiast etykiet, a to lepsze niż niewydanie danych.
 		PrivacyProvider::register();
+
+		// Aktualizator także stoi poza hookiem zależnym od ACF Pro, i to z najmocniejszego powodu:
+		// aktualizacja jest drogą naprawy portalu. Gdyby jechał za sprawdzeniem zależności, wydanie
+		// psujące współpracę z ACF Pro odcinałoby portal od poprawki, która to naprawia — a przy
+		// zepsutym albo wyłączonym ACF Pro administrator nie zobaczyłby nawet, że poprawka istnieje.
+		// Aktualizator nie potrzebuje ACF do niczego: pyta API GitHuba i wstawia wpis do transienta.
+		//
+		// Na `init`, nie `admin_init`: na `admin_init` cron i WP-CLI nie widzą aktualizacji, więc
+		// automatyczne aktualizacje i `wp plugin update` przestają działać (pułapka przeniesiona
+		// z wtyczki `event-registration`).
+		add_action( 'init', array( GitHubUpdater::class, 'register' ) );
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.

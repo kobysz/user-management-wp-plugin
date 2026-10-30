@@ -42,6 +42,7 @@
     "test:integration": "phpunit -c phpunit-integration.xml.dist",
     "analyse": "phpstan analyse --memory-limit=2G",
     "lint": "phpcs",
+    "lint:syntax": "node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- sh scripts/lint-syntax.sh",
     "lint:fix": "phpcbf"
   }
 }

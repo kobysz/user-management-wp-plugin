@@ -1,0 +1,110 @@
+name: CI
+
+# Na push lecą tylko joby szybkie i pewne: analiza statyczna plus suita jednostkowa.
+# Joby na Dockerze (wp-env) są w GitHub Actions ciężkie i chwiejne, więc odpalają się
+# na pull requeście i ręcznie. Źródłem prawdy dla integracji jest przebieg lokalny
+# w kontenerze przed pushem.
+#
+# Każdy krok uruchamiający PHPUnit ma własne sprawdzenie liczby wykonanych testów:
+# pusta suita kończy się kodem 0, a PHPUnit 9.6 nie ma flagi, która by to zmieniła
+# (zmierzone — `--fail-on-*` nie obejmuje pustej suity). Bez tego sprawdzenia job,
+# którego suita nie wykonała ani jednego testu, byłby zielony.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  static-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          tools: composer:v2
+          coverage: none
+
+      - run: composer install --prefer-dist --no-progress
+
+      - name: PHPCS
+        run: composer lint
+
+      # `composer analyse`, nie gołe `vendor/bin/phpstan analyse`: na domyślnym limicie 128 MB
+      # PHPStan pada na równoległym workerze, a limitu nie da się podać parametrem neona w 1.x
+      # (`parameters.memoryLimit` daje `Invalid configuration`). Skrypt Composera trzyma
+      # `--memory-limit=2G`. Nie „upraszczać" tego polecenia.
+      - name: PHPStan
+        run: composer analyse
+
+      - name: Testy jednostkowe
+        run: |
+          composer test:unit -- --log-junit junit-unit.xml
+          php -r '$x = simplexml_load_file( "junit-unit.xml" ); $n = (int) $x->testsuite["tests"]; if ( $n < 1 ) { fwrite( STDERR, "Suita jednostkowa nie wykonala zadnego testu\n" ); exit( 1 ); } echo "Wykonanych testow: $n\n";'
+
+  integration:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          tools: composer:v2
+          coverage: none
+
+      - run: npm ci
+
+      - run: composer install --prefer-dist --no-progress
+
+      - run: node scripts/wp-env.cjs start
+
+      - name: Testy integracyjne
+        run: |
+          node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- vendor/bin/phpunit -c phpunit-integration.xml.dist --log-junit junit-integration.xml
+          php -r '$x = simplexml_load_file( "junit-integration.xml" ); $n = (int) $x->testsuite["tests"]; if ( $n < 1 ) { fwrite( STDERR, "Suita integracyjna nie wykonala zadnego testu\n" ); exit( 1 ); } echo "Wykonanych testow: $n\n";'
+
+      # Bramka wersji minimalnej PHP: środowisko już stoi, więc kosztuje sekundy.
+      # Łapie błędy kompilacji, których PHPStan nie widzi — zob. Plan 9, P2-P3.
+      - name: Skladnia na PHP 8.1
+        run: composer lint:syntax
+
+  # Testy jadą na WordPressie z kontenera, a minimum wtyczki to 6.5. Bez tego joba nie
+  # dowiemy się, że coś wymaga nowszego API. Wersję rdzenia podaje zmienna środowiskowa
+  # WP_ENV_CORE; jeżeli ref `#6.5` przestanie się zestawiać, użyć najnowszego tagu
+  # z gałęzi 6.5 (np. `#6.5.5`).
+  integration-wp-floor:
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    env:
+      WP_ENV_CORE: WordPress/WordPress#6.5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          tools: composer:v2
+          coverage: none
+
+      - run: npm ci
+
+      - run: composer install --prefer-dist --no-progress
+
+      - run: node scripts/wp-env.cjs start
+
+      - name: Testy integracyjne na WordPressie 6.5
+        run: |
+          node scripts/wp-env.cjs run tests-cli --env-cwd=wp-content/plugins/portal-users -- vendor/bin/phpunit -c phpunit-integration.xml.dist --log-junit junit-floor.xml
+          php -r '$x = simplexml_load_file( "junit-floor.xml" ); $n = (int) $x->testsuite["tests"]; if ( $n < 1 ) { fwrite( STDERR, "Suita integracyjna nie wykonala zadnego testu\n" ); exit( 1 ); } echo "Wykonanych testow: $n\n";'

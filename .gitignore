@@ -4,3 +4,4 @@ node_modules/
 *.zip
 .phpunit.result.cache
 languages/*.mo
+junit-*.xml
