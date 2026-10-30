@@ -1,0 +1,26 @@
+# Co NIE jedzie do paczki wydania. Workflow wydania montuje archiwum przez
+# `rsync --exclude-from=.distignore`, a pokrycia tej listy pilnuje tests/Unit/DistignoreTest.php.
+#
+# `vendor/` zostaje w paczce celowo: portal nie ma Composera, więc wydanie instaluje
+# zależności produkcyjne (`composer install --no-dev`) i pakuje je razem z kodem.
+# `languages/` też zostaje, choć dziś jest pusty — językiem bazowym jest polski,
+# a nagłówek `Domain Path` katalog deklaruje.
+
+.git*
+.github
+.superpowers
+.distignore
+.editorconfig
+.phpunit.result.cache
+.wp-env.json
+node_modules
+tests
+docs
+scripts
+*.dist
+phpunit*.xml*
+package.json
+package-lock.json
+composer.json
+composer.lock
+*.zip
