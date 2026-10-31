@@ -92,15 +92,27 @@ final class IssueMessagesTest extends WP_UnitTestCase {
 		$this->assertNotSame( '', $noReason );
 	}
 
-	public function test_required_field_outside_the_source_says_registration_is_blocked(): void {
+	/**
+	 * Pole wymagane spoza grupy nie zatrzymuje rejestracji i komunikat nie ma prawa tak mówić.
+	 *
+	 * `RegistrationForm::compose()` przycina macierz do pól źródła (`FieldMatrix::prunedTo()`
+	 * robi `array_intersect_key`), a walidacja czyta przyciętą, więc wymóg pola, którego nie ma
+	 * jak wypełnić, przestaje obowiązywać i zgłoszenie przechodzi bez tej danej. Zachowanie
+	 * pilnuje `RegistrationFormTest::test_required_field_outside_the_acf_group_does_not_block_the_profession`;
+	 * ten test pilnuje, żeby raport spójności mówił o nim prawdę. Waga zostaje błędem: dane
+	 * przychodzą niekompletne po cichu, a to jest warte czerwonego.
+	 */
+	public function test_required_field_outside_the_source_does_not_claim_registration_is_blocked(): void {
 		$context = array( 'profession' => 'lekarz', 'field' => 'pwz_stare' );
-		$blocked = IssueMessages::text( SettingsIssue::error( 'matrix_required_field_not_in_source', $context ) );
+		$missing = IssueMessages::text( SettingsIssue::error( 'matrix_required_field_not_in_source', $context ) );
 		$plain   = IssueMessages::text( SettingsIssue::warning( 'matrix_field_not_in_source', $context ) );
-		$this->assertStringContainsString( 'zablokowana', $blocked );
-		$this->assertStringContainsString( 'lekarz', $blocked );
-		$this->assertStringContainsString( 'pwz_stare', $blocked );
-		$this->assertStringNotContainsString( 'zablokowana', $plain );
-		$this->assertStringNotContainsString( 'matrix_required_field_not_in_source', $blocked );
+		$this->assertStringNotContainsString( 'zablokowana', $missing, 'Rejestracja tej profesji nie jest zablokowana — komunikat nie może tego mówić.' );
+		$this->assertStringContainsString( 'nie będzie go wymagał', $missing, 'Komunikat ma powiedzieć, co się naprawdę dzieje: pole przestaje być wymagane.' );
+		$this->assertStringContainsString( 'danymi niekompletnymi', $missing, 'I po co to naprawiać: dane przychodzą bez tej wartości.' );
+		$this->assertStringContainsString( 'lekarz', $missing );
+		$this->assertStringContainsString( 'pwz_stare', $missing );
+		$this->assertNotSame( $plain, $missing, 'Pole wymagane i pole nieobowiązkowe spoza grupy to nie ten sam komunikat.' );
+		$this->assertStringNotContainsString( 'matrix_required_field_not_in_source', $missing );
 	}
 
 	public function test_missing_field_messages_mention_unsupported_field_types(): void {

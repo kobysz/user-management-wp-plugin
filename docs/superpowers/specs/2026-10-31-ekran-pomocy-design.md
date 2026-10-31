@@ -126,6 +126,12 @@ powiedzieć prawdę i nazwać tę rozbieżność. Jedyne pole, które naprawdę 
 uprawnień — profesja, której numeru nie da się wyegzekwować, nie pojawia się w ofercie formularza
 (`RegistrationForm::can_enforce_credential()`).
 
+> **Dopisane 31.10.2026, po wydaniu 0.2.1.** Rozbieżności już nie ma: właściciel wybrał poprawienie
+> komunikatu, nie domknięcie zachowania. `matrix_required_field_not_in_source` mówi teraz, że pole
+> nie będzie wymagane i że dane przychodzą niekompletne, a wagę zostawia na błędzie, bo luka jest
+> cicha. Akapit powyżej opisuje stan przed tą zmianą; część D instrukcji nie ma już czego
+> nazywać rozbieżnością i mówi wprost, co się dzieje.
+
 **C. Obsługa wniosków** — gdzie leży ekran wniosków i co znaczy bąbelek z liczbą, po co jest
 odnośnik do rejestru zawodowego przy wniosku, jak wygląda zatwierdzenie i odrzucenie, skąd biorą się
 powody odrzucenia, który mail po czym wychodzi i gdzie sprawdzić, że wyszedł.

@@ -18,6 +18,14 @@ Trzy rzeczy, których nie widać z samego formatu:
 
 ## [Unreleased]
 
+### Fixed
+
+- Raport spójności mówił, że pole oznaczone w macierzy jako wymagane, którego nie ma w wybranej
+  grupie pól, blokuje rejestrację tej profesji. Nie blokuje: formularz pomija takie pole i
+  przestaje go wymagać, a zgłoszenia przechodzą bez tej danej. Komunikat mówi to teraz wprost —
+  razem z tym, że dlatego właśnie trzeba go naprawić, bo luka jest cicha. Zachowanie wtyczki
+  bez zmian; ściąga „komunikat → przyczyna” na ekranie pomocy poprawiona tak samo.
+
 ## [0.2.1] - 2026-10-31
 
 Wtyczka dostaje własną instrukcję w panelu. Pierwsza konfiguracja 0.2.0 na żywym portalu

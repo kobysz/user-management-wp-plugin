@@ -91,9 +91,11 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 	/**
 	 * Charakterystyka zachowania, nie nowy wymóg: wymóg pola spoza grupy ACF NIE blokuje
 	 * rejestracji, bo plan rejestracji przycina macierz do pól źródła (`RegistrationPlan::matrix()`).
-	 * Test powstał, bo instrukcja na ekranie pomocy twierdziła odwrotnie; raport spójności nazywa
-	 * ten stan błędem „rejestracja zablokowana”, co przecenia skutek. Blokuje wyłącznie pole
-	 * numeru uprawnień, i to przez zdjęcie profesji z oferty — co pilnują testy obok.
+	 * Test powstał, bo instrukcja na ekranie pomocy i raport spójności twierdziły odwrotnie. Teksty
+	 * mówią już prawdę (`IssueMessagesTest::test_required_field_outside_the_source_does_not_claim_registration_is_blocked`),
+	 * a ten test jest ich podstawą: dopóki jest zielony, „rejestracja nie jest zablokowana” to fakt,
+	 * nie opinia. Blokuje wyłącznie pole numeru uprawnień, i to przez zdjęcie profesji z oferty —
+	 * co pilnują testy obok.
 	 */
 	public function test_required_field_outside_the_acf_group_does_not_block_the_profession(): void {
 		FieldMatrixRepository::save(

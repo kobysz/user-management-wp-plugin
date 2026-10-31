@@ -60,8 +60,8 @@ final class Messages {
 			__( 'Numerem uprawnień musi być pole jednowartościowe tekstowe albo liczbowe. Zmień typ pola w ACF albo wskaż inne pole przy profesji.', 'portal-users' )
 		);
 		self::row(
-			__( 'Rejestracja profesji … jest zablokowana: macierz oznacza jako wymagane pole …, którego nie ma w wybranej grupie pól', 'portal-users' ),
-			__( 'Pole zniknęło z grupy albo zostało przemianowane, a w macierzy zostało wymagane. Uwaga: ten komunikat przecenia skutek — rejestracja tej profesji NIE jest zablokowana, bo przy składaniu formularza macierz jest przycinana do pól, które grupa naprawdę ma, i wymóg przestaje obowiązywać. Zgłoszenia przechodzą bez tego pola. Mimo to warto naprawić: popraw wpis w macierzy albo wróć polem do grupy.', 'portal-users' )
+			__( 'Macierz profesji … oznacza jako wymagane pole …, którego nie ma w wybranej grupie pól', 'portal-users' ),
+			__( 'Pole zniknęło z grupy albo zostało przemianowane, a w macierzy zostało wymagane. Rejestracja tej profesji działa dalej: przy składaniu formularza macierz jest przycinana do pól, które grupa naprawdę ma, więc wymóg przestaje obowiązywać i zgłoszenia przechodzą bez tego pola. To jest właśnie powód, żeby to naprawić — dane przychodzą niekompletne, i nic o tym nie mówi poza tym wpisem w raporcie. Popraw wpis w macierzy albo wróć polem do grupy.', 'portal-users' )
 		);
 		self::row(
 			__( 'Macierz zawiera pole …, którego nie ma w wybranej grupie pól', 'portal-users' ),
