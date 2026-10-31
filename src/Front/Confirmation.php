@@ -247,13 +247,15 @@ final class Confirmation {
 		}
 
 		if ( $resent ) {
-			return '<p class="pusers-notice">' . esc_html( self::message_for( 'resent' ) ) . '</p>';
+			return Notice::html( self::message_for( 'resent' ), NoticeTone::Info );
 		}
 		if ( '' === $result ) {
 			return '';
 		}
 
-		$message = '<p class="pusers-notice" role="status">' . esc_html( self::message_for( $result ) ) . '</p>';
+		// Ton z JAWNEJ decyzji: `role="status"` dla wygasłego i nieważnego linku kłamało, a po
+		// ubraniu w kolory kłamstwo byłoby widać — zielone okienko nad komunikatem o awarii.
+		$message = Notice::html( self::message_for( $result ), self::RESULT_OK === $result ? NoticeTone::Success : NoticeTone::Danger );
 
 		// Wynik OK dociera tu tylko wtedy, gdy biletu na ustawienie hasła nie udało się wystawić,
 		// więc razem z komunikatem idzie odnośnik do odzyskiwania hasła: inaczej człowiek czyta,

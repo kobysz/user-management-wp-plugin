@@ -145,9 +145,7 @@ final class LoginForm {
 		$user = wp_get_current_user();
 		$next = PageUrl::for( SettingsRepository::get()->afterLoginPageId );
 
-		$html  = '<p class="pusers-notice" role="status">';
-		$html .= esc_html__( 'Jesteś zalogowany jako:', 'portal-users' ) . ' ' . esc_html( $user->display_name );
-		$html .= '</p>';
+		$html  = Notice::html( __( 'Jesteś zalogowany jako:', 'portal-users' ) . ' ' . $user->display_name, NoticeTone::Info );
 		$html .= '<p class="pusers-login-links"><a href="' . esc_url( $next ) . '">' . esc_html__( 'Przejdź dalej', 'portal-users' ) . '</a> ';
 		$html .= '<a href="' . esc_url( wp_logout_url() ) . '">' . esc_html__( 'Wyloguj się', 'portal-users' ) . '</a></p>';
 
@@ -172,7 +170,8 @@ final class LoginForm {
 
 		$message = LoginHandler::message_for( $code );
 
-		return '' === $message ? '' : '<p class="pusers-notice" role="alert">' . esc_html( $message ) . '</p>';
+		// Każdy kod wyniku logowania jest odmową: udane logowanie przekierowuje, więc tej strony nie widać.
+		return Notice::html( $message, NoticeTone::Danger );
 	}
 
 	/**

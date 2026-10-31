@@ -275,16 +275,16 @@ final class PasswordSetup {
 		RegistrationHandler::no_cache();
 
 		if ( self::RESULT_DONE === $code ) {
-			return '<p class="pusers-notice" role="status">' . esc_html( self::message_for( self::RESULT_DONE ) ) . '</p>' . self::login_link();
+			return Notice::html( self::message_for( self::RESULT_DONE ), NoticeTone::Success ) . self::login_link();
 		}
 
 		// Bez ważnego biletu nie ma co pokazywać formularza: droga dalej prowadzi do odzyskiwania hasła.
 		if ( null === self::ticket() ) {
-			return '<p class="pusers-notice" role="alert">' . esc_html( self::message_for( self::RESULT_EXPIRED ) ) . '</p>' . self::recovery_link();
+			return Notice::html( self::message_for( self::RESULT_EXPIRED ), NoticeTone::Danger ) . self::recovery_link();
 		}
 
 		$notice = in_array( $code, array( self::RESULT_SHORT, self::RESULT_EMAIL, self::RESULT_TOO_MANY, self::RESULT_STALE ), true )
-			? '<p class="pusers-notice" role="alert">' . esc_html( self::message_for( $code ) ) . '</p>'
+			? Notice::html( self::message_for( $code ), NoticeTone::Danger )
 			: '';
 
 		return $notice . self::form();
@@ -352,7 +352,7 @@ final class PasswordSetup {
 	 * Formularz ustawienia hasła.
 	 */
 	private static function form(): string {
-		return '<p class="pusers-notice">' . esc_html__( 'Adres e-mail został potwierdzony. Ustaw teraz hasło do konta.', 'portal-users' ) . '</p>'
+		return Notice::html( __( 'Adres e-mail został potwierdzony. Ustaw teraz hasło do konta.', 'portal-users' ), NoticeTone::Success )
 			. '<form class="' . FormClasses::attr( 'form', 'pusers-set-password', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">'
 			. '<input type="hidden" name="action" value="' . esc_attr( self::ACTION ) . '" />'
 			. wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false )

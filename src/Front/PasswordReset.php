@@ -857,11 +857,9 @@ final class PasswordReset {
 			return '';
 		}
 
-		// Rola `status` dla wyników, które mówią, że operacja się UDAŁA; `alert` zostaje dla odmów.
-		// Sukces ogłaszany jako alert przerywa czytnikowi ekranu zdanie bez powodu.
 		$success = self::RESULT_SENT === $code || self::RESULT_DONE === $code;
 
-		return '<p class="pusers-notice" role="' . ( $success ? 'status' : 'alert' ) . '">' . esc_html( $message ) . '</p>';
+		return Notice::html( $message, $success ? NoticeTone::Success : NoticeTone::Danger );
 	}
 
 	/**

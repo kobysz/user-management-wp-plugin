@@ -198,10 +198,10 @@ final class RegistrationForm {
 	private static function render_form(): string {
 		$state = self::state();
 		if ( null === $state ) {
-			return '<p class="pusers-notice">' . esc_html__( 'Rejestracja jest chwilowo niedostępna. Spróbuj ponownie później.', 'portal-users' ) . '</p>';
+			return Notice::html( __( 'Rejestracja jest chwilowo niedostępna. Spróbuj ponownie później.', 'portal-users' ), NoticeTone::Danger );
 		}
 		if ( RegistrationHandler::completed() ) {
-			return '<p class="pusers-notice">' . esc_html__( 'Dziękujemy za zgłoszenie. Jeżeli wszystko się zgadza, wysłaliśmy na podany adres e-mail wiadomość z dalszymi instrukcjami.', 'portal-users' ) . '</p>' . Confirmation::resend_form();
+			return Notice::html( __( 'Dziękujemy za zgłoszenie. Jeżeli wszystko się zgadza, wysłaliśmy na podany adres e-mail wiadomość z dalszymi instrukcjami.', 'portal-users' ), NoticeTone::Success ) . Confirmation::resend_form();
 		}
 
 		$source      = $state['source'];
@@ -275,9 +275,9 @@ final class RegistrationForm {
 	 * @param array<string, string> $labels Etykiety pól źródła: klucz => etykieta.
 	 */
 	private static function render_feedback( array $labels ): string {
-		$flash  = RegistrationHandler::flash();
-		$fields = $labels;
-		$labels = array_merge(
+		$flash   = RegistrationHandler::flash();
+		$fields  = $labels;
+		$labels  = array_merge(
 			$labels,
 			array(
 				self::PROFESSION                 => __( 'Profesja', 'portal-users' ),
@@ -285,21 +285,18 @@ final class RegistrationForm {
 				SubmissionResult::PROFESSION_KEY => __( 'Profesja', 'portal-users' ),
 			)
 		);
-		$html   = '';
-		if ( '' !== $flash['notice'] ) {
-			$html .= '<p class="pusers-notice" role="alert">' . esc_html( RegistrationHandler::message_for( $flash['notice'] ) ) . '</p>';
-		}
+		$message = '' === $flash['notice'] ? '' : RegistrationHandler::message_for( $flash['notice'] );
 
-		$items = '';
+		$items = array();
 		foreach ( $flash['errors'] as $field => $code ) {
-			$label  = self::error_label( (string) $field, $labels, $fields );
-			$items .= '<li>' . ( '' === $label ? '' : esc_html( $label ) . ': ' ) . esc_html( RegistrationHandler::message_for( $code ) ) . '</li>';
+			$label   = self::error_label( (string) $field, $labels, $fields );
+			$items[] = ( '' === $label ? '' : $label . ': ' ) . RegistrationHandler::message_for( $code );
 		}
 		foreach ( array_keys( $flash['warnings'] ) as $field ) {
-			$items .= '<li>' . esc_html( $labels[ $field ] ?? $field ) . ': ' . esc_html( RegistrationHandler::message_for( 'credential_warning' ) ) . '</li>';
+			$items[] = ( $labels[ $field ] ?? $field ) . ': ' . RegistrationHandler::message_for( 'credential_warning' );
 		}
 
-		return '' === $items ? $html : $html . '<ul class="pusers-errors" role="alert">' . $items . '</ul>';
+		return Notice::with_list( $message, $items, NoticeTone::Danger );
 	}
 
 	/**
