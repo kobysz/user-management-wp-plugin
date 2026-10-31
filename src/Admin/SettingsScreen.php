@@ -12,6 +12,7 @@ namespace PortalUsers\Admin;
 defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Acf\AcfGroupList;
+use PortalUsers\Domain\Config\FormLayout;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Persistence\SettingsRepository;
@@ -35,7 +36,7 @@ final class SettingsScreen {
 	 * w żądaniu; klucz nieobecny zachowuje zapisaną wartość (baza zapisu to bieżące
 	 * ustawienia), a nie domyślną. Nowa flaga musi więc użyć checkbox(), inaczej nie da się jej wyłączyć.
 	 */
-	private const FLAG_FIELDS = array( 'approval_enabled', 'delete_data_on_uninstall' );
+	private const FLAG_FIELDS = array( 'approval_enabled', 'delete_data_on_uninstall', 'form_styles_enabled' );
 
 	/**
 	 * Pola jednowierszowe przekazywane do domeny w postaci tekstu (liczby i identyfikatory
@@ -58,6 +59,7 @@ final class SettingsScreen {
 		'trusted_proxy_header',
 		'acf_group_key',
 		'terms_consent_field',
+		'form_layout',
 	);
 
 	/**
@@ -223,6 +225,7 @@ final class SettingsScreen {
 		self::render_antispam_section( $settings );
 		self::render_fields_section( $settings );
 		self::render_terms_section( $settings );
+		self::render_forms_section( $settings );
 		self::render_uninstall_section( $settings );
 		echo '</tbody></table>';
 
@@ -394,6 +397,38 @@ final class SettingsScreen {
 		);
 		self::description( __( 'Klucz pola ACF (typu „prawda/fałsz”) ze zgodą na regulamin. Konto jest wiązane z wersją regulaminu tylko wtedy, gdy to pole zostało zaznaczone. Bez wskazania pola żadne konto nie jest wiązane.', 'portal-users' ) );
 		self::row_end();
+	}
+
+	/**
+	 * Sekcja wyglądu formularzy na stronie portalu.
+	 *
+	 * @param Settings $settings Bieżące ustawienia.
+	 */
+	private static function render_forms_section( Settings $settings ): void {
+		self::row_start( __( 'Wygląd formularzy', 'portal-users' ), 'form_layout' );
+		printf( '<select id="%1$s" name="%1$s">', esc_attr( self::name( 'form_layout' ) ) );
+		foreach ( FormLayout::cases() as $layout ) {
+			printf(
+				'<option value="%1$s"%2$s>%3$s</option>',
+				esc_attr( $layout->value ),
+				$settings->formLayout === $layout ? ' selected="selected"' : '',
+				esc_html( self::layout_label( $layout ) )
+			);
+		}
+		echo '</select>';
+		self::description( __( 'Goły: formularz zajmuje całą szerokość treści i nie narzuca tła ani ramki. Karta: formularz stoi na środku, w ramce z cieniem. Ustawienie dotyczy rejestracji, logowania i odzyskiwania hasła naraz.', 'portal-users' ) );
+		self::checkbox( 'form_styles_enabled', __( 'Doładuj wygląd formularzy', 'portal-users' ), $settings->formStylesEnabled );
+		self::description( __( 'Zaznacz tylko wtedy, gdy skórka portalu nie korzysta z Bootstrapa. Wtyczka doładuje wtedy własny, niewielki arkusz stylów — obejmie on wyłącznie formularze i nie zmieni wyglądu nagłówka, menu ani stopki. Na skórce opartej na Bootstrapie zostaw niezaznaczone: formularze przejmą wtedy kolory i czcionki portalu.', 'portal-users' ) );
+		self::row_end();
+	}
+
+	/**
+	 * Nazwa układu widoczna na ekranie ustawień.
+	 *
+	 * @param FormLayout $layout Układ.
+	 */
+	private static function layout_label( FormLayout $layout ): string {
+		return FormLayout::Card === $layout ? __( 'Karta', 'portal-users' ) : __( 'Goły', 'portal-users' );
 	}
 
 	/**

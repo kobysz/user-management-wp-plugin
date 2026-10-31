@@ -120,7 +120,17 @@ Wartości domyślne są pracujące; ruszaj je świadomie.
 | Minimalny czas wypełniania formularza | 3 s | |
 | Nagłówek zaufanego proxy | puste | wypełnij **tylko** za proxy, które nadpisuje nagłówek własną wartością; pusto = adres połączenia |
 | Treść regulaminu + pole zgody | puste | wpisz oba albo żadne — treść bez pola zgody zapali ostrzeżenie, że nie będzie czym wykazać zgody |
+| Układ formularzy | goły | ustaw *Karta*, jeżeli formularz ma stać na środku, w ramce z cieniem, zamiast zajmować całą szerokość treści |
+| Doładuj wygląd formularzy | **wyłączone** | zaznacz **tylko** wtedy, gdy skórka portalu nie korzysta z Bootstrapa |
 | Usuwanie danych przy odinstalowaniu | **wyłączone** | zostaw wyłączone, chyba że świadomie chcesz, by usunięcie wtyczki skasowało ustawienia, profesje, macierz, log zdarzeń i archiwum wersji regulaminu |
+
+Dwa ustawienia wyglądu działają tak: formularze rejestracji, logowania i odzyskiwania hasła
+noszą klasy Bootstrapa. Skórka, która na Bootstrapie stoi, ubierze je sama — formularz przejmie
+jej kolory, czcionki i zaokrąglenia, a wtyczka nie doda do strony żadnych własnych stylów. Jeżeli
+skórka Bootstrapa nie ma, formularz będzie wyglądał surowo i właśnie wtedy zaznacza się *Doładuj
+wygląd formularzy*: wtyczka doda wtedy własny, niewielki arkusz, który obejmuje wyłącznie
+formularze. Nagłówek, menu, stopka i reszta strony zostają nietknięte. Oba ustawienia działają
+na wszystkie trzy strony naraz — nie da się ustawić innego układu na samym logowaniu.
 
 Osobno, poza wtyczką: *Ustawienia → Ogólne → Domyślna rola nowego użytkownika*. Rola
 z uprawnieniem, którego publiczny formularz nie może nadać osobie zakładającej konto (np.

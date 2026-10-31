@@ -9,6 +9,7 @@ declare( strict_types=1 );
 
 namespace PortalUsers\Tests\Unit\Config;
 
+use PortalUsers\Domain\Config\FormLayout;
 use PortalUsers\Domain\Config\Settings;
 use PHPUnit\Framework\TestCase;
 
@@ -179,7 +180,9 @@ final class SettingsTest extends TestCase {
 			true,
 			'group_abc',
 			'Regulamin',
-			'zgoda'
+			'zgoda',
+			FormLayout::Card,
+			true
 		);
 
 		$this->assertSame(
@@ -205,6 +208,8 @@ final class SettingsTest extends TestCase {
 				'acf_group_key',
 				'terms_text',
 				'terms_consent_field',
+				'form_layout',
+				'form_styles_enabled',
 			),
 			array_keys( $s->toArray() )
 		);
@@ -275,5 +280,35 @@ final class SettingsTest extends TestCase {
 
 	public function test_approval_flag_missing_key_defaults_to_enabled(): void {
 		$this->assertTrue( Settings::fromArray( array() )->approvalEnabled );
+	}
+
+	public function test_domyslny_uklad_formularzy_to_goly(): void {
+		$this->assertSame( FormLayout::Plain, Settings::defaults()->formLayout );
+		$this->assertSame( FormLayout::Plain, Settings::fromArray( array() )->formLayout );
+	}
+
+	public function test_domyslnie_arkusz_nie_jest_doladowany(): void {
+		// Skórka portalu zwykle ma już Bootstrapa; doładowanie włącza się świadomie.
+		$this->assertFalse( Settings::defaults()->formStylesEnabled );
+		$this->assertFalse( Settings::fromArray( array() )->formStylesEnabled );
+	}
+
+	public function test_uklad_ze_smieci_wraca_do_golego(): void {
+		$this->assertSame( FormLayout::Plain, Settings::fromArray( array( 'form_layout' => 'xx' ) )->formLayout );
+		$this->assertSame( FormLayout::Card, Settings::fromArray( array( 'form_layout' => 'karta' ) )->formLayout );
+	}
+
+	public function test_uklad_i_arkusz_przechodza_przez_toArray(): void {
+		$saved = Settings::fromArray(
+			array(
+				'form_layout'         => 'karta',
+				'form_styles_enabled' => '1',
+			)
+		)->toArray();
+
+		$this->assertSame( 'karta', $saved['form_layout'] );
+		$this->assertTrue( $saved['form_styles_enabled'] );
+		$this->assertSame( FormLayout::Card, Settings::fromArray( $saved )->formLayout );
+		$this->assertTrue( Settings::fromArray( $saved )->formStylesEnabled );
 	}
 }

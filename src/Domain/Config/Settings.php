@@ -63,6 +63,8 @@ final class Settings {
 	 * @param string             $acfGroupKey            Klucz grupy pól ACF.
 	 * @param string             $termsText              Treść regulaminu (pusta = regulamin nieskonfigurowany).
 	 * @param string             $termsConsentField      Klucz pola ACF ze zgodą na regulamin (puste = nie wskazano).
+	 * @param FormLayout         $formLayout             Układ formularzy frontu.
+	 * @param bool               $formStylesEnabled      Czy doładować własny arkusz wyglądu formularzy.
 	 */
 	public function __construct(
 		public readonly bool $approvalEnabled,
@@ -85,7 +87,9 @@ final class Settings {
 		public readonly bool $deleteDataOnUninstall,
 		public readonly string $acfGroupKey,
 		public readonly string $termsText,
-		public readonly string $termsConsentField
+		public readonly string $termsConsentField,
+		public readonly FormLayout $formLayout,
+		public readonly bool $formStylesEnabled
 	) {}
 
 	/**
@@ -115,7 +119,9 @@ final class Settings {
 			false,
 			'',
 			'',
-			''
+			'',
+			FormLayout::Plain,
+			false
 		);
 	}
 
@@ -150,7 +156,9 @@ final class Settings {
 			self::flag( $raw, 'delete_data_on_uninstall', $d->deleteDataOnUninstall ),
 			self::text( $raw, 'acf_group_key' ),
 			self::text( $raw, 'terms_text' ),
-			self::text( $raw, 'terms_consent_field' )
+			self::text( $raw, 'terms_consent_field' ),
+			FormLayout::fromValue( $raw['form_layout'] ?? null ),
+			self::flag( $raw, 'form_styles_enabled', $d->formStylesEnabled )
 		);
 	}
 
@@ -182,6 +190,8 @@ final class Settings {
 			'acf_group_key'                         => $this->acfGroupKey,
 			'terms_text'                            => $this->termsText,
 			'terms_consent_field'                   => $this->termsConsentField,
+			'form_layout'                           => $this->formLayout->value,
+			'form_styles_enabled'                   => $this->formStylesEnabled,
 		);
 	}
 

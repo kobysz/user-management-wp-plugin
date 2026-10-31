@@ -10,6 +10,7 @@ namespace PortalUsers\Tests\Integration\Admin;
 use PortalUsers\Admin\IssueMessages;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Admin\SettingsScreen;
+use PortalUsers\Domain\Config\FormLayout;
 use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Persistence\SettingsRepository;
@@ -203,6 +204,47 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 
 		$this->assertMatchesRegularExpression( '/name="pusers_rate_limit_per_hour" value="42"/', $html );
 		$this->assertMatchesRegularExpression( '/name="pusers_registration_limit_per_email_per_hour" value="7"/', $html );
+	}
+
+	public function test_the_screen_offers_the_layout_choice_and_the_styles_switch(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'form_layout' => 'karta', 'form_styles_enabled' => '1' ) ) );
+		wp_set_current_user( self::factory()->user->create( array( 'role' => 'administrator' ) ) );
+
+		ob_start();
+		SettingsScreen::render();
+		$html = (string) ob_get_clean();
+
+		$this->assertStringContainsString( 'name="pusers_form_layout"', $html );
+		$this->assertMatchesRegularExpression( '/value="karta"\s+selected="selected"/', $html );
+		$this->assertMatchesRegularExpression( '/name="pusers_form_styles_enabled" value="1"[^>]*checked="checked"/', $html );
+	}
+
+	public function test_the_layout_and_styles_settings_are_saved(): void {
+		$this->asAdminPosting( 'pusers_save_settings', array(
+			'form_layout'         => 'karta',
+			'form_styles_enabled' => '1',
+		) );
+		SettingsScreen::handle_save();
+
+		$saved = SettingsRepository::get();
+		$this->assertSame( FormLayout::Card, $saved->formLayout );
+		$this->assertTrue( $saved->formStylesEnabled );
+	}
+
+	public function test_an_unchecked_styles_switch_turns_the_stylesheet_off(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'form_styles_enabled' => '1' ) ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'form_styles_enabled' => '0' ) );
+		SettingsScreen::handle_save();
+
+		$this->assertFalse( SettingsRepository::get()->formStylesEnabled );
+	}
+
+	public function test_a_layout_value_from_outside_the_list_falls_back_to_plain(): void {
+		SettingsRepository::save( Settings::fromArray( array( 'form_layout' => 'karta' ) ) );
+		$this->asAdminPosting( 'pusers_save_settings', array( 'form_layout' => 'przemycone' ) );
+		SettingsScreen::handle_save();
+
+		$this->assertSame( FormLayout::Plain, SettingsRepository::get()->formLayout );
 	}
 
 	public function test_the_five_login_and_recovery_settings_are_saved(): void {
