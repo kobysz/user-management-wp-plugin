@@ -18,6 +18,21 @@ Trzy rzeczy, których nie widać z samego formatu:
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-31
+
+Formularze na stronie portalu przestają wyglądać jak obcy element. Pierwsze wstawienie
+rejestracji z 0.2.1 na żywą skórkę pokazało pola bez odstępów i domyślny przycisk
+przeglądarki: wtyczka rysowała goły znacznik i zostawiała wygląd skórce, a skórka nie miała
+się czego chwycić. Teraz pola noszą klasy Bootstrapa 5 — tego, na którym stoją skórki portali
+medycznych — więc formularz bierze kolory, czcionki i zaokrąglenia z portalu, a błąd widać
+przy polu, którego dotyczy.
+
+Portal, którego skórka Bootstrapa nie ma, włącza w ustawieniach **Doładuj wygląd formularzy**
+i dostaje zapasowy arkusz obejmujący wyłącznie formularze. Oba nowe ustawienia startują na
+tym, co niczego nie narzuca — układ goły, doładowanie wyłączone — więc aktualizacja zmienia
+sam wygląd formularzy, a niczego w konfiguracji portalu ruszać nie trzeba. Rejestracja,
+akceptacja i logowanie działają bez zmian.
+
 ### Added
 
 - Formularze na stronie portalu — rejestracja, logowanie i odzyskiwanie hasła — korzystają teraz
