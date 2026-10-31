@@ -168,6 +168,29 @@ final class SettingsScreen {
 	}
 
 	/**
+	 * Odnośnik do ekranu pomocy, dopóki konfiguracja nie jest skończona.
+	 *
+	 * Ekran pomocy bez tej linii byłby ekranem, którego nikt nie znajduje: administrator
+	 * stawiający portal przychodzi tutaj, nie tam. Po skończonej konfiguracji linia znika —
+	 * instrukcja dnia pierwszego nie ma po co stać co dzień nad ustawieniami.
+	 *
+	 * `HelpScreen::setup_incomplete()` nie liczy kont sprzed wdrożenia; zapytanie po
+	 * użytkownikach robi na tym ekranie `BackfillNotice` i nie ma powodu robić go dwa razy.
+	 */
+	private static function render_help_pointer(): void {
+		if ( ! HelpScreen::setup_incomplete() ) {
+			return;
+		}
+
+		printf(
+			'<div class="notice notice-info inline"><p>%1$s <a href="%2$s">%3$s</a></p></div>',
+			esc_html__( 'Konfiguracja nie jest skończona.', 'portal-users' ),
+			esc_url( Menu::url( Menu::SLUG_HELP ) ),
+			esc_html__( 'Zobacz, od czego zacząć i który krok został', 'portal-users' )
+		);
+	}
+
+	/**
 	 * Wypisuje ekran ustawień.
 	 */
 	public static function render(): void {
@@ -179,6 +202,7 @@ final class SettingsScreen {
 
 		echo '<div class="wrap"><h1>' . esc_html__( 'Portal: ustawienia', 'portal-users' ) . '</h1>';
 
+		self::render_help_pointer();
 		ConsistencyNotice::render();
 		if ( Request::NOTICE_SAVED === Request::notice() ) {
 			echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Ustawienia zostały zapisane.', 'portal-users' ) . '</p></div>';

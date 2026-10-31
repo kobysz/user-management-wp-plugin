@@ -7,6 +7,12 @@ usunąć na tym ekranie.
 
 Wszystkie ekrany wtyczki stoją pod menu **Użytkownicy**.
 
+**Ta sama instrukcja jest w panelu**, na ekranie *Użytkownicy → Portal: pomoc*, razem z listą
+startową pokazującą, który krok jest już zrobiony, i z dwiema częściami, których ten dokument
+nie ma: o zmianie formularza na żywym portalu i o obsłudze wniosków. Ten plik nie jedzie
+w paczce wydania (`.distignore` wyklucza `docs`), więc na portalu jest tylko tamten ekran.
+Nagłówki kroków w obu miejscach muszą się zgadzać — pilnuje tego test jednostkowy.
+
 ## Czego wtyczka wymaga
 
 - WordPress 6.5, PHP 8.1 (paczka wymusza wersję PHP przy starcie, nie tylko ją deklaruje).

@@ -18,6 +18,19 @@ Trzy rzeczy, których nie widać z samego formatu:
 
 ## [Unreleased]
 
+### Added
+
+- Ekran *Użytkownicy → Portal: pomoc* z instrukcją obsługi wtyczki w panelu: uruchomienie
+  od zera krok po kroku, zmiana formularza rejestracji na działającym portalu, weryfikacja
+  i akceptacja użytkowników oraz ściąga „komunikat → przyczyna”.
+- Lista startowa na górze tego ekranu pokazuje, który z ośmiu kroków konfiguracji jest już
+  zrobiony, a który został, i prowadzi do ekranu, na którym się go wykonuje. Po skończonej
+  konfiguracji zwija się do jednej linii. Ekran ustawień, dopóki konfiguracja nie jest
+  skończona, odsyła do tej listy.
+- Ekran pomocy działa także wtedy, gdy ACF Pro jest wyłączony albo nieobecny — razem
+  z ekranem wniosków jest wtedy jedynym widocznym ekranem wtyczki i mówi, czego brakuje.
+  Kroki, których bez ACF Pro nie da się zmierzyć, pokazują „nie można sprawdzić”.
+
 ## [0.2.0] - 2026-10-30
 
 Pierwsze wydanie. Wtyczka przejmuje rejestrację, akceptację i logowanie kont na portalach

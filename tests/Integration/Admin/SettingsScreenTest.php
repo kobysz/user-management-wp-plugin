@@ -575,4 +575,51 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'name="pusers_terms_text"', $html );
 		$this->assertStringContainsString( 'Regulamin &lt;b&gt;v1&lt;/b&gt;', $html );
 	}
+
+	/**
+	 * Doprowadza konfigurację do stanu skończonego: kroki od pierwszego do szóstego zrobione.
+	 */
+	private function withFinishedSetup(): void {
+		$this->withConfiguredSourceAndProfessions( 'lekarz' );
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible' ) ) ) );
+		$page = fn (): int => (int) self::factory()->post->create(
+			array(
+				'post_type'   => 'page',
+				'post_status' => 'publish',
+			)
+		);
+		SettingsRepository::save(
+			Settings::fromArray(
+				array_merge(
+					SettingsRepository::get()->toArray(),
+					array(
+						'login_page_id'       => $page(),
+						'register_page_id'    => $page(),
+						'reset_page_id'       => $page(),
+						'after_login_page_id' => $page(),
+						'notify_emails'       => array( 'redakcja@example.test' ),
+						'rejection_reasons'   => array( 'Numer nie zgadza się z rejestrem' ),
+					)
+				)
+			)
+		);
+	}
+
+	public function test_linia_do_pomocy_pokazuje_sie_przy_nieskonczonej_konfiguracji(): void {
+		$this->assertStringContainsString(
+			'page=' . Menu::SLUG_HELP,
+			$this->renderScreenAsAdmin(),
+			'Bez tej linii ekran pomocy jest ekranem, którego nikt nie znajdzie.'
+		);
+	}
+
+	public function test_linia_do_pomocy_znika_przy_skonczonej_konfiguracji(): void {
+		$this->withFinishedSetup();
+
+		$this->assertStringNotContainsString(
+			'page=' . Menu::SLUG_HELP,
+			$this->renderScreenAsAdmin(),
+			'Skończona konfiguracja nie ma po co co dzień widzieć odnośnika do instrukcji dla dnia pierwszego.'
+		);
+	}
 }
