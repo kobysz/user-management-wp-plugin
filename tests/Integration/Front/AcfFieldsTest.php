@@ -196,6 +196,78 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 		$this->assertSame( 0, AcfRenderRecorder::$fields[0]['required'] );
 	}
 
+	/**
+	 * Renderuje pole i oddaje definicję, którą wtyczka podała ACF-owi.
+	 *
+	 * @param string $fieldKey Nazwa pola.
+	 * @param bool   $invalid  Czy pole ma błąd.
+	 * @return array<string, mixed>
+	 */
+	private function definition( string $fieldKey, bool $invalid = false ): array {
+		AcfRenderRecorder::$fields = array();
+		ob_start();
+		( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->render( $fieldKey, false, null, $invalid );
+		ob_end_clean();
+
+		return AcfRenderRecorder::$fields[0];
+	}
+
+	public function test_pole_tekstowe_dostaje_form_control(): void {
+		$this->assertSame( 'form-control', $this->definition( 'pwz' )['class'] );
+	}
+
+	public function test_pole_liczbowe_tez_dostaje_form_control(): void {
+		$this->assertSame( 'form-control', $this->definition( 'lata' )['class'] );
+	}
+
+	public function test_select_dostaje_form_select(): void {
+		add_filter(
+			'pusers_acf_fields',
+			static function ( array $raw ): array {
+				$raw[] = array( 'name' => 'specjalizacja', 'label' => 'Specjalizacja', 'type' => 'select', 'key' => 'field_select01' );
+				return $raw;
+			},
+			20
+		);
+
+		$this->assertSame( 'form-select', $this->definition( 'specjalizacja' )['class'] );
+	}
+
+	public function test_true_false_dostaje_form_check_input(): void {
+		// Pole zgody na regulamin jest właśnie takim polem.
+		$this->assertSame( 'form-check-input', $this->definition( 'zgoda' )['class'] );
+	}
+
+	public function test_typ_spoza_listy_nie_dostaje_klasy_kontrolki(): void {
+		// Galeria, WYSIWYG, listy opcji: klasa Bootstrapa nie ma na czym usiąść, a render ma
+		// przejść. Kontenery (repeater, group) odpadają wcześniej, w AcfFieldSource.
+		add_filter(
+			'pusers_acf_fields',
+			static function ( array $raw ): array {
+				$raw[] = array( 'name' => 'galeria', 'label' => 'Galeria', 'type' => 'gallery', 'key' => 'field_gal001' );
+				$raw[] = array( 'name' => 'tryb', 'label' => 'Tryb pracy', 'type' => 'radio', 'key' => 'field_rad001' );
+				return $raw;
+			},
+			20
+		);
+
+		foreach ( array( 'galeria', 'tryb' ) as $fieldKey ) {
+			$definition = $this->definition( $fieldKey );
+			$this->assertSame( '', $definition['class'], 'Pole „' . $fieldKey . '” nie ma dostać klasy kontrolki.' );
+			$this->assertSame( 'mb-3', $definition['wrapper']['class'] );
+		}
+	}
+
+	public function test_opakowanie_zawsze_dostaje_mb_3(): void {
+		$this->assertSame( 'mb-3', $this->definition( 'pwz' )['wrapper']['class'] );
+		$this->assertSame( 'mb-3', $this->definition( 'zgoda' )['wrapper']['class'] );
+	}
+
+	public function test_bledne_pole_doklada_is_invalid_do_klasy_kontrolki(): void {
+		$this->assertSame( 'form-control is-invalid', $this->definition( 'pwz', true )['class'] );
+		$this->assertSame( 'form-check-input is-invalid', $this->definition( 'zgoda', true )['class'] );
+	}
+
 	public function test_render_ignores_a_field_outside_the_group(): void {
 		ob_start();
 		( new AcfFields( new AcfFieldSource( 'group_abc' ) ) )->render( 'user_pass', true, null );

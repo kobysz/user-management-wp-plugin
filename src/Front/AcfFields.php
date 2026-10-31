@@ -36,6 +36,30 @@ final class AcfFields {
 	private const BOOLEAN_TYPE = 'true_false';
 
 	/**
+	 * Typ pola ACF => rola w mapie klas. Typ spoza tej listy (repeater, galeria, WYSIWYG)
+	 * nie dostaje klasy kontrolki: Bootstrap nie ma na czym jej posadzić, a render ma przejść.
+	 *
+	 * Listy opcji (`radio`, `checkbox`) świadomie tu NIE SĄ: ACF rysuje je jako `<ul>`, a
+	 * definicja pola nie sięga do inputów w pozycjach listy. Wymuszenie `form-check` znaczyłoby
+	 * przepisywanie znacznika ACF-a — patrz specyfikacja, „Zasięg po typach pól ACF”.
+	 *
+	 * @var array<string, string>
+	 */
+	private const CONTROL_ROLES = array(
+		'text'             => 'control',
+		'textarea'         => 'control',
+		'email'            => 'control',
+		'url'              => 'control',
+		'password'         => 'control',
+		'number'           => 'control',
+		'date_picker'      => 'control',
+		'time_picker'      => 'control',
+		'date_time_picker' => 'control',
+		'select'           => 'select',
+		self::BOOLEAN_TYPE => 'check_input',
+	);
+
+	/**
 	 * Źródło pól grupy.
 	 *
 	 * @var AcfFieldSource
@@ -78,11 +102,16 @@ final class AcfFields {
 	 * `name` byłoby kodem martwym przy definicji z kluczem, a przy definicji bez klucza
 	 * dawałoby nazwę owiniętą dwa razy (`pusers_fields[pusers_fields[pwz]]`).
 	 *
+	 * Klasy Bootstrapa wchodzą TĄ SAMĄ drogą: `class` siada na kontrolce, `wrapper.class` na
+	 * opakowaniu pola. To założenie o ACF-ie, którego testy nie pilnują (ACF Pro nie ma w
+	 * środowisku testowym). Gdyby ACF je zmienił, pole zrobi się brzydkie — nie zepsute.
+	 *
 	 * @param string $fieldKey Nazwa pola w źródle.
 	 * @param bool   $required Czy pole jest wymagane dla wybranej profesji.
 	 * @param mixed  $value    Wartość początkowa.
+	 * @param bool   $invalid  Czy pole zostało odrzucone przez walidację.
 	 */
-	public function render( string $fieldKey, bool $required, mixed $value ): void {
+	public function render( string $fieldKey, bool $required, mixed $value, bool $invalid = false ): void {
 		$field = $this->source->definition( $fieldKey );
 		if ( null === $field || ! function_exists( 'acf_render_field_wrap' ) ) {
 			return;
@@ -91,8 +120,29 @@ final class AcfFields {
 		$field['prefix']   = self::INPUT;
 		$field['required'] = $required ? 1 : 0;
 		$field['value']    = $value;
+		$field['class']    = $this->controlClass( $fieldKey, $invalid );
+		$wrapper           = is_array( $field['wrapper'] ?? null ) ? $field['wrapper'] : array();
+		$wrapper['class']  = trim( ( is_string( $wrapper['class'] ?? null ) ? $wrapper['class'] . ' ' : '' ) . FormClasses::for( 'field' ) );
+		$field['wrapper']  = $wrapper;
 
 		acf_render_field_wrap( $field );
+	}
+
+	/**
+	 * Klasa kontrolki dla typu pola; pusta dla typu, którego nie ubieramy.
+	 *
+	 * @param string $fieldKey Nazwa pola w źródle.
+	 * @param bool   $invalid  Czy pole zostało odrzucone przez walidację.
+	 */
+	private function controlClass( string $fieldKey, bool $invalid ): string {
+		$type    = (string) ( $this->source->fieldTypes()[ $fieldKey ] ?? '' );
+		$role    = self::CONTROL_ROLES[ $type ] ?? '';
+		$classes = '' === $role ? '' : FormClasses::for( $role );
+		if ( ! $invalid || '' === $classes ) {
+			return $classes;
+		}
+
+		return trim( $classes . ' ' . FormClasses::for( 'invalid' ) );
 	}
 
 	/**
