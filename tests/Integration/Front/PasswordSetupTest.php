@@ -747,6 +747,21 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->assertSame( 2, $this->noCacheFired );
 	}
 
+	public function test_za_krotkie_haslo_oznacza_pole_hasla(): void {
+		list( , $cookie ) = $this->confirmed();
+
+		$html = $this->page( PasswordSetup::RESULT_SHORT, $cookie );
+
+		$this->assertMatchesRegularExpression( '/<input class="form-control is-invalid" type="password" id="' . PasswordSetup::PASSWORD_FIELD . '"/', $html );
+		$this->assertStringContainsString( 'invalid-feedback', $html );
+	}
+
+	public function test_formularz_bez_bledu_nie_oznacza_pola(): void {
+		list( , $cookie ) = $this->confirmed();
+
+		$this->assertStringNotContainsString( 'is-invalid', $this->page( PasswordSetup::RESULT_FORM, $cookie ) );
+	}
+
 	public function test_formularz_ustawienia_hasla_ma_klasy_bootstrapa(): void {
 		list( , $cookie ) = $this->confirmed();
 

@@ -797,8 +797,10 @@ final class PasswordReset {
 		$html  = '<form class="' . FormClasses::attr( 'form', 'pusers-password-reset', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
 		$html .= '<input type="hidden" name="action" value="' . esc_attr( self::ACTION_REQUEST ) . '" />';
 
-		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-email' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL_FIELD ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
-		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="email" id="' . esc_attr( self::EMAIL_FIELD ) . '" name="' . esc_attr( self::EMAIL_FIELD ) . '" value="" autocomplete="username" required="required" /></div>';
+		$invalid = self::RESULT_EMAIL === self::result_code();
+		$html   .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-email' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL_FIELD ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
+		$html   .= '<input class="' . self::control_class( $invalid ) . '" type="email" id="' . esc_attr( self::EMAIL_FIELD ) . '" name="' . esc_attr( self::EMAIL_FIELD ) . '" value="" autocomplete="username" required="required" />';
+		$html   .= self::feedback( $invalid ? self::message_for( self::RESULT_EMAIL ) : '' ) . '</div>';
 
 		// Pułapka: zwykłe pole tekstowe ukryte stylem; etykieta mówi wprost, żeby pola nie wypełniać.
 		$html .= '<div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">';
@@ -827,8 +829,10 @@ final class PasswordReset {
 		$html .= '<input type="hidden" name="' . esc_attr( self::USER_ARG ) . '" value="' . esc_attr( $login ) . '" />';
 		$html .= '<input type="hidden" name="' . esc_attr( self::KEY_ARG ) . '" value="' . esc_attr( $key ) . '" />';
 
-		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-password' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Nowe hasło', 'portal-users' ) . '</label> ';
-		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" /></div>';
+		$invalid = self::RESULT_SHORT === self::result_code();
+		$html   .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-password' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Nowe hasło', 'portal-users' ) . '</label> ';
+		$html   .= '<input class="' . self::control_class( $invalid ) . '" type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" />';
+		$html   .= self::feedback( $invalid ? self::message_for( self::RESULT_SHORT ) : '' ) . '</div>';
 
 		$html .= wp_nonce_field( self::NONCE_SET, self::NONCE_SET, true, false );
 		$html .= '<p><button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Ustaw nowe hasło', 'portal-users' ) . '</button></p>';
@@ -842,6 +846,26 @@ final class PasswordReset {
 	 */
 	private static function result_code(): string {
 		return isset( $_GET[ self::RESULT_ARG ] ) && is_string( $_GET[ self::RESULT_ARG ] ) ? sanitize_key( wp_unslash( $_GET[ self::RESULT_ARG ] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Recommended
+	}
+
+	/**
+	 * Klasa kontrolki, z `is-invalid` dla pola, które wynik wskazuje jednoznacznie.
+	 *
+	 * @param bool $invalid Czy pole zostało odrzucone.
+	 */
+	private static function control_class( bool $invalid ): string {
+		return $invalid
+			? esc_attr( trim( FormClasses::for( 'control' ) . ' ' . FormClasses::for( 'invalid' ) ) )
+			: FormClasses::attr( 'control' );
+	}
+
+	/**
+	 * Komunikat błędu pod polem; pusty nie rysuje nic.
+	 *
+	 * @param string $message Treść komunikatu.
+	 */
+	private static function feedback( string $message ): string {
+		return '' === $message ? '' : '<div class="' . FormClasses::attr( 'invalid_feedback' ) . '">' . esc_html( $message ) . '</div>';
 	}
 
 	/**

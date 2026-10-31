@@ -1312,6 +1312,54 @@ final class RegistrationHandlerTest extends WP_UnitTestCase {
 		$this->assertNotSame( '', $token );
 	}
 
+	public function test_pole_z_bledem_jest_oznaczone_przy_polu(): void {
+		// Zgłoszenie bez zgody na regulamin (pole profilu z ACF) i ze złym adresem: oba pola mają
+		// być czerwone, a komunikat ma stać pod polem, nie tylko na liście nad formularzem.
+		$location = $this->post_and_submit( array( RegistrationForm::EMAIL => 'nie-adres' ), array( 'zgoda' => null ) );
+		$flash    = $this->follow( $location );
+		RegistrationHandler::register();
+
+		$this->assertSame( 'email_invalid', $flash['errors'][ RegistrationForm::EMAIL ] ?? '' );
+
+		AcfRenderRecorder::$fields = array();
+		$html                      = RegistrationForm::render();
+
+		$this->assertMatchesRegularExpression( '/<input class="form-control is-invalid" type="email" id="pusers_email"/', $html );
+		$this->assertStringContainsString( 'invalid-feedback', $html );
+		$this->assertStringContainsString( 'Podaj poprawny adres e-mail.', $html );
+		$this->assertSame( 'form-check-input is-invalid', $this->renderedClass( 'zgoda' ), 'Pole profilu z błędem też dostaje is-invalid.' );
+	}
+
+	public function test_pole_bez_bledu_nie_jest_oznaczone(): void {
+		$this->follow( $this->post_and_submit( array( RegistrationForm::EMAIL => 'nie-adres' ), array( 'zgoda' => null ) ) );
+		RegistrationHandler::register();
+
+		AcfRenderRecorder::$fields = array();
+		RegistrationForm::render();
+
+		$this->assertSame( 'form-control', $this->renderedClass( 'pwz' ), 'Pole bez błędu zostaje czyste.' );
+	}
+
+	/**
+	 * Klasa kontrolki, z jaką pole profilu poszło do ACF przy ostatnim renderze.
+	 *
+	 * Pola szuka po kluczu ACF: atrapa, jak ACF, nadpisuje `name` kluczem pola.
+	 *
+	 * @param string $name Nazwa pola w źródle.
+	 */
+	private function renderedClass( string $name ): string {
+		if ( array() === AcfRenderRecorder::$fields ) {
+			RegistrationForm::render();
+		}
+		foreach ( AcfRenderRecorder::$fields as $field ) {
+			if ( str_contains( (string) ( $field['name'] ?? '' ), self::FIELD_KEYS[ $name ] ) ) {
+				return (string) ( $field['class'] ?? '' );
+			}
+		}
+
+		return '';
+	}
+
 	public function test_the_password_is_not_in_the_stored_redirect_data(): void {
 		$this->post_and_submit( array( 'pusers_password' => self::PASSWORD ), array( 'zgoda' => null ) );
 		$stored = get_transient( 'pusers_flash_' . $this->sentToken() );

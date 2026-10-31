@@ -220,34 +220,43 @@ final class RegistrationForm {
 
 		self::enqueue_script( $map );
 
-		$acf = new AcfFields( $source );
+		$acf      = new AcfFields( $source );
+		$flash    = RegistrationHandler::flash();
+		$errors   = $flash['errors'];
+		$warnings = $flash['warnings'];
 
 		$html  = '<form class="' . FormClasses::attr( 'form', 'pusers-registration', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" novalidate="novalidate">';
 		$html .= '<input type="hidden" name="action" value="' . esc_attr( RegistrationHandler::ACTION ) . '" />';
 		$html .= self::render_feedback( $source->fields() );
 
-		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-profession' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PROFESSION ) . '">' . esc_html__( 'Profesja', 'portal-users' ) . '</label> ';
-		$html .= '<select class="' . FormClasses::attr( 'select' ) . '" id="' . esc_attr( self::PROFESSION ) . '" name="' . esc_attr( self::PROFESSION ) . '" required="required">';
-		$html .= '<option value="">' . esc_html__( '— wybierz —', 'portal-users' ) . '</option>';
+		$professionError = self::error_for( $errors, array( self::PROFESSION, SubmissionResult::PROFESSION_KEY ) );
+		$html           .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-profession' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PROFESSION ) . '">' . esc_html__( 'Profesja', 'portal-users' ) . '</label> ';
+		$html           .= '<select class="' . self::control_class( 'select', '' !== $professionError ) . '" id="' . esc_attr( self::PROFESSION ) . '" name="' . esc_attr( self::PROFESSION ) . '" required="required">';
+		$html           .= '<option value="">' . esc_html__( '— wybierz —', 'portal-users' ) . '</option>';
 		foreach ( $professions as $profession ) {
 			$html .= '<option value="' . esc_attr( $profession->key ) . '"' . selected( $old['profession'], $profession->key, false ) . '>' . esc_html( $profession->label ) . '</option>';
 		}
-		$html .= '</select></div>';
+		$html .= '</select>' . self::feedback( $professionError ) . '</div>';
 
 		// Adres e-mail: pole konta, zawsze wymagane, poza macierzą (patrz EMAIL).
-		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-email' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
-		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="email" id="' . esc_attr( self::EMAIL ) . '" name="' . esc_attr( self::EMAIL ) . '" value="' . esc_attr( $old['email'] ) . '" autocomplete="email" required="required" /></div>';
+		$html      .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-email' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
+		$emailError = self::error_for( $errors, array( self::EMAIL ) );
+		$html      .= '<input class="' . self::control_class( 'control', '' !== $emailError ) . '" type="email" id="' . esc_attr( self::EMAIL ) . '" name="' . esc_attr( self::EMAIL ) . '" value="' . esc_attr( $old['email'] ) . '" autocomplete="email" required="required" />' . self::feedback( $emailError ) . '</div>';
 
 		foreach ( array_keys( $source->fields() ) as $fieldKey ) {
 			$fieldKey = (string) $fieldKey;
 			if ( ! self::appears_anywhere( $map, $fieldKey ) ) {
 				continue;
 			}
+			$error   = self::error_for( $errors, array( $fieldKey, RegistrationHandler::ACF_ERROR_PREFIX . $fieldKey ) );
+			$warning = array_key_exists( $fieldKey, $warnings ) ? RegistrationHandler::message_for( 'credential_warning' ) : '';
 			ob_start();
 			// Atrybut required po stronie przeglądarki tylko, gdy pole wymagają wszystkie profesje:
 			// inaczej blokowałby profesje, którym pole jest niepotrzebne (zwłaszcza bez JavaScriptu).
-			$acf->render( $fieldKey, self::required_everywhere( $map, $fieldKey ), $old['fields'][ $fieldKey ] ?? null );
-			$html .= '<div class="pusers-field" data-pusers-field="' . esc_attr( $fieldKey ) . '">' . (string) ob_get_clean() . '</div>';
+			$acf->render( $fieldKey, self::required_everywhere( $map, $fieldKey ), $old['fields'][ $fieldKey ] ?? null, '' !== $error );
+			// Komunikat DOKŁADAMY za tym, co wypisało ACF — jego znacznika nie ruszamy.
+			$html .= '<div class="pusers-field" data-pusers-field="' . esc_attr( $fieldKey ) . '">' . (string) ob_get_clean()
+				. self::feedback( $error ) . self::warning( $warning ) . '</div>';
 		}
 
 		// Pola hasła tu NIE MA i mieć nie może: hasło ustawia dopiero ten, kto otworzył link
@@ -297,6 +306,57 @@ final class RegistrationForm {
 		}
 
 		return Notice::with_list( $message, $items, NoticeTone::Danger );
+	}
+
+	/**
+	 * Klasa kontrolki rysowanej przez wtyczkę, z `is-invalid` dla pola odrzuconego.
+	 *
+	 * @param string $role    Rola kontrolki w mapie klas.
+	 * @param bool   $invalid Czy pole zostało odrzucone.
+	 */
+	private static function control_class( string $role, bool $invalid ): string {
+		if ( ! $invalid ) {
+			return FormClasses::attr( $role );
+		}
+
+		// Kolejność ma znaczenie dla czytającego kod źródła strony: najpierw klasa kontrolki,
+		// potem stan.
+		return esc_attr( trim( FormClasses::for( $role ) . ' ' . FormClasses::for( 'invalid' ) ) );
+	}
+
+	/**
+	 * Komunikat błędu pod polem; pusty kod nie rysuje nic.
+	 *
+	 * @param string $message Treść komunikatu.
+	 */
+	private static function feedback( string $message ): string {
+		return '' === $message ? '' : '<div class="' . FormClasses::attr( 'invalid_feedback' ) . '">' . esc_html( $message ) . '</div>';
+	}
+
+	/**
+	 * Miękkie ostrzeżenie pod polem. NIE jest błędem: zgłoszenie z nim przechodzi, więc nie
+	 * wolno mu nosić `is-invalid` ani czerwieni.
+	 *
+	 * @param string $message Treść ostrzeżenia.
+	 */
+	private static function warning( string $message ): string {
+		return '' === $message ? '' : '<div class="' . FormClasses::attr( 'warning_feedback' ) . '">' . esc_html( $message ) . '</div>';
+	}
+
+	/**
+	 * Komunikat błędu dla pierwszego pasującego klucza; pusty, gdy pole błędu nie ma.
+	 *
+	 * @param array<string, string> $errors Błędy: klucz pola => kod.
+	 * @param array<int, string>    $keys   Klucze, pod którymi może siedzieć błąd tego pola.
+	 */
+	private static function error_for( array $errors, array $keys ): string {
+		foreach ( $keys as $key ) {
+			if ( isset( $errors[ $key ] ) ) {
+				return RegistrationHandler::message_for( $errors[ $key ] );
+			}
+		}
+
+		return '';
 	}
 
 	/**
