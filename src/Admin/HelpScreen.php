@@ -11,6 +11,10 @@ namespace PortalUsers\Admin;
 
 defined( 'ABSPATH' ) || exit;
 
+use PortalUsers\Admin\Help\Applications;
+use PortalUsers\Admin\Help\FormChanges;
+use PortalUsers\Admin\Help\Messages;
+use PortalUsers\Admin\Help\SetupGuide;
 use PortalUsers\Domain\Config\SetupChecklist;
 use PortalUsers\Domain\Config\SetupStep;
 use PortalUsers\Domain\Config\SetupStepKey;
@@ -90,7 +94,32 @@ final class HelpScreen {
 
 		echo '<div class="wrap"><h1>' . esc_html__( 'Portal: pomoc', 'portal-users' ) . '</h1>';
 		self::render_checklist();
+		self::render_nav();
+		SetupGuide::render();
+		FormChanges::render();
+		Applications::render();
+		Messages::render();
 		echo '</div>';
+	}
+
+	/**
+	 * Spis odnośników do części instrukcji. Ekran jest długi, a przychodzi się na niego
+	 * z jednym z trzech pytań, nie po to, żeby czytać go od początku.
+	 */
+	private static function render_nav(): void {
+		$parts = array(
+			array( SetupGuide::ANCHOR, SetupGuide::heading() ),
+			array( FormChanges::ANCHOR, FormChanges::heading() ),
+			array( Applications::ANCHOR, Applications::heading() ),
+			array( Messages::ANCHOR, Messages::heading() ),
+		);
+
+		echo '<h2>' . esc_html__( 'Instrukcja', 'portal-users' ) . '</h2>';
+		echo '<ul class="pusers-help-nav">';
+		foreach ( $parts as $part ) {
+			printf( '<li><a href="#%1$s">%2$s</a></li>', esc_attr( $part[0] ), esc_html( $part[1] ) );
+		}
+		echo '</ul>';
 	}
 
 	/**
@@ -142,7 +171,10 @@ final class HelpScreen {
 		$url   = self::url( $step->key );
 		$title = self::title( $step->key );
 
-		echo '<tr><td style="width:12em">' . esc_html( self::status_label( $step->status ) ) . '</td><td>';
+		// Klasa wiersza niesie klucz kroku: testy pytają o OBECNOŚĆ kroku na liście, a tytuł
+		// kroku pada na ekranie jeszcze raz, jako nagłówek w części o uruchomieniu od zera.
+		printf( '<tr class="pusers-setup-step pusers-setup-step--%s">', esc_attr( $step->key->value ) );
+		echo '<td style="width:12em">' . esc_html( self::status_label( $step->status ) ) . '</td><td>';
 		if ( $linked && '' !== $url ) {
 			printf( '<a href="%1$s">%2$s</a>', esc_url( $url ), esc_html( $title ) );
 		} else {

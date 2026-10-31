@@ -8,6 +8,10 @@ declare( strict_types=1 );
 namespace PortalUsers\Tests\Integration\Admin;
 
 use PortalUsers\Account\Backfill;
+use PortalUsers\Admin\Help\Applications;
+use PortalUsers\Admin\Help\FormChanges;
+use PortalUsers\Admin\Help\Messages;
+use PortalUsers\Admin\Help\SetupGuide;
 use PortalUsers\Admin\HelpScreen;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Domain\Config\Settings;
@@ -223,14 +227,18 @@ final class HelpScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_osmy_krok_pokazuje_sie_tylko_przy_kontach_bez_stanu(): void {
+		// Asercja idzie na znacznik WIERSZA listy, nie na tytuł kroku: tytuł pada na ekranie
+		// jeszcze raz, jako nagłówek w części o uruchomieniu od zera, i tam należy się zawsze.
+		$marker = 'pusers-setup-step--' . SetupStepKey::LegacyAccounts->value;
+
 		$this->assertStringNotContainsString(
-			HelpScreen::title( SetupStepKey::LegacyAccounts ),
+			$marker,
 			$this->renderAsAdmin(),
-			'Portal bez kont sprzed wdrożenia nie ma po co widzieć tego kroku.'
+			'Portal bez kont sprzed wdrożenia nie ma po co widzieć tego kroku na liście startowej.'
 		);
 
 		$this->statelessAccounts( 3 );
-		$this->assertStringContainsString( HelpScreen::title( SetupStepKey::LegacyAccounts ), $this->renderAsAdmin() );
+		$this->assertStringContainsString( $marker, $this->renderAsAdmin() );
 	}
 
 	public function test_panel_odsyla_do_raportu_spojnosci_zamiast_powtarzac_jego_tresci(): void {
@@ -258,6 +266,50 @@ final class HelpScreenTest extends WP_UnitTestCase {
 		$this->statelessAccounts( 4 );
 
 		$this->assertFalse( HelpScreen::setup_incomplete(), 'Konta sprzed wdrożenia nie wchodzą do warunku ukończenia, a linia na ekranie ustawień nie liczy ich w ogóle.' );
+	}
+
+	public function test_spis_odnosnikow_prowadzi_do_kotwic_ktore_istnieja(): void {
+		$html = $this->renderAsAdmin();
+
+		foreach ( array( SetupGuide::ANCHOR, FormChanges::ANCHOR, Applications::ANCHOR, Messages::ANCHOR ) as $anchor ) {
+			$this->assertStringContainsString( 'href="#' . $anchor . '"', $html, 'Spis nie prowadzi do części ' . $anchor . '.' );
+			$this->assertStringContainsString( 'id="' . $anchor . '"', $html, 'Część ' . $anchor . ' nie ma kotwicy, do której spis prowadzi.' );
+		}
+	}
+
+	public function test_czesc_o_zmianie_formularza_ostrzega_przed_polem_wymaganym_poza_grupa(): void {
+		$this->assertStringContainsString(
+			'blokuje rejestrację tej profesji',
+			$this->renderAsAdmin(),
+			'To najgroźniejszy skutek zmiany formularza zrobionej w połowie i musi być powiedziany wprost.'
+		);
+	}
+
+	public function test_czesc_o_zmianie_formularza_mowi_ze_przemianowanie_pola_jest_nowym_polem(): void {
+		$html = $this->renderAsAdmin();
+
+		$this->assertStringContainsString( 'Zmiana NAZWY jest dla wtyczki usunięciem jednego pola i dodaniem drugiego', $html );
+		$this->assertStringContainsString( 'martwy wiersz', $html, 'Osoba, która przemianowała pole, musi wiedzieć, co zostało w macierzy.' );
+	}
+
+	public function test_czesc_o_wnioskach_nazywa_ekran_wnioskow_i_odnosnik_do_rejestru(): void {
+		$html = $this->renderAsAdmin();
+
+		$this->assertStringContainsString( 'Portal: wnioski', $html );
+		$this->assertStringContainsString( 'rejestru zawodowego', $html, 'Weryfikacja numeru dzieje się w rejestrze, nie w portalu — instrukcja musi to powiedzieć.' );
+		$this->assertStringContainsString( 'Odrzucenie wymaga powodu', $html );
+	}
+
+	public function test_tabela_komunikatow_wymienia_komunikat_o_braku_wiersza_w_macierzy(): void {
+		$this->assertStringContainsString(
+			'Profesja … nie ma wiersza w macierzy pól',
+			$this->renderAsAdmin(),
+			'To komunikat, na którym stanęła pierwsza instalacja — ściąga musi go mieć.'
+		);
+	}
+
+	public function test_render_nie_wypuszcza_surowego_skryptu(): void {
+		$this->assertStringNotContainsString( '<script', $this->renderAsAdmin() );
 	}
 
 	public function test_podstrona_rejestruje_sie_pod_users_php(): void {
