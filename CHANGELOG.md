@@ -18,6 +18,30 @@ Trzy rzeczy, których nie widać z samego formatu:
 
 ## [Unreleased]
 
+### Added
+
+- Formularze na stronie portalu — rejestracja, logowanie i odzyskiwanie hasła — korzystają teraz
+  z wyglądu skórki opartej na Bootstrapie 5. Na takiej skórce wtyczka nie dokłada własnych
+  stylów: formularz przejmuje jej kolory, czcionki i zaokrąglenia, więc wygląda jak reszta
+  portalu, a nie jak wklejony obcy element.
+- Dwa nowe ustawienia w *Portal: ustawienia*. **Układ formularzy** wybiera między gołym
+  (formularz na całą szerokość treści) a kartą (wyśrodkowane pudełko z ramką i cieniem);
+  dotyczy wszystkich trzech stron naraz. **Doładuj wygląd formularzy** jest dla portali, których
+  skórka Bootstrapa nie ma: wtyczka dokłada wtedy własny, niewielki arkusz obejmujący wyłącznie
+  formularze — nagłówek, menu i stopka zostają nietknięte. Domyślnie wyłączone.
+
+### Changed
+
+- Błąd w formularzu rejestracji widać teraz **przy polu**, którego dotyczy: pole robi się
+  czerwone, a komunikat staje pod nim. Lista nad formularzem zostaje, bo zgłoszenie odrzucone
+  w całości (nieaktualny formularz, zbyt wiele prób) nie ma pola, przy którym mogłoby stanąć.
+  Ostrzeżenie o numerze uprawnień, które nie blokuje zgłoszenia, jest osobno i na żółto.
+  Formularz logowania świadomie **nie** oznacza żadnego pola: komunikat nie mówi i nie będzie
+  mówił, czy zły był adres, czy hasło.
+- Komunikaty na stronie portalu są teraz kolorowane według tego, czym są: zielone potwierdzenia,
+  czerwone odmowy. Przy okazji wygasły i nieważny link potwierdzający przestały być ogłaszane
+  czytnikowi ekranu jako komunikat o powodzeniu.
+
 ### Fixed
 
 - Raport spójności mówił, że pole oznaczone w macierzy jako wymagane, którego nie ma w wybranej
