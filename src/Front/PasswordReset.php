@@ -799,10 +799,11 @@ final class PasswordReset {
 		$html  = '<form class="' . FormClasses::attr( 'form', 'pusers-password-reset', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
 		$html .= '<input type="hidden" name="action" value="' . esc_attr( self::ACTION_REQUEST ) . '" />';
 
-		$invalid = self::RESULT_EMAIL === self::result_code();
-		$html   .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-email' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL_FIELD ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
-		$html   .= '<input class="' . self::control_class( $invalid ) . '" type="email" id="' . esc_attr( self::EMAIL_FIELD ) . '" name="' . esc_attr( self::EMAIL_FIELD ) . '" value="" autocomplete="username" required="required" />';
-		$html   .= self::feedback( $invalid ? self::message_for( self::RESULT_EMAIL ) : '' ) . '</div>';
+		// Pola adresu NIE oznaczamy: ten formularz nie ma ani jednego kodu wyniku, ktory mowilby
+		// cos o adresie. Pusty i bledny adres koncza sie `RESULT_SENT` — i to jest celowe, bo
+		// inna odpowiedz zdradzalaby, kto ma konto w portalu.
+		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-email' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL_FIELD ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
+		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="email" id="' . esc_attr( self::EMAIL_FIELD ) . '" name="' . esc_attr( self::EMAIL_FIELD ) . '" value="" autocomplete="username" required="required" /></div>';
 
 		// Pułapka: zwykłe pole tekstowe ukryte stylem; etykieta mówi wprost, żeby pola nie wypełniać.
 		$html .= '<div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">';
@@ -831,10 +832,12 @@ final class PasswordReset {
 		$html .= '<input type="hidden" name="' . esc_attr( self::USER_ARG ) . '" value="' . esc_attr( $login ) . '" />';
 		$html .= '<input type="hidden" name="' . esc_attr( self::KEY_ARG ) . '" value="' . esc_attr( $key ) . '" />';
 
-		$invalid = self::RESULT_SHORT === self::result_code();
+		// Oba kody wskazuja pole hasla jednoznacznie i zaden niczego nie ujawnia.
+		$code    = self::result_code();
+		$invalid = self::RESULT_SHORT === $code || self::RESULT_EMAIL === $code;
 		$html   .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-password' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Nowe hasło', 'portal-users' ) . '</label> ';
 		$html   .= '<input class="' . self::control_class( $invalid ) . '" type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" />';
-		$html   .= self::feedback( $invalid ? self::message_for( self::RESULT_SHORT ) : '' ) . '</div>';
+		$html   .= self::feedback( $invalid ? self::message_for( $code ) : '' ) . '</div>';
 
 		$html .= wp_nonce_field( self::NONCE_SET, self::NONCE_SET, true, false );
 		$html .= '<p><button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Ustaw nowe hasło', 'portal-users' ) . '</button></p>';

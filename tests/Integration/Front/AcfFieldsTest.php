@@ -252,15 +252,14 @@ final class AcfFieldsTest extends WP_UnitTestCase {
 		);
 
 		foreach ( array( 'galeria', 'tryb' ) as $fieldKey ) {
-			$definition = $this->definition( $fieldKey );
-			$this->assertSame( '', $definition['class'], 'Pole „' . $fieldKey . '” nie ma dostać klasy kontrolki.' );
-			$this->assertSame( 'mb-3', $definition['wrapper']['class'] );
+			$this->assertSame( '', $this->definition( $fieldKey )['class'], 'Pole „' . $fieldKey . '” nie ma dostać klasy kontrolki.' );
 		}
 	}
 
-	public function test_opakowanie_zawsze_dostaje_mb_3(): void {
-		$this->assertSame( 'mb-3', $this->definition( 'pwz' )['wrapper']['class'] );
-		$this->assertSame( 'mb-3', $this->definition( 'zgoda' )['wrapper']['class'] );
+	public function test_wtyczka_nie_dotyka_opakowania_acf(): void {
+		// Odstęp pola niesie `pusers-field` w RegistrationForm, bo komunikat błędu stoi ZA tym,
+		// co wypisało ACF — odstęp tutaj odkleiłby komunikat od jego pola.
+		$this->assertArrayNotHasKey( 'wrapper', $this->definition( 'pwz' ) );
 	}
 
 	public function test_bledne_pole_doklada_is_invalid_do_klasy_kontrolki(): void {

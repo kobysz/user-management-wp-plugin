@@ -21,9 +21,10 @@ Trzy rzeczy, których nie widać z samego formatu:
 ### Added
 
 - Formularze na stronie portalu — rejestracja, logowanie i odzyskiwanie hasła — korzystają teraz
-  z wyglądu skórki opartej na Bootstrapie 5. Na takiej skórce wtyczka nie dokłada własnych
-  stylów: formularz przejmuje jej kolory, czcionki i zaokrąglenia, więc wygląda jak reszta
-  portalu, a nie jak wklejony obcy element.
+  z wyglądu skórki opartej na Bootstrapie 5: formularz przejmuje jej kolory, czcionki
+  i zaokrąglenia, więc wygląda jak reszta portalu, a nie jak wklejony obcy element. Wtyczka
+  dokłada na takiej skórce jeden drobny arkusz na dwie rzeczy, których w Bootstrapie nie ma:
+  żółte ostrzeżenie o numerze uprawnień i odstęp pod etykietą pola z ACF.
 - Dwa nowe ustawienia w *Portal: ustawienia*. **Układ formularzy** wybiera między gołym
   (formularz na całą szerokość treści) a kartą (wyśrodkowane pudełko z ramką i cieniem);
   dotyczy wszystkich trzech stron naraz. **Doładuj wygląd formularzy** jest dla portali, których

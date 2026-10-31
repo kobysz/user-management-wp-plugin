@@ -257,7 +257,7 @@ final class RegistrationForm {
 			// inaczej blokowałby profesje, którym pole jest niepotrzebne (zwłaszcza bez JavaScriptu).
 			$acf->render( $fieldKey, self::required_everywhere( $map, $fieldKey ), $old['fields'][ $fieldKey ] ?? null, '' !== $error );
 			// Komunikat DOKŁADAMY za tym, co wypisało ACF — jego znacznika nie ruszamy.
-			$html .= '<div class="pusers-field" data-pusers-field="' . esc_attr( $fieldKey ) . '">' . (string) ob_get_clean()
+			$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field' ) . '" data-pusers-field="' . esc_attr( $fieldKey ) . '">' . (string) ob_get_clean()
 				. self::feedback( $error ) . self::warning( $warning ) . '</div>';
 		}
 

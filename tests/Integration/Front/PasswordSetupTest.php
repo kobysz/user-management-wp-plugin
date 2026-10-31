@@ -747,6 +747,25 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->assertSame( 2, $this->noCacheFired );
 	}
 
+	public function test_odrzucona_proba_nie_pokazuje_zielonej_notki_pod_czerwona(): void {
+		// Czerwone pudełko „Hasło musi mieć co najmniej 12 znaków” z zielonym „Adres e-mail
+		// został potwierdzony” tuż pod nim to dwa sprzeczne komunikaty o tym samym kroku.
+		list( , $cookie ) = $this->confirmed();
+
+		$html = $this->page( PasswordSetup::RESULT_SHORT, $cookie );
+
+		$this->assertStringContainsString( 'alert-danger', $html );
+		$this->assertStringNotContainsString( 'alert-success', $html );
+	}
+
+	public function test_haslo_rowne_adresowi_oznacza_pole_hasla(): void {
+		list( , $cookie ) = $this->confirmed();
+
+		$html = $this->page( PasswordSetup::RESULT_EMAIL, $cookie );
+
+		$this->assertMatchesRegularExpression( '/<input class="form-control is-invalid" type="password" id="' . PasswordSetup::PASSWORD_FIELD . '"/', $html );
+	}
+
 	public function test_za_krotkie_haslo_oznacza_pole_hasla(): void {
 		list( , $cookie ) = $this->confirmed();
 

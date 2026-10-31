@@ -50,13 +50,14 @@ final class FieldErrorsTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'invalid-feedback', $html );
 	}
 
-	public function test_zly_adres_oznacza_pole_adresu(): void {
-		$_GET = array( PasswordReset::RESULT_ARG => PasswordReset::RESULT_EMAIL );
-
-		$html = PasswordReset::render();
-
-		$this->assertMatchesRegularExpression( '/<input class="form-control is-invalid" type="email" id="pusers_reset_email"/', $html );
-		$this->assertStringContainsString( 'invalid-feedback', $html );
+	public function test_formularz_prosby_o_link_nie_oznacza_pola_adresu(): void {
+		// Ten formularz nie ma ANI JEDNEGO kodu wyniku mówiącego coś o adresie: pusty i błędny
+		// adres kończą się `RESULT_SENT`, bo inna odpowiedź zdradzałaby, kto ma konto w portalu.
+		// Nie ma więc czego oznaczać i nie wolno oznaczać niczego na zapas.
+		foreach ( array( PasswordReset::RESULT_SENT, PasswordReset::RESULT_EMAIL, PasswordReset::RESULT_TOO_MANY ) as $code ) {
+			$_GET = array( PasswordReset::RESULT_ARG => $code );
+			$this->assertStringNotContainsString( 'is-invalid', PasswordReset::render(), 'Kod „' . $code . '” nie wskazuje żadnego pola tego formularza.' );
+		}
 	}
 
 	public function test_udana_wysylka_linku_nie_oznacza_pola_adresu(): void {

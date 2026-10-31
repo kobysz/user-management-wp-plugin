@@ -172,8 +172,21 @@ final class LoginForm {
 
 		$message = LoginHandler::message_for( $code );
 
-		// Każdy kod wyniku logowania jest odmową: udane logowanie przekierowuje, więc tej strony nie widać.
-		return Notice::html( $message, NoticeTone::Danger );
+		return Notice::html( $message, self::tone_for( $code ) );
+	}
+
+	/**
+	 * Ton komunikatu wyniku. Czerwień jest dla tego, co poszło źle po stronie próby logowania
+	 * albo konta. Konto, które czeka na decyzję redakcji, i adres jeszcze niepotwierdzony to
+	 * STAN, nie błąd: człowiek zrobił wszystko dobrze i ma tylko poczekać albo zajrzeć do skrzynki.
+	 * Czerwone pudło ogłaszane czytnikowi ekranu jako alert mówiłoby mu, że coś zepsuł.
+	 *
+	 * @param string $code Kod wyniku.
+	 */
+	private static function tone_for( string $code ): NoticeTone {
+		return in_array( $code, array( LoginGateway::CODE_PENDING, LoginGateway::CODE_UNCONFIRMED ), true )
+			? NoticeTone::Info
+			: NoticeTone::Danger;
 	}
 
 	/**

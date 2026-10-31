@@ -120,10 +120,10 @@ final class AcfFields {
 		$field['prefix']   = self::INPUT;
 		$field['required'] = $required ? 1 : 0;
 		$field['value']    = $value;
-		$field['class']    = $this->controlClass( $fieldKey, $invalid );
-		$wrapper           = is_array( $field['wrapper'] ?? null ) ? $field['wrapper'] : array();
-		$wrapper['class']  = trim( ( is_string( $wrapper['class'] ?? null ) ? $wrapper['class'] . ' ' : '' ) . FormClasses::for( 'field' ) );
-		$field['wrapper']  = $wrapper;
+		// Odstępu pola TU NIE MA i mieć nie może: komunikat błędu dokłada się ZA opakowaniem,
+		// które wypisze ACF, więc odstęp na nim odkleiłby czerwony tekst od jego pola i przykleił
+		// do etykiety następnego. Odstęp niesie `pusers-field`, które obejmuje pole I komunikat.
+		$field['class'] = $this->controlClass( $fieldKey, $invalid );
 
 		acf_render_field_wrap( $field );
 	}
@@ -135,14 +135,17 @@ final class AcfFields {
 	 * @param bool   $invalid  Czy pole zostało odrzucone przez walidację.
 	 */
 	private function controlClass( string $fieldKey, bool $invalid ): string {
-		$type    = (string) ( $this->source->fieldTypes()[ $fieldKey ] ?? '' );
-		$role    = self::CONTROL_ROLES[ $type ] ?? '';
+		$type = (string) ( $this->source->fieldTypes()[ $fieldKey ] ?? '' );
+		$role = self::CONTROL_ROLES[ $type ] ?? '';
+		// Escapowanie należy do wtyczki: wartość może pochodzić z filtra skórki, a ACF-a nie ma
+		// w środowisku testowym, więc poleganie na jego własnym escapowaniu nie jest pilnowane
+		// przez żadną bramkę.
 		$classes = '' === $role ? '' : FormClasses::for( $role );
 		if ( ! $invalid || '' === $classes ) {
-			return $classes;
+			return esc_attr( $classes );
 		}
 
-		return trim( $classes . ' ' . FormClasses::for( 'invalid' ) );
+		return esc_attr( trim( $classes . ' ' . FormClasses::for( 'invalid' ) ) );
 	}
 
 	/**

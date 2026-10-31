@@ -355,15 +355,18 @@ final class PasswordSetup {
 	 *                     i niczego nie ujawnia, więc to pole jest oznaczane.
 	 */
 	private static function form( string $code = '' ): string {
-		$invalid = self::RESULT_SHORT === $code;
+		// Oba kody wskazują pole hasła jednoznacznie.
+		$invalid = self::RESULT_SHORT === $code || self::RESULT_EMAIL === $code;
 
-		return Notice::html( __( 'Adres e-mail został potwierdzony. Ustaw teraz hasło do konta.', 'portal-users' ), NoticeTone::Success )
+		// Zielonego potwierdzenia NIE pokazujemy pod czerwoną odmową: to dwa sprzeczne komunikaty
+		// o tym samym kroku. Po odrzuconej próbie zostaje sama odmowa i formularz.
+		return ( '' === $code ? Notice::html( __( 'Adres e-mail został potwierdzony. Ustaw teraz hasło do konta.', 'portal-users' ), NoticeTone::Success ) : '' )
 			. '<form class="' . FormClasses::attr( 'form', 'pusers-set-password', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">'
 			. '<input type="hidden" name="action" value="' . esc_attr( self::ACTION ) . '" />'
 			. wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false )
 			. '<div class="' . FormClasses::attr( 'field' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Hasło', 'portal-users' ) . '</label> '
 			. '<input class="' . ( $invalid ? esc_attr( trim( FormClasses::for( 'control' ) . ' ' . FormClasses::for( 'invalid' ) ) ) : FormClasses::attr( 'control' ) ) . '" type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" />'
-			. ( $invalid ? '<div class="' . FormClasses::attr( 'invalid_feedback' ) . '">' . esc_html( self::message_for( self::RESULT_SHORT ) ) . '</div>' : '' )
+			. ( $invalid ? '<div class="' . FormClasses::attr( 'invalid_feedback' ) . '">' . esc_html( self::message_for( $code ) ) . '</div>' : '' )
 			. '</div>'
 			. '<p><button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Ustaw hasło', 'portal-users' ) . '</button></p>'
 			. '</form>';
