@@ -13,6 +13,7 @@ use PortalUsers\Account\Backfill;
 use PortalUsers\Admin\ApplicationsScreen;
 use PortalUsers\Admin\BackfillNotice;
 use PortalUsers\Admin\ExportHandler;
+use PortalUsers\Admin\HelpScreen;
 use PortalUsers\Admin\ImportScreen;
 use PortalUsers\Privacy\PrivacyProvider;
 use PortalUsers\Admin\MailQueueNotice;
@@ -150,6 +151,19 @@ final class WiringTest extends WP_UnitTestCase {
 		Plugin::boot( Plugin::plugin_file() );
 		$this->assertFalse( has_action( 'pusers_register_features', array( ApplicationsScreen::class, 'register' ) ) );
 		$this->assertNotFalse( has_action( 'admin_menu', array( ApplicationsScreen::class, 'add_page' ) ) );
+	}
+
+	public function test_help_screen_hooks_its_page_outside_the_features_hook(): void {
+		// Bez ACF Pro Menu::register() nie odpala i pod Użytkownikami nie ma ŻADNEGO ekranu wtyczki.
+		// To jest dokładnie moment, w którym administrator potrzebuje instrukcji, więc ekran pomocy
+		// nie może zniknąć razem z zależnością.
+		HelpScreen::register();
+		$this->assertNotFalse( has_action( 'admin_menu', array( HelpScreen::class, 'add_page' ) ) );
+
+		remove_all_actions( 'admin_menu' );
+		Plugin::boot( Plugin::plugin_file() );
+		$this->assertFalse( has_action( 'pusers_register_features', array( HelpScreen::class, 'register' ) ) );
+		$this->assertNotFalse( has_action( 'admin_menu', array( HelpScreen::class, 'add_page' ) ) );
 	}
 
 	public function test_export_handler_hooks_its_action_outside_the_features_hook(): void {

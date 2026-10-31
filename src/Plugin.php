@@ -10,6 +10,7 @@ declare( strict_types=1 );
 namespace PortalUsers;
 
 use PortalUsers\Admin\ApplicationsScreen;
+use PortalUsers\Admin\HelpScreen;
 use PortalUsers\Admin\BackfillNotice;
 use PortalUsers\Admin\ExportHandler;
 use PortalUsers\Admin\ImportScreen;
@@ -137,6 +138,15 @@ final class Plugin {
 		// automatyczne aktualizacje i `wp plugin update` przestają działać (pułapka przeniesiona
 		// z wtyczki `event-registration`).
 		add_action( 'init', array( GitHubUpdater::class, 'register' ) );
+
+		// Ekran pomocy stoi poza hookiem zależnym od ACF Pro, i z powodu, który jest odwrotnością
+		// pozostałych: nie dlatego, że czegoś pilnuje, ale dlatego, że bez ACF Pro `Menu::register()`
+		// nie odpala i pod Użytkownikami nie ma ŻADNEGO ekranu wtyczki poza ekranem wniosków.
+		// Administrator, który właśnie zainstalował wtyczkę i nie wie, czego mu brakuje, zobaczyłby
+		// wtedy sam komunikat o zależności — a to jest dokładnie moment, w którym instrukcja jest
+		// najpotrzebniejsza. Ekran niczego nie zapisuje i nie potrzebuje ACF do niczego: kroki,
+		// których bez niego nie da się zmierzyć, mówią „nie można sprawdzić”.
+		HelpScreen::register();
 
 		// Gating dopiero na plugins_loaded: wtedy wszystkie wtyczki (w tym ACF Pro)
 		// są już załadowane, niezależnie od kolejności katalogów.
