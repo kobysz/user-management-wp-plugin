@@ -222,21 +222,21 @@ final class RegistrationForm {
 
 		$acf = new AcfFields( $source );
 
-		$html  = '<form class="pusers-registration" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" novalidate="novalidate">';
+		$html  = '<form class="' . FormClasses::attr( 'form', 'pusers-registration', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '" novalidate="novalidate">';
 		$html .= '<input type="hidden" name="action" value="' . esc_attr( RegistrationHandler::ACTION ) . '" />';
 		$html .= self::render_feedback( $source->fields() );
 
-		$html .= '<p class="pusers-field-profession"><label for="' . esc_attr( self::PROFESSION ) . '">' . esc_html__( 'Profesja', 'portal-users' ) . '</label> ';
-		$html .= '<select id="' . esc_attr( self::PROFESSION ) . '" name="' . esc_attr( self::PROFESSION ) . '" required="required">';
+		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-profession' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PROFESSION ) . '">' . esc_html__( 'Profesja', 'portal-users' ) . '</label> ';
+		$html .= '<select class="' . FormClasses::attr( 'select' ) . '" id="' . esc_attr( self::PROFESSION ) . '" name="' . esc_attr( self::PROFESSION ) . '" required="required">';
 		$html .= '<option value="">' . esc_html__( '— wybierz —', 'portal-users' ) . '</option>';
 		foreach ( $professions as $profession ) {
 			$html .= '<option value="' . esc_attr( $profession->key ) . '"' . selected( $old['profession'], $profession->key, false ) . '>' . esc_html( $profession->label ) . '</option>';
 		}
-		$html .= '</select></p>';
+		$html .= '</select></div>';
 
 		// Adres e-mail: pole konta, zawsze wymagane, poza macierzą (patrz EMAIL).
-		$html .= '<p class="pusers-field-email"><label for="' . esc_attr( self::EMAIL ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
-		$html .= '<input type="email" id="' . esc_attr( self::EMAIL ) . '" name="' . esc_attr( self::EMAIL ) . '" value="' . esc_attr( $old['email'] ) . '" autocomplete="email" required="required" /></p>';
+		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-email' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
+		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="email" id="' . esc_attr( self::EMAIL ) . '" name="' . esc_attr( self::EMAIL ) . '" value="' . esc_attr( $old['email'] ) . '" autocomplete="email" required="required" /></div>';
 
 		foreach ( array_keys( $source->fields() ) as $fieldKey ) {
 			$fieldKey = (string) $fieldKey;
@@ -264,7 +264,7 @@ final class RegistrationForm {
 
 		$html .= '<input type="hidden" name="' . esc_attr( self::TIMESTAMP ) . '" value="' . esc_attr( SpamGuard::stamp( time() ) ) . '" />';
 		$html .= wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false );
-		$html .= '<p><button type="submit">' . esc_html__( 'Zarejestruj się', 'portal-users' ) . '</button></p>';
+		$html .= '<p><button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Zarejestruj się', 'portal-users' ) . '</button></p>';
 
 		return $html . '</form>';
 	}

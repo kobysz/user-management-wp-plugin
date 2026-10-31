@@ -353,12 +353,12 @@ final class PasswordSetup {
 	 */
 	private static function form(): string {
 		return '<p class="pusers-notice">' . esc_html__( 'Adres e-mail został potwierdzony. Ustaw teraz hasło do konta.', 'portal-users' ) . '</p>'
-			. '<form class="pusers-set-password" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">'
+			. '<form class="' . FormClasses::attr( 'form', 'pusers-set-password', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">'
 			. '<input type="hidden" name="action" value="' . esc_attr( self::ACTION ) . '" />'
 			. wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false )
-			. '<p><label for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Hasło', 'portal-users' ) . '</label> '
-			. '<input type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" /></p>'
-			. '<p><button type="submit">' . esc_html__( 'Ustaw hasło', 'portal-users' ) . '</button></p>'
+			. '<div class="' . FormClasses::attr( 'field' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Hasło', 'portal-users' ) . '</label> '
+			. '<input class="' . FormClasses::attr( 'control' ) . '" type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" /></div>'
+			. '<p><button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Ustaw hasło', 'portal-users' ) . '</button></p>'
 			. '</form>';
 	}
 

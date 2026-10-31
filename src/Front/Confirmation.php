@@ -269,11 +269,12 @@ final class Confirmation {
 	 * Formularz ponownej wysyłki linku.
 	 */
 	public static function resend_form(): string {
-		return '<form class="pusers-resend" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">'
+		return '<form class="' . FormClasses::attr( 'form', 'pusers-resend', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">'
 			. '<input type="hidden" name="action" value="' . esc_attr( self::ACTION_RESEND ) . '" />'
 			. wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false )
-			. '<label>' . esc_html__( 'Adres e-mail', 'portal-users' ) . ' <input type="email" name="' . esc_attr( self::EMAIL_FIELD ) . '" required /></label> '
-			. '<button type="submit">' . esc_html__( 'Wyślij link ponownie', 'portal-users' ) . '</button>'
+			. '<div class="' . FormClasses::attr( 'field' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL_FIELD ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label>'
+			. '<input class="' . FormClasses::attr( 'control' ) . '" type="email" id="' . esc_attr( self::EMAIL_FIELD ) . '" name="' . esc_attr( self::EMAIL_FIELD ) . '" required /></div>'
+			. '<button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Wyślij link ponownie', 'portal-users' ) . '</button>'
 			. '</form>';
 	}
 

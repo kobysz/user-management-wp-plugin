@@ -746,4 +746,15 @@ final class PasswordSetupTest extends WP_UnitTestCase {
 		$this->page( PasswordSetup::RESULT_DONE, '' );
 		$this->assertSame( 2, $this->noCacheFired );
 	}
+
+	public function test_formularz_ustawienia_hasla_ma_klasy_bootstrapa(): void {
+		list( , $cookie ) = $this->confirmed();
+
+		$html = $this->page( PasswordSetup::RESULT_FORM, $cookie );
+
+		$this->assertStringContainsString( 'class="pusers-set-password pusers-form"', $html );
+		$this->assertMatchesRegularExpression( '/<label class="form-label" for="' . PasswordSetup::PASSWORD_FIELD . '"/', $html );
+		$this->assertMatchesRegularExpression( '/<input class="form-control" type="password" id="' . PasswordSetup::PASSWORD_FIELD . '"/', $html );
+		$this->assertStringContainsString( 'class="btn btn-primary"', $html );
+	}
 }

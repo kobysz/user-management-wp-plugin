@@ -463,7 +463,7 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 	public function test_email_field_is_marked_required(): void {
 		$html = RegistrationForm::render();
 
-		$this->assertSame( 1, preg_match( '/<input type="email"[^>]*name="pusers_email"[^>]*>/', $html, $m ) );
+		$this->assertSame( 1, preg_match( '/<input[^>]*type="email"[^>]*name="pusers_email"[^>]*>/', $html, $m ) );
 		$this->assertStringContainsString( 'required="required"', $m[0] );
 	}
 
@@ -490,7 +490,7 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 
 		$html = RegistrationForm::render();
 
-		$this->assertSame( 1, preg_match_all( '/<input type="email"[^>]*name="pusers_email"[^>]*>/', $html, $m ) );
+		$this->assertSame( 1, preg_match_all( '/<input[^>]*type="email"[^>]*name="pusers_email"[^>]*>/', $html, $m ) );
 		$this->assertCount( 1, $m[0], 'Pole adresu konta ma wystąpić dokładnie raz.' );
 		$this->assertStringContainsString( 'required="required"', $m[0][0] );
 	}
@@ -506,7 +506,7 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 
 		$html = RegistrationForm::render();
 
-		$this->assertSame( 1, preg_match( '/<input type="email"[^>]*>/', $html, $m ) );
+		$this->assertSame( 1, preg_match( '/<input[^>]*type="email"[^>]*>/', $html, $m ) );
 		$this->assertStringContainsString( 'value="jan@example.com"', $m[0] );
 		$this->assertStringNotContainsString( 'Sekret-123!', $html );
 	}

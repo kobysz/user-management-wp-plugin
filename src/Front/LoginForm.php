@@ -107,16 +107,16 @@ final class LoginForm {
 		$redirect = self::requested_redirect();
 
 		$html  = self::result_notice();
-		$html .= '<form class="pusers-login" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+		$html .= '<form class="' . FormClasses::attr( 'form', 'pusers-login', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
 		$html .= '<input type="hidden" name="action" value="' . esc_attr( LoginHandler::ACTION ) . '" />';
 
-		$html .= '<p class="pusers-field-identity"><label for="' . esc_attr( self::IDENTITY ) . '">' . esc_html__( 'Adres e-mail lub nazwa użytkownika', 'portal-users' ) . '</label> ';
-		$html .= '<input type="text" id="' . esc_attr( self::IDENTITY ) . '" name="' . esc_attr( self::IDENTITY ) . '" value="" autocomplete="username" required="required" /></p>';
+		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-identity' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::IDENTITY ) . '">' . esc_html__( 'Adres e-mail lub nazwa użytkownika', 'portal-users' ) . '</label> ';
+		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="text" id="' . esc_attr( self::IDENTITY ) . '" name="' . esc_attr( self::IDENTITY ) . '" value="" autocomplete="username" required="required" /></div>';
 
-		$html .= '<p class="pusers-field-password"><label for="' . esc_attr( self::PASSWORD ) . '">' . esc_html__( 'Hasło', 'portal-users' ) . '</label> ';
-		$html .= '<input type="password" id="' . esc_attr( self::PASSWORD ) . '" name="' . esc_attr( self::PASSWORD ) . '" value="" autocomplete="current-password" required="required" /></p>';
+		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-password' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PASSWORD ) . '">' . esc_html__( 'Hasło', 'portal-users' ) . '</label> ';
+		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="password" id="' . esc_attr( self::PASSWORD ) . '" name="' . esc_attr( self::PASSWORD ) . '" value="" autocomplete="current-password" required="required" /></div>';
 
-		$html .= '<p class="pusers-field-remember"><label><input type="checkbox" name="' . esc_attr( self::REMEMBER ) . '" value="1" /> ' . esc_html__( 'Zapamiętaj mnie', 'portal-users' ) . '</label></p>';
+		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-remember' ) . ' ' . FormClasses::attr( 'check' ) . '"><input class="' . FormClasses::attr( 'check_input' ) . '" type="checkbox" id="' . esc_attr( self::REMEMBER ) . '" name="' . esc_attr( self::REMEMBER ) . '" value="1" /> <label class="' . FormClasses::attr( 'check_label' ) . '" for="' . esc_attr( self::REMEMBER ) . '">' . esc_html__( 'Zapamiętaj mnie', 'portal-users' ) . '</label></div>';
 
 		// Pułapka: zwykłe pole tekstowe ukryte stylem; etykieta mówi wprost, żeby pola nie wypełniać.
 		$html .= '<div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">';
@@ -132,7 +132,7 @@ final class LoginForm {
 		$html .= (string) ob_get_clean();
 
 		$html .= wp_nonce_field( self::NONCE_ACTION, self::NONCE_FIELD, true, false );
-		$html .= '<p><button type="submit">' . esc_html__( 'Zaloguj się', 'portal-users' ) . '</button></p>';
+		$html .= '<p><button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Zaloguj się', 'portal-users' ) . '</button></p>';
 
 		return $html . '</form>';
 	}

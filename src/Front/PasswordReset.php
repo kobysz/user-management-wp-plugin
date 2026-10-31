@@ -794,11 +794,11 @@ final class PasswordReset {
 	 * Formularz adresu.
 	 */
 	private static function form(): string {
-		$html  = '<form class="pusers-password-reset" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+		$html  = '<form class="' . FormClasses::attr( 'form', 'pusers-password-reset', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
 		$html .= '<input type="hidden" name="action" value="' . esc_attr( self::ACTION_REQUEST ) . '" />';
 
-		$html .= '<p class="pusers-field-email"><label for="' . esc_attr( self::EMAIL_FIELD ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
-		$html .= '<input type="email" id="' . esc_attr( self::EMAIL_FIELD ) . '" name="' . esc_attr( self::EMAIL_FIELD ) . '" value="" autocomplete="username" required="required" /></p>';
+		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-email' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::EMAIL_FIELD ) . '">' . esc_html__( 'Adres e-mail', 'portal-users' ) . '</label> ';
+		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="email" id="' . esc_attr( self::EMAIL_FIELD ) . '" name="' . esc_attr( self::EMAIL_FIELD ) . '" value="" autocomplete="username" required="required" /></div>';
 
 		// Pułapka: zwykłe pole tekstowe ukryte stylem; etykieta mówi wprost, żeby pola nie wypełniać.
 		$html .= '<div style="position:absolute;left:-9999px;width:1px;height:1px;overflow:hidden;" aria-hidden="true">';
@@ -806,7 +806,7 @@ final class PasswordReset {
 		$html .= '<input type="text" id="' . esc_attr( self::HONEYPOT ) . '" name="' . esc_attr( self::HONEYPOT ) . '" value="" tabindex="-1" autocomplete="off" /></div>';
 
 		$html .= wp_nonce_field( self::NONCE_REQUEST, self::NONCE_REQUEST, true, false );
-		$html .= '<p><button type="submit">' . esc_html__( 'Wyślij link do ustawienia hasła', 'portal-users' ) . '</button></p>';
+		$html .= '<p><button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Wyślij link do ustawienia hasła', 'portal-users' ) . '</button></p>';
 
 		return $html . '</form>';
 	}
@@ -822,16 +822,16 @@ final class PasswordReset {
 	 * @param string $login Login konta z odnośnika.
 	 */
 	private static function password_form( string $key, string $login ): string {
-		$html  = '<form class="pusers-password-new" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+		$html  = '<form class="' . FormClasses::attr( 'form', 'pusers-password-new', 'pusers-form' ) . '" method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
 		$html .= '<input type="hidden" name="action" value="' . esc_attr( self::ACTION_SET ) . '" />';
 		$html .= '<input type="hidden" name="' . esc_attr( self::USER_ARG ) . '" value="' . esc_attr( $login ) . '" />';
 		$html .= '<input type="hidden" name="' . esc_attr( self::KEY_ARG ) . '" value="' . esc_attr( $key ) . '" />';
 
-		$html .= '<p class="pusers-field-password"><label for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Nowe hasło', 'portal-users' ) . '</label> ';
-		$html .= '<input type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" /></p>';
+		$html .= '<div class="' . FormClasses::attr( 'field', 'pusers-field-password' ) . '"><label class="' . FormClasses::attr( 'label' ) . '" for="' . esc_attr( self::PASSWORD_FIELD ) . '">' . esc_html__( 'Nowe hasło', 'portal-users' ) . '</label> ';
+		$html .= '<input class="' . FormClasses::attr( 'control' ) . '" type="password" id="' . esc_attr( self::PASSWORD_FIELD ) . '" name="' . esc_attr( self::PASSWORD_FIELD ) . '" autocomplete="new-password" minlength="' . esc_attr( (string) PasswordPolicy::MIN_LENGTH ) . '" required="required" /></div>';
 
 		$html .= wp_nonce_field( self::NONCE_SET, self::NONCE_SET, true, false );
-		$html .= '<p><button type="submit">' . esc_html__( 'Ustaw nowe hasło', 'portal-users' ) . '</button></p>';
+		$html .= '<p><button class="' . FormClasses::attr( 'button' ) . '" type="submit">' . esc_html__( 'Ustaw nowe hasło', 'portal-users' ) . '</button></p>';
 
 		return $html . '</form>';
 	}
