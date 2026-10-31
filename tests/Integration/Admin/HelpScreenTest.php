@@ -56,6 +56,7 @@ final class HelpScreenTest extends WP_UnitTestCase {
 		$this->originalRole        = (string) get_option( 'default_role' );
 		remove_all_filters( 'pusers_acf_groups' );
 		remove_all_filters( 'pusers_acf_fields' );
+		remove_all_filters( 'pusers_acf_pro_loaded' );
 		delete_option( OptionStore::OPTION_DEPLOYED_AT );
 		Backfill::forget_count();
 	}
@@ -63,6 +64,7 @@ final class HelpScreenTest extends WP_UnitTestCase {
 	public function tear_down(): void {
 		remove_all_filters( 'pusers_acf_groups' );
 		remove_all_filters( 'pusers_acf_fields' );
+		remove_all_filters( 'pusers_acf_pro_loaded' );
 		update_option( 'default_role', $this->originalRole );
 		Backfill::forget_count();
 		if ( null === $this->savedAdminMenuHooks ) {
@@ -138,6 +140,10 @@ final class HelpScreenTest extends WP_UnitTestCase {
 	 * Doprowadza konfigurację do stanu skończonego: kroki od pierwszego do szóstego zrobione.
 	 */
 	private function fullyConfigured(): void {
+		// ACF Pro jest licencjonowany i nie ma go w środowisku testowym; filtr `pusers_acf_pro_loaded`
+		// jest szwem, przez który Dependencies da się opowiedzieć. Bez niego „pełna konfiguracja”
+		// nie jest pełna, bo zależność wtyczki nie jest spełniona.
+		add_filter( 'pusers_acf_pro_loaded', '__return_true' );
 		$this->withSource();
 		$this->withProfession();
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible' ) ) ) );
@@ -242,6 +248,8 @@ final class HelpScreenTest extends WP_UnitTestCase {
 	}
 
 	public function test_panel_odsyla_do_raportu_spojnosci_zamiast_powtarzac_jego_tresci(): void {
+		// Zależność spełniona, bo tylko wtedy ekrany wtyczki istnieją i krok ma gdzie prowadzić.
+		add_filter( 'pusers_acf_pro_loaded', '__return_true' );
 		$this->withSource();
 		$this->withProfession();
 		$html = $this->renderAsAdmin();
@@ -261,6 +269,42 @@ final class HelpScreenTest extends WP_UnitTestCase {
 		$this->assertFalse( HelpScreen::setup_incomplete() );
 	}
 
+	public function test_darmowy_acf_nie_pozwala_uznac_konfiguracji_za_skonczona(): void {
+		// Pełna konfiguracja BEZ filtra ACF Pro: wszystko da się zmierzyć (filtr grup działa jak
+		// darmowy ACF, który definiuje te same funkcje), ale bramka zależności nie jest spełniona.
+		$this->withSource();
+		$this->withProfession();
+		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible' ) ) ) );
+		$this->withSettings(
+			array(
+				'login_page_id'       => $this->page(),
+				'register_page_id'    => $this->page(),
+				'reset_page_id'       => $this->page(),
+				'after_login_page_id' => $this->page(),
+				'notify_emails'       => array( 'redakcja@example.test' ),
+			)
+		);
+
+		$html = $this->renderAsAdmin();
+		$this->assertStringNotContainsString( 'pusers-setup-complete', $html, 'Zielona lista nad bezczynną wtyczką jest kłamstwem, którego ten ekran ma nie mówić.' );
+		$this->assertStringContainsString( 'Darmowy ACF nie wystarcza', $html );
+		$this->assertStringNotContainsString( 'href="' . esc_url( Menu::url( Menu::SLUG_MATRIX ) ) . '"', $html, 'Bez spełnionej zależności ekrany wtyczki nie są zarejestrowane, więc odnośnik prowadziłby na stronę, której rdzeń nie zna.' );
+		$this->assertTrue( HelpScreen::setup_incomplete() );
+	}
+
+	public function test_osmy_krok_zostaje_widoczny_po_zwinieciu_listy(): void {
+		$this->fullyConfigured();
+		$this->statelessAccounts( 3 );
+
+		$html = $this->renderAsAdmin();
+		$this->assertStringContainsString( 'pusers-setup-complete', $html );
+		$this->assertStringContainsString(
+			'pusers-setup-step--' . SetupStepKey::LegacyAccounts->value,
+			$html,
+			'Konta sprzed wdrożenia wchodzą na portal niezależnie od decyzji redakcji — schowanie tego razem ze zwiniętą listą zostawiłoby otwarte drzwi bez śladu na żadnym ekranie.'
+		);
+	}
+
 	public function test_osmy_krok_nie_wplywa_na_setup_incomplete(): void {
 		$this->fullyConfigured();
 		$this->statelessAccounts( 4 );
@@ -277,11 +321,26 @@ final class HelpScreenTest extends WP_UnitTestCase {
 		}
 	}
 
-	public function test_czesc_o_zmianie_formularza_ostrzega_przed_polem_wymaganym_poza_grupa(): void {
-		$this->assertStringContainsString(
+	public function test_czesc_o_zmianie_formularza_mowi_prawde_o_polu_wymaganym_poza_grupa(): void {
+		$html = $this->renderAsAdmin();
+
+		// Plan rejestracji przycina macierz do pól źródła (RegistrationPlan::matrix()), więc wymóg
+		// pola spoza grupy PRZESTAJE OBOWIĄZYWAĆ — nie blokuje rejestracji. Blokuje tylko pole
+		// numeru uprawnień, i to przez zdjęcie profesji z listy, nie przez odmowę zgłoszenia.
+		$this->assertStringContainsString( 'nie blokuje rejestracji', $html );
+		$this->assertStringNotContainsString(
 			'blokuje rejestrację tej profesji',
+			$html,
+			'Fałszywa wersja tego zdania kazałaby naprawiać coś, co nie jest zepsute, i obiecywała fail-closed tam, gdzie wtyczka świadomie fail-open.'
+		);
+		$this->assertStringContainsString( 'nie pojawia się na liście profesji', $html, 'Prawdziwy skutek dla pola numeru musi być powiedziany.' );
+	}
+
+	public function test_czesc_o_zmianie_formularza_mowi_o_ostrzezeniu_w_raporcie(): void {
+		$this->assertStringContainsString(
+			'ostrzeżeniem przy każdej profesji',
 			$this->renderAsAdmin(),
-			'To najgroźniejszy skutek zmiany formularza zrobionej w połowie i musi być powiedziany wprost.'
+			'ConsistencyChecker wystawia field_not_configured dla pola bez stanu — mówienie, że nie ma po tym żadnego błędu, kasuje istniejącą siatkę bezpieczeństwa.'
 		);
 	}
 
@@ -289,7 +348,11 @@ final class HelpScreenTest extends WP_UnitTestCase {
 		$html = $this->renderAsAdmin();
 
 		$this->assertStringContainsString( 'Zmiana NAZWY jest dla wtyczki usunięciem jednego pola i dodaniem drugiego', $html );
-		$this->assertStringContainsString( 'martwy wiersz', $html, 'Osoba, która przemianowała pole, musi wiedzieć, co zostało w macierzy.' );
+		$this->assertStringContainsString(
+			'Pola spoza wybranej grupy',
+			$html,
+			'Instrukcja musi nazwać sekcję ekranu macierzy jej nagłówkiem, bo tam idzie się po wpis zostawiony przez starą nazwę.'
+		);
 	}
 
 	public function test_czesc_o_wnioskach_nazywa_ekran_wnioskow_i_odnosnik_do_rejestru(): void {
@@ -298,6 +361,16 @@ final class HelpScreenTest extends WP_UnitTestCase {
 		$this->assertStringContainsString( 'Portal: wnioski', $html );
 		$this->assertStringContainsString( 'rejestru zawodowego', $html, 'Weryfikacja numeru dzieje się w rejestrze, nie w portalu — instrukcja musi to powiedzieć.' );
 		$this->assertStringContainsString( 'Odrzucenie wymaga powodu', $html );
+	}
+
+	public function test_czesc_o_wnioskach_nie_obiecuje_ze_panel_pokazuje_wszystkie_pola(): void {
+		$html = $this->renderAsAdmin();
+
+		// ApplicationDetails pokazuje WYŁĄCZNIE pola widoczne w dzisiejszej macierzy, a pozostałe
+		// tylko liczy. Obietnica kompletności kazałaby rozstrzygać wniosek w przekonaniu, że widać
+		// wszystko, co lekarz podał.
+		$this->assertStringContainsString( 'nie są pokazywane', $html );
+		$this->assertStringNotContainsString( 'wszystkie pola, które zgłaszający wypełnił', $html );
 	}
 
 	public function test_tabela_komunikatow_wymienia_komunikat_o_braku_wiersza_w_macierzy(): void {

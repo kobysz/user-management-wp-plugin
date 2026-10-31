@@ -112,10 +112,19 @@ domyślnymi, rola domyślna w *Ustawienia → Ogólne*.
 
 **B. Zmiana formularza na żywym portalu** — część, której w `docs/konfiguracja.md` nie ma i którą
 trzeba napisać. Dodanie pola to **dwa ekrany w narzuconej kolejności**: ACF, potem macierz. Zrobione
-w połowie zostawia pole, którego formularz nie pokaże, albo — gdy pole przemianowano — martwy wiersz
-w macierzy. Pole oznaczone w macierzy jako wymagane, którego nie ma w grupie, **blokuje rejestrację
-tej profesji**. Przemianowanie pola w ACF jest dla wtyczki nowym polem; etykietę można zmieniać
-swobodnie. Usunięcie pola wymaga jawnego sprzątnięcia martwego wiersza.
+w połowie zostawia pole, którego formularz nie pokaże, albo — gdy pole przemianowano — wpis bez pola
+w macierzy. Przemianowanie pola w ACF jest dla wtyczki nowym polem; etykietę można zmieniać
+swobodnie. Usunięcie pola wymaga jawnego sprzątnięcia wpisu w sekcji „Pola spoza wybranej grupy”.
+
+Jedno zdanie tej części musi być napisane **przeciw** temu, co mówi dziś raport spójności. Pole
+oznaczone w macierzy jako wymagane, którego nie ma w grupie, **nie blokuje rejestracji**:
+`RegistrationForm::compose()` przycina macierz do pól źródła, a walidacja czyta przyciętą
+(`RegistrationPlan::matrix()` i jego docblok mówią, że tak ma być — wymóg pola, którego nie ma jak
+wypełnić, nie może zamykać rejestracji). Komunikat `matrix_required_field_not_in_source`
+w `IssueMessages` nazywa ten stan „rejestracja zablokowana" i przecenia skutek; instrukcja ma
+powiedzieć prawdę i nazwać tę rozbieżność. Jedyne pole, które naprawdę zamyka drogę, to pole numeru
+uprawnień — profesja, której numeru nie da się wyegzekwować, nie pojawia się w ofercie formularza
+(`RegistrationForm::can_enforce_credential()`).
 
 **C. Obsługa wniosków** — gdzie leży ekran wniosków i co znaczy bąbelek z liczbą, po co jest
 odnośnik do rejestru zawodowego przy wniosku, jak wygląda zatwierdzenie i odrzucenie, skąd biorą się

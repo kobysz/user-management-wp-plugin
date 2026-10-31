@@ -15,7 +15,7 @@ namespace PortalUsers\Tests\Support;
 
 use PortalUsers\Domain\Config\SetupStepKey;
 
-final class ConfigurationDoc {
+final class ConfigurationDoc { // phpcs:ignore
 
 	/**
 	 * Numer kroku w dokumencie => przypadek enuma.
@@ -56,18 +56,5 @@ final class ConfigurationDoc {
 		}
 
 		return $out;
-	}
-
-	/**
-	 * Numer kroku dla przypadku enuma; 0, gdy przypadku nie ma w mapowaniu.
-	 */
-	public static function numberOf( SetupStepKey $key ): int {
-		foreach ( self::STEPS as $number => $step ) {
-			if ( $step === $key ) {
-				return $number;
-			}
-		}
-
-		return 0;
 	}
 }

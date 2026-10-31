@@ -88,6 +88,33 @@ final class RegistrationFormTest extends WP_UnitTestCase {
 		return $decoded['map'];
 	}
 
+	/**
+	 * Charakterystyka zachowania, nie nowy wymóg: wymóg pola spoza grupy ACF NIE blokuje
+	 * rejestracji, bo plan rejestracji przycina macierz do pól źródła (`RegistrationPlan::matrix()`).
+	 * Test powstał, bo instrukcja na ekranie pomocy twierdziła odwrotnie; raport spójności nazywa
+	 * ten stan błędem „rejestracja zablokowana”, co przecenia skutek. Blokuje wyłącznie pole
+	 * numeru uprawnień, i to przez zdjęcie profesji z oferty — co pilnują testy obok.
+	 */
+	public function test_required_field_outside_the_acf_group_does_not_block_the_profession(): void {
+		FieldMatrixRepository::save(
+			FieldMatrix::fromArray(
+				array(
+					'pielegniarka' => array(
+						'zaswiadczenie' => 'required',
+						'zgoda'         => 'required',
+					),
+				)
+			)
+		);
+		$this->professions( array( array( 'key' => 'pielegniarka', 'label' => 'Pielęgniarka' ) ) );
+
+		$html = RegistrationForm::render();
+
+		$this->assertStringContainsString( 'name="pusers_profession"', $html, 'Formularz musi się wyrenderować: wymóg nieistniejącego pola nie zamyka rejestracji.' );
+		$this->assertStringContainsString( 'value="pielegniarka"', $html, 'Profesja zostaje w ofercie, choć macierz wymaga od niej pola, którego grupa nie ma.' );
+		$this->assertStringNotContainsString( 'zaswiadczenie', $html, 'Pola spoza grupy formularz nie pokazuje, więc wymóg nie ma jak zostać spełniony — i dlatego przestaje obowiązywać.' );
+	}
+
 	public function test_profession_select_is_rendered_before_any_acf_field(): void {
 		$html = RegistrationForm::render();
 

@@ -59,16 +59,16 @@ final class SetupGuide {
 		echo '<li>' . esc_html__( 'Widoczne — pole jest, ale wolno je zostawić puste.', 'portal-users' ) . '</li>';
 		echo '<li>' . esc_html__( 'Wymagane — bez wypełnienia formularz nie przejdzie.', 'portal-users' ) . '</li>';
 		echo '</ul>';
-		echo '<p>' . esc_html__( 'Pole numeru uprawnień musi mieć stan „Wymagane” dla każdej profesji, która numeru wymaga. Inaczej raport zapali błąd, a zgłoszenie mogłoby przejść bez numeru: walidator czyta wartości już po odsiewie według macierzy.', 'portal-users' ) . '</p>';
+		echo '<p>' . esc_html__( 'Pole numeru uprawnień musi mieć stan „Wymagane” dla każdej profesji, która numeru wymaga. Inaczej raport zapali błąd, a profesja zniknie z listy w formularzu rejestracji: wtyczka nie pozwala zarejestrować się na profesję, której numeru nie umie wyegzekwować. Nikt się wtedy na nią nie zapisze, ale nikt też nie przejdzie bez numeru.', 'portal-users' ) . '</p>';
 
 		self::step( SetupStepKey::Pages );
 		echo '<p>' . esc_html__( 'Utwórz i opublikuj trzy strony, każdą z jednym skrótem:', 'portal-users' ) . '</p>';
 		echo '<ul><li><code>[portal_users_registration]</code></li><li><code>[portal_users_login]</code></li><li><code>[portal_users_password_reset]</code></li></ul>';
-		echo '<p>' . esc_html__( 'Potem wskaż je w ustawieniach, razem ze stroną po zalogowaniu. Strona wskazana, ale nieopublikowana albo usunięta, liczy się jak niewskazana i zapala ostrzeżenie w raporcie.', 'portal-users' ) . '</p>';
+		echo '<p>' . esc_html__( 'Potem wskaż je w ustawieniach, razem ze stroną po zalogowaniu. Strona wskazana, ale nieopublikowana albo w koszu, nadal jest celem przekierowania — użytkownik trafi na stronę, której nie zobaczy, i to jest gorsze niż brak wskazania. Lista startowa uznaje wtedy krok za niezrobiony, a ekran ustawień pokazuje ostrzeżenie przy tym polu (nie w raporcie spójności na ekranie macierzy).', 'portal-users' ) . '</p>';
 
 		self::step( SetupStepKey::Settings );
 		echo '<p>' . esc_html__( 'Wartości domyślne są pracujące: link potwierdzający ważny 48 godzin, usuwanie niepotwierdzonych kont po 7 dniach, 50 zgłoszeń z jednego adresu IP na godzinę, 3 sekundy minimalnego czasu wypełniania formularza. Ruszaj je świadomie — limit z jednego adresu podnieś, gdy użytkownicy wychodzą do internetu przez wspólny adres szpitala albo uczelni.', 'portal-users' ) . '</p>';
-		echo '<p>' . esc_html__( 'Dwie pozycje są puste domyślnie i trzeba je wypełnić: adresy redakcji (bez nich nikt nie dowie się o nowym wniosku) oraz powody odrzucenia, których redakcja używa najczęściej. Regulamin wpisuje się razem z polem zgody albo wcale: treść bez wskazanego pola zgody znaczy, że nie będzie czym wykazać, na co użytkownik się zgodził.', 'portal-users' ) . '</p>';
+		echo '<p>' . esc_html__( 'Jedna pozycja jest pusta domyślnie i bez niej krok nie jest skończony: adresy redakcji — bez nich nikt nie dowie się o nowym wniosku. Powody odrzucenia też są puste i warto wpisać te, których redakcja używa najczęściej, ale ich brak niczego nie blokuje: powód wpisuje się wtedy ręcznie przy każdym odrzuceniu. Regulamin wpisuje się razem z polem zgody albo wcale: treść bez wskazanego pola zgody znaczy, że nie będzie czym wykazać, na co użytkownik się zgodził.', 'portal-users' ) . '</p>';
 		echo '<p>' . esc_html__( 'Osobno, poza wtyczką: Ustawienia → Ogólne → Domyślna rola nowego użytkownika. Rola z uprawnieniem, którego publiczny formularz nie może nadać osobie zakładającej konto, wyłącza rejestrację — raport powie, która to rola i które uprawnienie.', 'portal-users' ) . '</p>';
 		echo '<p>' . esc_html__( 'Usuwanie danych przy odinstalowaniu jest domyślnie wyłączone i zostaw je wyłączone, chyba że świadomie chcesz, by usunięcie wtyczki skasowało ustawienia, profesje, macierz, log zdarzeń i archiwum wersji regulaminu.', 'portal-users' ) . '</p>';
 

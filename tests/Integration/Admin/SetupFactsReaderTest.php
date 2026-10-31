@@ -47,6 +47,7 @@ final class SetupFactsReaderTest extends WP_UnitTestCase {
 	public function tear_down(): void {
 		remove_all_filters( 'pusers_acf_groups' );
 		remove_all_filters( 'pusers_acf_fields' );
+		remove_all_filters( 'pusers_acf_pro_loaded' );
 		update_option( 'default_role', $this->originalRole );
 		Backfill::forget_count();
 		parent::tear_down();
@@ -188,6 +189,18 @@ final class SetupFactsReaderTest extends WP_UnitTestCase {
 			SetupFactsReader::read()->matrixErrorFree,
 			'Pole wymagane w macierzy, którego nie ma w grupie, blokuje rejestrację profesji — krok macierzy nie może po tym świecić zielono.'
 		);
+	}
+
+	public function test_dependenciesSatisfied_idzie_z_bramki_zaleznosci_nie_z_czytelnosci_grup(): void {
+		// Darmowy ACF definiuje acf_get_field_groups(), więc konfiguracja daje się zmierzyć, ale
+		// bramka wymaga ACF Pro. To dwa różne fakty i ten test pilnuje, że nie są jednym.
+		$this->withSource( array( 'pwz' => 'Numer PWZ' ) );
+		$facts = SetupFactsReader::read();
+		$this->assertTrue( $facts->acfReadable );
+		$this->assertFalse( $facts->dependenciesSatisfied, 'Sam czytelny spis grup nie znaczy, że zależność od ACF Pro jest spełniona.' );
+
+		add_filter( 'pusers_acf_pro_loaded', '__return_true' );
+		$this->assertTrue( SetupFactsReader::read()->dependenciesSatisfied );
 	}
 
 	public function test_bez_filtra_grup_i_bez_acf_pro_acfReadable_jest_false(): void {

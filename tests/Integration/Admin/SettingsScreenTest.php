@@ -75,6 +75,7 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 	public function tear_down(): void {
 		remove_filter( 'wp_redirect', $this->cancelRedirect );
 		remove_all_filters( 'pusers_acf_groups' );
+		remove_all_filters( 'pusers_acf_pro_loaded' );
 		$_POST    = array();
 		$_REQUEST = array();
 		unset( $_GET['pusers_notice'] );
@@ -580,6 +581,9 @@ final class SettingsScreenTest extends WP_UnitTestCase {
 	 * Doprowadza konfigurację do stanu skończonego: kroki od pierwszego do szóstego zrobione.
 	 */
 	private function withFinishedSetup(): void {
+		// Bez tego szwu zależność wtyczki (ACF Pro) nie jest spełniona, a konfiguracja z niespełnioną
+		// zależnością nie jest skończona — ACF Pro jest licencjonowany i nie ma go w testach.
+		add_filter( 'pusers_acf_pro_loaded', '__return_true' );
 		$this->withConfiguredSourceAndProfessions( 'lekarz' );
 		FieldMatrixRepository::save( FieldMatrix::fromArray( array( 'lekarz' => array( 'pwz' => 'visible' ) ) ) );
 		$page = fn (): int => (int) self::factory()->post->create(

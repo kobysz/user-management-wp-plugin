@@ -53,7 +53,7 @@ final class Messages {
 		);
 		self::row(
 			__( 'Profesja … wymaga numeru uprawnień, ale …', 'portal-users' ),
-			__( 'Przy profesji nie wskazano pola numeru albo to pole nie ma w macierzy stanu „Wymagane”. Zgłoszenie mogłoby wtedy przejść bez numeru.', 'portal-users' )
+			__( 'Przy profesji nie wskazano pola numeru albo to pole nie ma w macierzy stanu „Wymagane”. Profesja nie pojawi się wtedy na liście w formularzu rejestracji — wtyczka nie pozwala zapisać się na profesję, której numeru nie umie wyegzekwować.', 'portal-users' )
 		);
 		self::row(
 			__( '… wskazane pole … jest w ACF typu …, którego wtyczka nie przyjmuje jako pola numeru', 'portal-users' ),
@@ -61,11 +61,11 @@ final class Messages {
 		);
 		self::row(
 			__( 'Rejestracja profesji … jest zablokowana: macierz oznacza jako wymagane pole …, którego nie ma w wybranej grupie pól', 'portal-users' ),
-			__( 'Pole zniknęło z grupy albo zostało przemianowane, a w macierzy zostało wymagane. Wymóg jest niespełnialny, bo formularz nie pokaże pola, którego nie ma w źródle. Popraw wpis w macierzy albo wróć polem do grupy.', 'portal-users' )
+			__( 'Pole zniknęło z grupy albo zostało przemianowane, a w macierzy zostało wymagane. Uwaga: ten komunikat przecenia skutek — rejestracja tej profesji NIE jest zablokowana, bo przy składaniu formularza macierz jest przycinana do pól, które grupa naprawdę ma, i wymóg przestaje obowiązywać. Zgłoszenia przechodzą bez tego pola. Mimo to warto naprawić: popraw wpis w macierzy albo wróć polem do grupy.', 'portal-users' )
 		);
 		self::row(
 			__( 'Macierz zawiera pole …, którego nie ma w wybranej grupie pól', 'portal-users' ),
-			__( 'Martwy wiersz po polu usuniętym albo przemianowanym w ACF. Macierz nie czyści się sama; wpisy usuwa jawna akcja w sekcji martwych pól.', 'portal-users' )
+			__( 'Wpis po polu usuniętym albo przemianowanym w ACF. Macierz nie czyści się sama; wpisy usuwa jawna akcja w sekcji „Pola spoza wybranej grupy” na ekranie macierzy.', 'portal-users' )
 		);
 		self::row(
 			__( 'Rejestracja jest wyłączona: domyślna rola …', 'portal-users' ),
@@ -73,7 +73,7 @@ final class Messages {
 		);
 		self::row(
 			__( 'Rejestracja jest chwilowo niedostępna (na stronie portalu)', 'portal-users' ),
-			__( 'Nie wskazano grupy pól albo nie ma ani jednej profesji. Formularz nie ma z czego powstać.', 'portal-users' )
+			__( 'Trzy różne przyczyny dają ten sam komunikat. Nie wskazano grupy pól albo grupa zniknęła. Nie ma ani jednej profesji. Albo — najczęściej — żadnej profesji nie da się zaoferować, bo każda wymaga numeru uprawnień, którego pola nie ma w grupie albo nie jest dla niej oznaczone jako wymagane w macierzy. Przy wysyłaniu formularza ten sam komunikat daje też zablokowana rola domyślna. Raport spójności rozstrzyga, która z nich to jest.', 'portal-users' )
 		);
 		self::row(
 			__( 'Wtyczka Portal Users wymaga ACF Pro', 'portal-users' ),

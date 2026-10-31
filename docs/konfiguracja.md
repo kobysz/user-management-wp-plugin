@@ -99,8 +99,11 @@ Utwórz i **opublikuj** trzy strony, każda z jednym shortcode'em:
 [portal_users_password_reset]
 ```
 
-Potem wskaż je w *Portal: ustawienia*, razem ze **stroną po zalogowaniu**. Raport zapali
-ostrzeżenie dla strony, która nie istnieje albo nie jest opublikowana.
+Potem wskaż je w *Portal: ustawienia*, razem ze **stroną po zalogowaniu**. Strona wskazana, ale
+nieopublikowana albo w koszu, **nadal jest celem przekierowania**: `PageUrl::for()` oddaje jej
+adres, bo `get_permalink()` działa też dla szkicu. Użytkownik trafia wtedy na stronę, której nie
+zobaczy, i to jest gorsze niż brak wskazania. Ostrzeżenie pokazuje **ekran ustawień** przy tym
+polu, a nie raport spójności na ekranie macierzy.
 
 ## Krok 6. Pozostałe ustawienia
 
@@ -172,6 +175,6 @@ Tylko dla portalu z kontami sprzed wtyczki — *Użytkownicy → Import danych*:
 | „Wybrana grupa pól nie zawiera żadnych pól” | grupa wskazana, ale pusta — albo ma wyłącznie typy, których wtyczka nie obsługuje |
 | „Profesja … wymaga numeru uprawnień, ale …” | brak pola numeru przy profesji albo pole bez stanu „Wymagane” w macierzy |
 | „… wskazane pole … jest w ACF typu …, którego wtyczka nie przyjmuje jako pola numeru” | numerem musi być pole `text` albo `number` |
-| „Rejestracja profesji … jest zablokowana: macierz oznacza jako wymagane pole …, którego nie ma w wybranej grupie pól” | pole zniknęło z ACF, a w macierzy zostało wymagane — popraw macierz albo wróć polem do grupy |
+| „Rejestracja profesji … jest zablokowana: macierz oznacza jako wymagane pole …, którego nie ma w wybranej grupie pól” | pole zniknęło z ACF, a w macierzy zostało wymagane. **Komunikat przecenia skutek**: rejestracja NIE jest zablokowana, bo `RegistrationForm::compose()` przycina macierz do pól źródła i wymóg przestaje obowiązywać. Popraw macierz albo wróć polem do grupy |
 | „Rejestracja jest wyłączona: domyślna rola …” | *Ustawienia → Ogólne*: rola z niebezpiecznym uprawnieniem albo rola, której na witrynie nie ma |
-| „Rejestracja jest chwilowo niedostępna” (na stronie portalu) | brak wskazanej grupy pól albo brak choć jednej profesji |
+| „Rejestracja jest chwilowo niedostępna” (na stronie portalu) | brak wskazanej grupy pól, brak choć jednej profesji **albo — najczęściej — żadnej profesji nie da się zaoferować**, bo każda wymaga numeru, którego pola nie ma w grupie lub nie jest dla niej wymagane w macierzy (`can_enforce_credential()`). Przy wysyłaniu formularza ten sam komunikat daje też zablokowana rola domyślna |

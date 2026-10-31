@@ -24,6 +24,7 @@ final class SetupChecklistTest extends TestCase {
 	 * administrator zaczyna konfigurację; brak ACF Pro jest osobnym przypadkiem.
 	 */
 	private function facts(
+		bool $dependenciesSatisfied = true,
 		bool $acfReadable = true,
 		bool $anyAcfGroup = false,
 		bool $groupSelected = false,
@@ -40,6 +41,7 @@ final class SetupChecklistTest extends TestCase {
 		int $statelessAccounts = 0
 	): SetupFacts {
 		return new SetupFacts(
+			$dependenciesSatisfied,
 			$acfReadable,
 			$anyAcfGroup,
 			$groupSelected,
@@ -62,6 +64,7 @@ final class SetupChecklistTest extends TestCase {
 	 */
 	private function complete( int $statelessAccounts = 0 ): SetupFacts {
 		return $this->facts(
+			dependenciesSatisfied: true,
 			anyAcfGroup: true,
 			groupSelected: true,
 			groupReadable: true,
@@ -215,6 +218,35 @@ final class SetupChecklistTest extends TestCase {
 			$this->statuses( $this->facts( statelessAccounts: 0 ) ),
 			'Portal bez kont sprzed wdrożenia nie ma po co widzieć tego kroku.'
 		);
+	}
+
+	public function test_niespelnione_zaleznosci_nie_pozwalaja_uznac_konfiguracji_za_skonczona(): void {
+		// Wariant z darmowym ACF: `acf_get_field_groups()` istnieje, więc wszystko da się ZMIERZYĆ
+		// i stara konfiguracja jest kompletna, ale wtyczka jest bezczynna, bo bramka zależności
+		// wymaga ACF Pro. Zielona lista byłaby wtedy kłamstwem najgorszego rodzaju.
+		$facts = $this->facts(
+			dependenciesSatisfied: false,
+			anyAcfGroup: true,
+			groupSelected: true,
+			groupReadable: true,
+			groupHasFields: true,
+			anyProfession: true,
+			matrixErrorFree: true,
+			shortcodePagesPublished: true,
+			afterLoginPageSet: true,
+			notifyEmailsPresent: true,
+			defaultRoleOk: true
+		);
+
+		$this->assertFalse( ( new SetupChecklist( $facts ) )->isComplete() );
+	}
+
+	public function test_krok_macierzy_nie_jest_zrobiony_gdy_grupy_nie_da_sie_odczytac(): void {
+		// Bez czytelnej grupy raport nie ma czym sprawdzić macierzy: brak kodów błędów nie znaczy,
+		// że macierz jest w porządku — znaczy, że nie ma z czym jej porównać.
+		$facts = $this->facts( groupSelected: true, groupReadable: false, anyProfession: true, matrixErrorFree: true );
+
+		$this->assertSame( SetupStep::TODO, $this->statuses( $facts )[ SetupStepKey::Matrix->value ] );
 	}
 
 	public function test_szablony_maili_nigdy_nie_blokuja_ukonczenia(): void {

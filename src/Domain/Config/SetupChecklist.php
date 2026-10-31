@@ -70,6 +70,13 @@ final class SetupChecklist {
 	 * w porządku, a „nie wiemy” nie uprawnia do powiedzenia administratorowi, że skończył.
 	 */
 	public function isComplete(): bool {
+		// Niespełnione zależności przebijają wszystko: portal z samym darmowym ACF daje się
+		// zmierzyć do końca (te same funkcje istnieją), a wtyczka jest bezczynna. Zielona lista
+		// nad bezczynną wtyczką jest dokładnie tym kłamstwem, którego ten ekran ma nie mówić.
+		if ( ! $this->facts->dependenciesSatisfied ) {
+			return false;
+		}
+
 		foreach ( $this->steps() as $step ) {
 			if ( in_array( $step->key, self::REQUIRED, true ) && SetupStep::DONE !== $step->status ) {
 				return false;
@@ -103,17 +110,22 @@ final class SetupChecklist {
 	}
 
 	/**
-	 * Macierz jest zrobiona, gdy jest dla kogo ją wypełnić i raport nie ma o niej błędów.
+	 * Macierz jest zrobiona, gdy jest dla kogo ją wypełnić, jest z czym ją porównać i raport
+	 * nie ma o niej błędów.
 	 *
 	 * Brak profesji daje „do zrobienia”, a nie „zrobione”: macierz bez kolumn nie jest
-	 * macierzą wypełnioną, tylko macierzą, której nie ma czym wypełnić.
+	 * macierzą wypełnioną, tylko macierzą, której nie ma czym wypełnić. Nieczytelna grupa daje
+	 * to samo z innego powodu: bez pól źródła brak kodów błędów nie znaczy, że macierz jest
+	 * w porządku — znaczy, że nie ma z czym jej porównać, a zapisane wiersze mogą opisywać
+	 * pola, których już nie ma.
 	 */
 	private function matrixStatus(): string {
 		if ( ! $this->facts->acfReadable ) {
 			return SetupStep::UNKNOWN;
 		}
+		$ready = $this->facts->anyProfession && $this->facts->groupReadable && $this->facts->matrixErrorFree;
 
-		return $this->facts->anyProfession && $this->facts->matrixErrorFree ? SetupStep::DONE : SetupStep::TODO;
+		return $ready ? SetupStep::DONE : SetupStep::TODO;
 	}
 
 	/**

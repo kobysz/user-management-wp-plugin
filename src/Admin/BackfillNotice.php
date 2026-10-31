@@ -77,6 +77,10 @@ final class BackfillNotice {
 				Menu::SLUG_MAIL_LOG,
 				Menu::SLUG_APPLICATIONS,
 				Menu::SLUG_IMPORT,
+				// Ekran pomocy należy do listy z tego samego powodu co pozostałe: dokumentuje krok
+				// o kontach sprzed wdrożenia, więc administrator, który na nim stoi, ma dostać
+				// ostrzeżenie razem z odnośnikiem do importu.
+				Menu::SLUG_HELP,
 			),
 			true
 		);

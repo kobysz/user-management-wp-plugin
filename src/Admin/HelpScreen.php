@@ -131,33 +131,58 @@ final class HelpScreen {
 
 		if ( $checklist->isComplete() ) {
 			echo '<p class="pusers-setup-complete">' . esc_html__( 'Konfiguracja jest skończona: portal może przyjmować zgłoszenia. Instrukcja niżej zostaje na później.', 'portal-users' ) . '</p>';
+			// Jedna rzecz przebija zwinięcie listy: konta sprzed wdrożenia bez stanu wchodzą na
+			// portal niezależnie od decyzji redakcji. Schowanie tego razem z resztą listy kazałoby
+			// portalowi po migracji trzymać otwarte drzwi bez śladu o tym na żadnym ekranie.
+			self::render_legacy_accounts_step( $checklist->steps() );
 			return;
 		}
 
 		echo '<h2>' . esc_html__( 'Od czego zacząć', 'portal-users' ) . '</h2>';
 		echo '<p>' . esc_html__( 'Kroki idą w narzuconej kolejności: każdy karmi listę wyborów w następnym. Przeskoczenie dwóch pierwszych kończy się błędem o braku wiersza w macierzy pól, którego nie da się usunąć na ekranie macierzy.', 'portal-users' ) . '</p>';
 
-		if ( ! $facts->acfReadable ) {
+		if ( ! $facts->dependenciesSatisfied ) {
 			self::render_missing_acf_notice();
 		}
 
 		echo '<table class="widefat striped pusers-setup-checklist"><tbody>';
 		foreach ( $checklist->steps() as $step ) {
-			self::render_row( $step, $facts->acfReadable );
+			self::render_row( $step, $facts->dependenciesSatisfied );
 		}
 		echo '</tbody></table>';
 	}
 
 	/**
-	 * Komunikat o nieobecnym ACF Pro.
+	 * Wiersz kroku o kontach sprzed wdrożenia, jeżeli taki krok w ogóle istnieje.
 	 *
-	 * Bez ACF Pro `Menu::register()` nie odpala, więc poza tym ekranem i ekranem wniosków nie ma
-	 * pod Użytkownikami żadnego ekranu wtyczki — odnośniki kroków prowadziłyby w nicość, dlatego
-	 * w tym stanie kroki nie są odnośnikami.
+	 * @param array<int, SetupStep> $steps Kroki listy startowej.
+	 */
+	private static function render_legacy_accounts_step( array $steps ): void {
+		foreach ( $steps as $step ) {
+			if ( SetupStepKey::LegacyAccounts === $step->key ) {
+				echo '<table class="widefat striped pusers-setup-checklist"><tbody>';
+				self::render_row( $step, true );
+				echo '</tbody></table>';
+				return;
+			}
+		}
+	}
+
+	/**
+	 * Komunikat o niespełnionej zależności od ACF Pro.
+	 *
+	 * Kluczem jest `dependenciesSatisfied`, nie `acfReadable`, i to jest różnica, która ma skutki:
+	 * darmowy ACF definiuje te same funkcje, więc konfiguracja daje się ZMIERZYĆ do końca, ale
+	 * bramka zależności wymaga Pro i wtyczka jest bezczynna. Przy mierze zamiast zależności ten
+	 * komunikat by nie padł, a lista pokazałaby zieloną, skończoną konfigurację nad martwą wtyczką.
+	 *
+	 * W tym stanie `Menu::register()` nie odpala, więc poza tym ekranem i ekranem wniosków nie ma
+	 * pod Użytkownikami żadnego ekranu wtyczki — odnośniki kroków prowadziłyby na stronę, której
+	 * rdzeń nie zna, dlatego kroki nie są wtedy odnośnikami.
 	 */
 	private static function render_missing_acf_notice(): void {
 		echo '<div class="notice notice-warning inline"><p>'
-			. esc_html__( 'Wtyczka nie widzi ACF Pro, więc nie może sprawdzić kroków zależnych od grupy pól, a formularz rejestracji nie ma z czego powstać. Do włączenia ACF Pro widoczne są tylko dwa ekrany wtyczki: ten i ekran wniosków.', 'portal-users' )
+			. esc_html__( 'Wtyczka nie widzi ACF Pro, więc jest bezczynna: formularz rejestracji nie ma z czego powstać, a część kroków może być nie do sprawdzenia. Darmowy ACF nie wystarcza. Do włączenia ACF Pro widoczne są tylko dwa ekrany wtyczki: ten i ekran wniosków, dlatego kroki niżej nie są odnośnikami.', 'portal-users' )
 			. '</p></div>';
 	}
 

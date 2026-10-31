@@ -16,15 +16,21 @@ namespace PortalUsers\Domain\Config;
  * wtyczki, a reguły kroków muszą dać się sprawdzić bez żadnego z nich. Odczyt należy do
  * warstwy panelu (`PortalUsers\Admin\SetupFactsReader`); ta klasa jest jego wynikiem.
  *
- * `acfReadable` jest osobnym faktem od `anyAcfGroup`: wyłączone albo zepsute ACF Pro to NIE
- * to samo co brak grup pól. Pierwsze znaczy „nie można sprawdzić”, drugie „nie zrobione”.
+ * `acfReadable` jest osobnym faktem od `anyAcfGroup`: nieczytelne źródło pól to NIE to samo
+ * co brak grup pól. Pierwsze znaczy „nie można sprawdzić”, drugie „nie zrobione”.
+ *
+ * `dependenciesSatisfied` jest osobnym faktem od `acfReadable`, bo to dwa różne pytania:
+ * „czy da się zmierzyć konfigurację” i „czy wtyczka w ogóle działa”. Darmowy ACF odpowiada
+ * na pierwsze TAK (definiuje te same funkcje), a na drugie NIE — bramka zależności wymaga
+ * ACF Pro. Konfiguracja portalu z samym darmowym ACF może być kompletna i bez znaczenia.
  */
 final class SetupFacts {
 
 	/**
 	 * Konstruktor.
 	 *
-	 * @param bool $acfReadable             Czy listę grup pól da się w ogóle odczytać (ACF Pro odpowiada).
+	 * @param bool $dependenciesSatisfied   Czy zależności wtyczki są spełnione (ACF Pro, nie darmowy ACF).
+	 * @param bool $acfReadable             Czy listę grup pól da się w ogóle odczytać.
 	 * @param bool $anyAcfGroup             Czy istnieje choć jedna grupa pól.
 	 * @param bool $groupSelected           Czy w ustawieniach wskazano grupę.
 	 * @param bool $groupReadable           Czy wskazana grupa nadal istnieje.
@@ -40,6 +46,7 @@ final class SetupFacts {
 	 * @param int  $statelessAccounts       Liczba kont sprzed wdrożenia bez stanu.
 	 */
 	public function __construct(
+		public readonly bool $dependenciesSatisfied,
 		public readonly bool $acfReadable,
 		public readonly bool $anyAcfGroup,
 		public readonly bool $groupSelected,

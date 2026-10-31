@@ -13,6 +13,7 @@ defined( 'ABSPATH' ) || exit;
 
 use PortalUsers\Account\Backfill;
 use PortalUsers\Acf\AcfGroupList;
+use PortalUsers\Dependencies;
 use PortalUsers\Domain\Config\Settings;
 use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Domain\Config\SetupFacts;
@@ -62,6 +63,7 @@ final class SetupFactsReader {
 		$issues = MatrixScreen::issues();
 
 		return new SetupFacts(
+			Dependencies::satisfied(),
 			function_exists( 'acf_get_field_groups' ) || array() !== $groups,
 			array() !== $groups,
 			'' !== $settings->acfGroupKey,
