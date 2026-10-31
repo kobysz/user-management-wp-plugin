@@ -86,7 +86,18 @@ final class LoginForm {
 	 * Druga warstwa zakazu cache: pierwsza jedzie z `on_template_redirect()`, tu pokrywamy
 	 * umieszczenie formularza poza treścią wpisu. Wywołanie jest idempotentne.
 	 */
+	/**
+	 * Wyjście shortcode'u w jednym opakowaniu (patrz `FormWrapper`): notki i formularz razem,
+	 * żeby arkusz wtyczki i tryb karty obejmowały cały widok, a nie sam formularz.
+	 */
 	public static function render(): string {
+		return FormWrapper::wrap( self::render_contents() );
+	}
+
+	/**
+	 * Treść widoku bez opakowania (patrz `render()`).
+	 */
+	private static function render_contents(): string {
 		RegistrationHandler::no_cache();
 
 		if ( is_user_logged_in() ) {

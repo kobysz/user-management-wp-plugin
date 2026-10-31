@@ -170,8 +170,18 @@ final class RegistrationForm {
 	 * Zastępuje go jednak tylko wtedy, gdy strona hasła ma po co (patrz `PasswordSetup::takes_over()`).
 	 * Znacznik w adresie jest niesekretny, więc trafia tu także ktoś, kto chciał się
 	 * zarejestrować; jemu komunikat o wygasłym linku nie może zabrać formularza zgłoszenia.
+	 *
+	 * Całość wychodzi w jednym opakowaniu (patrz `FormWrapper`): notki i formularz razem, żeby
+	 * arkusz wtyczki i tryb karty obejmowały cały widok, a nie sam formularz.
 	 */
 	public static function render(): string {
+		return FormWrapper::wrap( self::render_contents() );
+	}
+
+	/**
+	 * Treść widoku bez opakowania (patrz `render()`).
+	 */
+	private static function render_contents(): string {
 		RegistrationHandler::no_cache();
 
 		$password = PasswordSetup::render();
