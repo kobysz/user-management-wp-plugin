@@ -488,8 +488,13 @@ final class MatrixScreen {
 
 	/**
 	 * Źródło pól wybranej grupy ACF.
+	 *
+	 * Publiczne, bo lista startowa na ekranie pomocy musi czytać DOKŁADNIE to źródło, które
+	 * widzi raport spójności: dwa różne źródła dałyby ekran mówiący o grupie pól co innego
+	 * niż raport dwa akapity niżej. Każde wywołanie buduje nową instancję, więc wołający,
+	 * który porównuje `groupExists()` z `fields()`, musi trzymać jedną.
 	 */
-	private static function source(): AcfFieldSource {
+	public static function source(): AcfFieldSource {
 		return new AcfFieldSource( SettingsRepository::get()->acfGroupKey );
 	}
 
