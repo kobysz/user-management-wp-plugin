@@ -43,6 +43,41 @@ final class ConfigurationDoc { // phpcs:ignore
 	 * @return array<int, string>
 	 */
 	public static function headings(): array {
+		$out = array();
+		foreach ( self::lines() as $line ) {
+			if ( preg_match( '/^## Krok (\d+)\. (.+)$/', $line, $m ) === 1 ) {
+				$out[ (int) $m[1] ] = $m[2];
+			}
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Cytaty z pierwszej kolumny tabeli „komunikat → przyczyna”, bez cudzysłowów.
+	 *
+	 * Dopisek w nawiasie po zamykającym cudzysłowie (gdzie ten komunikat widać) nie jest
+	 * częścią cytatu i tu nie wraca.
+	 *
+	 * @return list<string>
+	 */
+	public static function messageQuotes(): array {
+		$out = array();
+		foreach ( self::lines() as $line ) {
+			if ( preg_match( '/^\|\s*„(.+?)”/u', $line, $m ) === 1 ) {
+				$out[] = $m[1];
+			}
+		}
+
+		return $out;
+	}
+
+	/**
+	 * Linie dokumentu bez znaków końca linii.
+	 *
+	 * @return list<string>
+	 */
+	private static function lines(): array {
 		$path = dirname( __DIR__, 2 ) . '/docs/konfiguracja.md';
 		if ( ! is_readable( $path ) ) {
 			return array();
@@ -50,9 +85,7 @@ final class ConfigurationDoc { // phpcs:ignore
 
 		$out = array();
 		foreach ( explode( "\n", (string) file_get_contents( $path ) ) as $line ) {
-			if ( preg_match( '/^## Krok (\d+)\. (.+)$/', rtrim( $line, "\r" ), $m ) === 1 ) {
-				$out[ (int) $m[1] ] = $m[2];
-			}
+			$out[] = rtrim( $line, "\r" );
 		}
 
 		return $out;

@@ -13,8 +13,10 @@ use PortalUsers\Admin\Help\FormChanges;
 use PortalUsers\Admin\Help\Messages;
 use PortalUsers\Admin\Help\SetupGuide;
 use PortalUsers\Admin\HelpScreen;
+use PortalUsers\Admin\IssueMessages;
 use PortalUsers\Admin\Menu;
 use PortalUsers\Domain\Config\Settings;
+use PortalUsers\Domain\Config\SettingsIssue;
 use PortalUsers\Domain\Config\SetupStepKey;
 use PortalUsers\Domain\Fields\FieldMatrix;
 use PortalUsers\Domain\Profession\ProfessionCollection;
@@ -379,6 +381,122 @@ final class HelpScreenTest extends WP_UnitTestCase {
 			$this->renderAsAdmin(),
 			'To komunikat, na którym stanęła pierwsza instalacja — ściąga musi go mieć.'
 		);
+	}
+
+	/**
+	 * Źródło prawdy każdego cytatu ze ściągi komunikatów: `code:<kod problemu>` dla tekstów
+	 * z raportu spójności, `file:<ścieżka>` dla komunikatów wypisywanych wprost w kodzie.
+	 *
+	 * Mapowanie mieszka w kodzie testowym, nie produkcyjnym — jak `ConfigurationDoc::STEPS`
+	 * i `SCHEMA_SURFACE` w `MigrationsTest`: dopisanie wiersza do ściągi bez dopisania go
+	 * tutaj zapala test, a to jest moment, w którym autor ma pomyśleć, skąd ten komunikat
+	 * naprawdę pochodzi.
+	 *
+	 * @var array<string, string>
+	 */
+	private const MESSAGE_SOURCES = array(
+		'Profesja … nie ma wiersza w macierzy pól'                                                   => 'code:profession_without_matrix_row',
+		'Wybranej grupy pól nie wskazano albo nie istnieje już w ACF'                                => 'file:src/Admin/MatrixScreen.php',
+		'Wybrana grupa pól nie zawiera żadnych pól'                                                  => 'file:src/Admin/MatrixScreen.php',
+		'Profesja … wymaga numeru uprawnień, ale …'                                                  => 'code:credential_field_not_required',
+		'… wskazane pole … jest w ACF typu …, którego wtyczka nie przyjmuje jako pola numeru'         => 'code:credential_field_wrong_type',
+		'Macierz profesji … oznacza jako wymagane pole …, którego nie ma w wybranej grupie pól'       => 'code:matrix_required_field_not_in_source',
+		'Macierz profesji … zawiera pole …, którego nie ma w wybranej grupie pól'                                => 'code:matrix_field_not_in_source',
+		'Rejestracja jest wyłączona: domyślna rola …'                                                => 'code:default_role_dangerous_capability',
+		'Rejestracja jest chwilowo niedostępna (na stronie portalu)'                                  => 'file:src/Front/RegistrationForm.php',
+		'Wtyczka Portal Users wymaga ACF Pro'                                                         => 'file:src/Dependencies.php',
+		'Wtyczka Portal Users nie może wystartować: brakuje katalogu vendor'                          => 'file:portal-users.php',
+	);
+
+	/**
+	 * Kontekst na tyle pełny, żeby każdy komunikat raportu dał się złożyć z prawdziwymi danymi.
+	 *
+	 * @return array<string, string>
+	 */
+	private function sampleContext(): array {
+		return array(
+			'profession' => 'lekarz',
+			'field'      => 'pwz',
+			'type'       => 'repeater',
+			'role'       => 'editor',
+			'capability' => 'unfiltered_html',
+		);
+	}
+
+	/**
+	 * Prawdziwy tekst, z którego skrócony jest cytat ze ściągi.
+	 */
+	private function sourceTextOf( string $source ): string {
+		if ( 0 === strpos( $source, 'code:' ) ) {
+			return IssueMessages::text( SettingsIssue::error( substr( $source, 5 ), $this->sampleContext() ) );
+		}
+
+		$path = dirname( __DIR__, 3 ) . '/' . substr( $source, 5 );
+		$this->assertFileExists( $path, 'Ściąga powołuje się na plik, którego nie ma: ' . $source );
+
+		return (string) file_get_contents( $path );
+	}
+
+	public function test_sciaga_komunikatow_ma_dokladnie_wiersze_z_mapy_zrodel(): void {
+		$this->assertSame(
+			array_keys( self::MESSAGE_SOURCES ),
+			array_keys( Messages::rows() ),
+			'Każdy wiersz ściągi musi mieć w mapie wskazane źródło prawdy — i w tej samej kolejności.'
+		);
+	}
+
+	/**
+	 * Cytat w ściądze musi dać się odnaleźć w prawdziwym tekście.
+	 *
+	 * Zmiana treści komunikatu w `IssueMessages` zostawiała dotąd ściągę z cytatem, którego
+	 * nikt już na ekranie nie zobaczy — zdarzyło się przy poprawianiu komunikatu o polu
+	 * wymaganym spoza grupy. Cytaty są skrócone wielokropkiem w miejscach, w których wtyczka
+	 * wstawia klucz profesji albo nazwę pola, więc sprawdzamy fragmenty po kolei, a nie całość.
+	 */
+	public function test_kazdy_cytat_ze_sciagi_jest_fragmentem_prawdziwego_komunikatu(): void {
+		foreach ( Messages::rows() as $quote => $cause ) {
+			$source = self::MESSAGE_SOURCES[ $quote ] ?? '';
+			$this->assertNotSame( '', $source, 'Cytat bez źródła w mapie: ' . $quote );
+			$text = $this->sourceTextOf( $source );
+
+			// Dopisek w nawiasie na końcu cytatu jest wskazówką, gdzie ten komunikat widać,
+			// a nie częścią jego treści — jedyny taki wiersz to „(na stronie portalu)".
+			$offset = 0;
+			foreach ( explode( '…', (string) preg_replace( '/\s*\([^)]*\)$/u', '', $quote ) ) as $fragment ) {
+				if ( '' === $fragment ) {
+					continue;
+				}
+				$at = strpos( $text, $fragment, $offset );
+				$this->assertNotFalse(
+					$at,
+					'Fragment „' . $fragment . '” ze ściągi nie występuje (w tej kolejności) w prawdziwym tekście ' . $source . '. Komunikat zmienił treść, a ściąga została ze starym cytatem.'
+				);
+				$offset = $at + strlen( $fragment );
+			}
+
+			$this->assertNotSame( '', $cause, 'Wiersz ściągi bez przyczyny: ' . $quote );
+		}
+	}
+
+	/**
+	 * Ta sama ściąga stoi w `docs/konfiguracja.md` i nie ma prawa cytować inaczej niż ekran.
+	 *
+	 * Dokument jest podzbiorem: nie ma wierszy o komunikatach, których operator portalu nie
+	 * zobaczy w panelu. Każdy jego cytat musi jednak być jednym z cytatów ekranu — inaczej
+	 * poprawianie komunikatu wymaga pamiętania o dwóch tabelach, a to już raz nie wyszło.
+	 */
+	public function test_sciaga_w_dokumencie_cytuje_to_samo_co_ekran(): void {
+		$screen = array();
+		foreach ( array_keys( Messages::rows() ) as $quote ) {
+			$screen[] = (string) preg_replace( '/\s*\([^)]*\)$/u', '', $quote );
+		}
+
+		$quotes = ConfigurationDoc::messageQuotes();
+		$this->assertNotSame( array(), $quotes, 'Tabela „komunikat → przyczyna” w docs/konfiguracja.md nie dała się odczytać.' );
+
+		foreach ( $quotes as $quote ) {
+			$this->assertContains( $quote, $screen, 'docs/konfiguracja.md cytuje „' . $quote . '”, czego nie ma w ściądze na ekranie pomocy.' );
+		}
 	}
 
 	public function test_render_nie_wypuszcza_surowego_skryptu(): void {

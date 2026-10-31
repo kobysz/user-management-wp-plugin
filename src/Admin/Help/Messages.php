@@ -30,6 +30,33 @@ final class Messages {
 	}
 
 	/**
+	 * Wiersze ściągi: skrócony komunikat => przyczyna.
+	 *
+	 * Osobna metoda, nie ciąg wypisań w `render()`, bo cytaty są kopiami tekstów z innych
+	 * miejsc wtyczki i muszą dać się porównać z oryginałem. Pilnuje tego
+	 * `HelpScreenTest::test_kazdy_cytat_ze_sciagi_jest_fragmentem_prawdziwego_komunikatu`:
+	 * zmiana treści komunikatu w `IssueMessages` zostawiała dotąd ściągę z cytatem,
+	 * którego nikt już na ekranie nie zobaczy.
+	 *
+	 * @return array<string, string>
+	 */
+	public static function rows(): array {
+		return array(
+			__( 'Profesja … nie ma wiersza w macierzy pól', 'portal-users' )                                             => __( 'Macierz nie jest wypełniona dla tej profesji. Gdy jednocześnie macierz mówi, że nie wskazano grupy pól, prawdziwą przyczyną jest brak wskazanej grupy — macierz nie ma wtedy z czego zbudować wierszy.', 'portal-users' ),
+			__( 'Wybranej grupy pól nie wskazano albo nie istnieje już w ACF', 'portal-users' )                           => __( 'W ustawieniach nie ma wskazanej grupy pól albo wskazana grupa została usunięta lub przemianowana w ACF.', 'portal-users' ),
+			__( 'Wybrana grupa pól nie zawiera żadnych pól', 'portal-users' )                                             => __( 'Grupa jest wskazana, ale pusta — albo ma wyłącznie pola typów, których wtyczka nie obsługuje (kontenerowe i układowe).', 'portal-users' ),
+			__( 'Profesja … wymaga numeru uprawnień, ale …', 'portal-users' )                                             => __( 'Przy profesji nie wskazano pola numeru albo to pole nie ma w macierzy stanu „Wymagane”. Profesja nie pojawi się wtedy na liście w formularzu rejestracji — wtyczka nie pozwala zapisać się na profesję, której numeru nie umie wyegzekwować.', 'portal-users' ),
+			__( '… wskazane pole … jest w ACF typu …, którego wtyczka nie przyjmuje jako pola numeru', 'portal-users' )    => __( 'Numerem uprawnień musi być pole jednowartościowe tekstowe albo liczbowe. Zmień typ pola w ACF albo wskaż inne pole przy profesji.', 'portal-users' ),
+			__( 'Macierz profesji … oznacza jako wymagane pole …, którego nie ma w wybranej grupie pól', 'portal-users' )  => __( 'Pole zniknęło z grupy albo zostało przemianowane, a w macierzy zostało wymagane. Rejestracja tej profesji działa dalej: przy składaniu formularza macierz jest przycinana do pól, które grupa naprawdę ma, więc wymóg przestaje obowiązywać i zgłoszenia przechodzą bez tego pola. To jest właśnie powód, żeby to naprawić — dane przychodzą niekompletne, i nic o tym nie mówi poza tym wpisem w raporcie. Popraw wpis w macierzy albo wróć polem do grupy.', 'portal-users' ),
+			__( 'Macierz profesji … zawiera pole …, którego nie ma w wybranej grupie pól', 'portal-users' )                           => __( 'Wpis po polu usuniętym albo przemianowanym w ACF. Macierz nie czyści się sama; wpisy usuwa jawna akcja w sekcji „Pola spoza wybranej grupy” na ekranie macierzy.', 'portal-users' ),
+			__( 'Rejestracja jest wyłączona: domyślna rola …', 'portal-users' )                                           => __( 'Ustawienia → Ogólne: domyślna rola nowych kont ma uprawnienie, którego publiczny formularz nie może nadać, albo tej roli nie ma na witrynie.', 'portal-users' ),
+			__( 'Rejestracja jest chwilowo niedostępna (na stronie portalu)', 'portal-users' )                             => __( 'Trzy różne przyczyny dają ten sam komunikat. Nie wskazano grupy pól albo grupa zniknęła. Nie ma ani jednej profesji. Albo — najczęściej — żadnej profesji nie da się zaoferować, bo każda wymaga numeru uprawnień, którego pola nie ma w grupie albo nie jest dla niej oznaczone jako wymagane w macierzy. Przy wysyłaniu formularza ten sam komunikat daje też zablokowana rola domyślna. Raport spójności rozstrzyga, która z nich to jest.', 'portal-users' ),
+			__( 'Wtyczka Portal Users wymaga ACF Pro', 'portal-users' )                                                   => __( 'ACF Pro jest wyłączony, nieobecny albo aktywny jest darmowy ACF, który nie wystarcza. Do jego włączenia widoczne są tylko ten ekran i ekran wniosków.', 'portal-users' ),
+			__( 'Wtyczka Portal Users nie może wystartować: brakuje katalogu vendor', 'portal-users' )                     => __( 'Wtyczkę zainstalowano z archiwum „Source code”, a nie z assetu portal-users.zip z wydania. Zainstaluj ją z właściwego archiwum.', 'portal-users' ),
+		);
+	}
+
+	/**
 	 * Wypisuje część.
 	 */
 	public static function render(): void {
@@ -39,65 +66,14 @@ final class Messages {
 		echo '<th scope="col">' . esc_html__( 'Przyczyna', 'portal-users' ) . '</th>';
 		echo '</tr></thead><tbody>';
 
-		self::row(
-			__( 'Profesja … nie ma wiersza w macierzy pól', 'portal-users' ),
-			__( 'Macierz nie jest wypełniona dla tej profesji. Gdy jednocześnie macierz mówi, że nie wskazano grupy pól, prawdziwą przyczyną jest brak wskazanej grupy — macierz nie ma wtedy z czego zbudować wierszy.', 'portal-users' )
-		);
-		self::row(
-			__( 'Wybranej grupy pól nie wskazano albo nie istnieje już w ACF', 'portal-users' ),
-			__( 'W ustawieniach nie ma wskazanej grupy pól albo wskazana grupa została usunięta lub przemianowana w ACF.', 'portal-users' )
-		);
-		self::row(
-			__( 'Wybrana grupa pól nie zawiera żadnych pól', 'portal-users' ),
-			__( 'Grupa jest wskazana, ale pusta — albo ma wyłącznie pola typów, których wtyczka nie obsługuje (kontenerowe i układowe).', 'portal-users' )
-		);
-		self::row(
-			__( 'Profesja … wymaga numeru uprawnień, ale …', 'portal-users' ),
-			__( 'Przy profesji nie wskazano pola numeru albo to pole nie ma w macierzy stanu „Wymagane”. Profesja nie pojawi się wtedy na liście w formularzu rejestracji — wtyczka nie pozwala zapisać się na profesję, której numeru nie umie wyegzekwować.', 'portal-users' )
-		);
-		self::row(
-			__( '… wskazane pole … jest w ACF typu …, którego wtyczka nie przyjmuje jako pola numeru', 'portal-users' ),
-			__( 'Numerem uprawnień musi być pole jednowartościowe tekstowe albo liczbowe. Zmień typ pola w ACF albo wskaż inne pole przy profesji.', 'portal-users' )
-		);
-		self::row(
-			__( 'Macierz profesji … oznacza jako wymagane pole …, którego nie ma w wybranej grupie pól', 'portal-users' ),
-			__( 'Pole zniknęło z grupy albo zostało przemianowane, a w macierzy zostało wymagane. Rejestracja tej profesji działa dalej: przy składaniu formularza macierz jest przycinana do pól, które grupa naprawdę ma, więc wymóg przestaje obowiązywać i zgłoszenia przechodzą bez tego pola. To jest właśnie powód, żeby to naprawić — dane przychodzą niekompletne, i nic o tym nie mówi poza tym wpisem w raporcie. Popraw wpis w macierzy albo wróć polem do grupy.', 'portal-users' )
-		);
-		self::row(
-			__( 'Macierz zawiera pole …, którego nie ma w wybranej grupie pól', 'portal-users' ),
-			__( 'Wpis po polu usuniętym albo przemianowanym w ACF. Macierz nie czyści się sama; wpisy usuwa jawna akcja w sekcji „Pola spoza wybranej grupy” na ekranie macierzy.', 'portal-users' )
-		);
-		self::row(
-			__( 'Rejestracja jest wyłączona: domyślna rola …', 'portal-users' ),
-			__( 'Ustawienia → Ogólne: domyślna rola nowych kont ma uprawnienie, którego publiczny formularz nie może nadać, albo tej roli nie ma na witrynie.', 'portal-users' )
-		);
-		self::row(
-			__( 'Rejestracja jest chwilowo niedostępna (na stronie portalu)', 'portal-users' ),
-			__( 'Trzy różne przyczyny dają ten sam komunikat. Nie wskazano grupy pól albo grupa zniknęła. Nie ma ani jednej profesji. Albo — najczęściej — żadnej profesji nie da się zaoferować, bo każda wymaga numeru uprawnień, którego pola nie ma w grupie albo nie jest dla niej oznaczone jako wymagane w macierzy. Przy wysyłaniu formularza ten sam komunikat daje też zablokowana rola domyślna. Raport spójności rozstrzyga, która z nich to jest.', 'portal-users' )
-		);
-		self::row(
-			__( 'Wtyczka Portal Users wymaga ACF Pro', 'portal-users' ),
-			__( 'ACF Pro jest wyłączony, nieobecny albo aktywny jest darmowy ACF, który nie wystarcza. Do jego włączenia widoczne są tylko ten ekran i ekran wniosków.', 'portal-users' )
-		);
-		self::row(
-			__( 'Wtyczka Portal Users nie może wystartować: brakuje katalogu vendor', 'portal-users' ),
-			__( 'Wtyczkę zainstalowano z archiwum „Source code”, a nie z assetu portal-users.zip z wydania. Zainstaluj ją z właściwego archiwum.', 'portal-users' )
-		);
+		foreach ( self::rows() as $message => $cause ) {
+			printf(
+				'<tr><td>%1$s</td><td>%2$s</td></tr>',
+				esc_html( $message ),
+				esc_html( $cause )
+			);
+		}
 
 		echo '</tbody></table>';
-	}
-
-	/**
-	 * Wiersz tabeli.
-	 *
-	 * @param string $message Komunikat.
-	 * @param string $cause   Przyczyna.
-	 */
-	private static function row( string $message, string $cause ): void {
-		printf(
-			'<tr><td>%1$s</td><td>%2$s</td></tr>',
-			esc_html( $message ),
-			esc_html( $cause )
-		);
 	}
 }

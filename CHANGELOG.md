@@ -25,6 +25,9 @@ Trzy rzeczy, których nie widać z samego formatu:
   przestaje go wymagać, a zgłoszenia przechodzą bez tej danej. Komunikat mówi to teraz wprost —
   razem z tym, że dlatego właśnie trzeba go naprawić, bo luka jest cicha. Zachowanie wtyczki
   bez zmian; ściąga „komunikat → przyczyna” na ekranie pomocy poprawiona tak samo.
+- Ściąga komunikatów cytowała jeden komunikat w brzmieniu, którego wtyczka nigdy nie wypisuje
+  („Macierz zawiera pole …” zamiast „Macierz profesji … zawiera pole …”). Kto szukał po tekście
+  z ekranu, tego wiersza nie znajdował.
 
 ## [0.2.1] - 2026-10-31
 
