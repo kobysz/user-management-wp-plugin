@@ -32,6 +32,7 @@ use PortalUsers\Front\LoginHandler;
 use PortalUsers\Front\PasswordReset;
 use PortalUsers\Front\PasswordSetup;
 use PortalUsers\Front\Redirects;
+use PortalUsers\Front\FormStyles;
 use PortalUsers\Front\RegistrationForm;
 use PortalUsers\Front\RegistrationHandler;
 use PortalUsers\Front\RestUsers;
@@ -167,6 +168,7 @@ final class Plugin {
 		// Ostrzeżenie o kontach bez stanu mówi o regułach bramy, ale stoi po stronie ekranów panelu: dopóki
 		// jest czerwone, administrator ma pod ręką link do importu, który jest za bramką zależności.
 		add_action( 'pusers_register_features', array( BackfillNotice::class, 'register' ) );
+		add_action( 'pusers_register_features', array( FormStyles::class, 'register' ) );
 		add_action( 'pusers_register_features', array( RegistrationForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginForm::class, 'register' ) );
 		add_action( 'pusers_register_features', array( LoginHandler::class, 'register' ) );

@@ -91,6 +91,8 @@ final class LoginForm {
 	 * żeby arkusz wtyczki i tryb karty obejmowały cały widok, a nie sam formularz.
 	 */
 	public static function render(): string {
+		FormStyles::enqueue();
+
 		return FormWrapper::wrap( self::render_contents() );
 	}
 

@@ -1,0 +1,21 @@
+/*
+ * Arkusz stały formularzy portalu.
+ *
+ * Jedzie ZAWSZE, gdy widok wtyczki pojawił się na stronie — także na skórce, która stoi na
+ * Bootstrapie. Dlatego niesie wyłącznie to, czego w Bootstrapie NIE MA, i nic więcej.
+ *
+ * Miękkie ostrzeżenie (numer uprawnień nie przechodzi sumy kontrolnej, ale zgłoszenie i tak
+ * idzie do redakcji) nie jest błędem: `is-invalid` kłamałoby, bo nic nie zostało odrzucone.
+ * Bootstrap nie ma na to klasy, więc jest tutaj.
+ *
+ * Druga reguła nadrabia to, czego nie da się zrobić przez definicję pola: etykietę pola profilu
+ * rysuje ACF we własnym `div.acf-label` i nie przyjmuje tam klasy `form-label`.
+ */
+
+.pusers-front .pusers-warning-feedback {
+	color: #997404;
+}
+
+.pusers-front .acf-label {
+	margin-bottom: 0.5rem;
+}
