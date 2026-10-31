@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Portal Users
  * Description:       Zarządzanie użytkownikami portali medycznych: rejestracja z weryfikacją uprawnień zawodowych, akceptacja kont, własne strony logowania.
- * Version:           0.2.0
+ * Version:           0.2.1
  * Requires at least: 6.5
  * Requires PHP:      8.1
  * Author:            Eorta.pl

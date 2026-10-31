@@ -18,6 +18,17 @@ Trzy rzeczy, których nie widać z samego formatu:
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-31
+
+Wtyczka dostaje własną instrukcję w panelu. Pierwsza konfiguracja 0.2.0 na żywym portalu
+pokazała, że kolejność kroków jest wymuszona przepływem danych — bez wskazanej grupy pól
+ACF macierz nie ma z czego powstać, a dodana profesja od razu zgłasza błąd — ale nic w
+panelu tej kolejności nie mówiło. Teraz mówi, razem z listą, która sama sprawdza, co jest
+już zrobione.
+
+Nic w zachowaniu rejestracji, akceptacji ani logowania się nie zmienia. Konfiguracja
+portali działających na 0.2.0 zostaje nietknięta.
+
 ### Added
 
 - Ekran *Użytkownicy → Portal: pomoc* z instrukcją obsługi wtyczki w panelu: uruchomienie
