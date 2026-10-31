@@ -168,8 +168,9 @@ wychodzi poza ten projekt.
 Dodanie pola do `Settings` dotyka konstruktora, `defaults()`, odczytu z tablicy i zapisu na ekranie
 ustawień. Pole logiczne musi iść przez `SettingsScreen::checkbox()` — inaczej nie da się go
 wyłączyć (odznaczony checkbox nic nie wysyła, ukryte pole z jawnym `0` to naprawia). Oba ustawienia
-trafiają też do `docs/konfiguracja.md` (Krok 6) i tym samym na ekran pomocy; bramki wiążą te treści
-z kodem, więc pominięcie ich zapali `ConfigurationDoc`.
+trafiają też do `docs/konfiguracja.md` (Krok 6) i tym samym na ekran pomocy. Bramka wiąże
+z kodem nagłówki kroków, nie poszczególne ustawienia, więc pominięcie opisu nie zapaliłoby
+niczego — i właśnie dlatego jest wpisane tutaj jako wymóg.
 
 ## Dwa arkusze
 
