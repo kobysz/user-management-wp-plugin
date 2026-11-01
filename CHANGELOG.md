@@ -18,6 +18,20 @@ Trzy rzeczy, których nie widać z samego formatu:
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-11-01
+
+Dwie poprawki wyglądu z pierwszego formularza postawionego na 0.3.0.
+
+### Fixed
+
+- Pola tekstowe wychodziły poza formularz na portalu z włączonym ustawieniem **Doładuj wygląd
+  formularzy**: pole brało całą szerokość i dokładało do niej jeszcze własną wyściółkę z ramką,
+  więc sięgało o kilkanaście pikseli dalej niż lista rozwijana stojąca nad nim. Widać to było
+  w obu układach — gołym i karcie. Portale na skórce z Bootstrapem usterki nie miały.
+- Etykiety w jednym formularzu były różnie grube: „Profesja" i „Adres e-mail" grubsze niż
+  „Numer PWZ" i „Miasto", bo pierwsze rysuje wtyczka, a drugie ACF. Teraz wszystkie etykiety
+  formularza mają tę samą grubość.
+
 ## [0.3.0] - 2026-10-31
 
 Formularze na stronie portalu przestają wyglądać jak obcy element. Pierwsze wstawienie
