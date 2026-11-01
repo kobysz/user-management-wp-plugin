@@ -52,11 +52,10 @@
 	display: block;
 }
 
-/* Etykieta. */
+/* Etykieta. Grubość nadaje arkusz stały, razem z etykietą pola z ACF. */
 .pusers-front .form-label {
 	display: block;
 	margin-bottom: 0.5rem;
-	font-weight: 500;
 }
 
 /* Kontrolki. */
@@ -64,6 +63,10 @@
 .pusers-front .form-select {
 	display: block;
 	width: 100%;
+	/* Bootstrap daje to całej stronie swoim rebootem, ten arkusz resetu nie niesie. Bez tej
+	   deklaracji „100%" znaczy „100% treści plus wyściółka i ramka", czyli pole szersze
+	   od karty o 26 px. */
+	box-sizing: border-box;
 	padding: 0.375rem 0.75rem;
 	font-size: 1rem;
 	line-height: 1.5;

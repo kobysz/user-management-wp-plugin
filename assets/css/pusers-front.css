@@ -19,3 +19,13 @@
 .pusers-front .acf-label {
 	margin-bottom: 0.5rem;
 }
+
+/*
+ * Jedna grubość dla obu rodzajów etykiet. Bootstrap `.form-label` grubości nie nadaje, a
+ * etykietę pola profilu rysuje ACF własnym arkuszem, którego na stronie portalu bywa i nie ma.
+ * Bez tej reguły „Profesja" i „Miasto" stoją obok siebie w jednym formularzu różnie grube.
+ */
+.pusers-front .form-label,
+.pusers-front .acf-label label {
+	font-weight: 500;
+}
